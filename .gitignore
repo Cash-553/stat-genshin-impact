@@ -1,0 +1,33 @@
+# 个人数据（不上传）
+data/
+config/
+icons/
+
+# 开发测试文件
+_开发测试/
+_开发测试_new/
+_demo_icons/
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 打包产物
+build/
+dist/
+*.spec
+*.exe
+发布版/
+StatGI/
+原神挂机收益统计器/
+
+# 用户数据（7.0掉落物JSON等）
+新建文件夹/
+
+# 文档（仅本地，不上传）
+使用说明.txt
+.github/
+
+# 系统文件
+Thumbs.db
+Desktop.ini
