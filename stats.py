@@ -124,6 +124,11 @@ class DailyStats:
         self.artifact = 0
         self.save()
 
+    def clear_running_seconds(self):
+        """单独清空挂机时间（收益数据不动）"""
+        self.running_seconds = 0
+        self.save()
+
 
 class EventTracker:
     """

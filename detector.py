@@ -22,6 +22,12 @@ import materials_db
 from capture import ScreenCapture
 from ocr_engine import OcrEngine
 from stats import DailyStats, EventTracker
+from generated_names import ARTIFACT_NAMES, MATERIAL_NAMES
+
+# 圣遗物具体件名集合（精确匹配，来自用户提供的名单）
+ARTIFACT_NAME_SET = set(ARTIFACT_NAMES)
+# 材料名集合（精确匹配）
+MATERIAL_NAME_SET = set(MATERIAL_NAMES)
 
 # 圣遗物套装关键词（用于把拾取物分为"狗粮"，来源：B站Wiki圣遗物套装清单）
 ARTIFACT_KEYWORDS = (
@@ -71,6 +77,14 @@ class Detector:
         # 记录每个提示文本的"消失计数"，新出现（或消失≥2帧后重现）= 新拾取才统计
         self._seen = {}  # text -> 连续消失帧数（0=正在显示）
 
+        # 提示栏锚点记忆（思路一）：
+        # 首次找到「获得」标题后，记住其下方的提示栏区域，即使「获得」随后消失
+        # 也继续用这个区域识别下面的收获物（避免锚点消失导致漏记）。
+        # "获得"每刷新一次，extend 到期时间；到期后清空，重新定位。
+        self._anchor_region = None   # (x0, y0, x1, y1) 提示栏区域
+        self._anchor_extend = 0.0    # "获得"最近被看到的时间
+        self._anchor_expire = 4.0    # 秒："获得"消失这么久后丢弃记忆,重新找
+
         # 自动窗口模式状态
         self.auto_window = region is None
         self.window_rect = None          # 游戏窗口位置
@@ -104,6 +118,10 @@ class Detector:
         score = self._change_score(frame)
         now = time.time()
 
+        # 【临时debug】记录变化分数 / 是否被跳过
+        if self._dbg():
+            self._log(f"[DBG] tick score={score:.3f} thr={self.change_threshold} skip={score < self.change_threshold and now - self.last_full_check < self.safety_interval}")
+
         # 画面没变化，且最近刚完整检测过 → 跳过（省 CPU）
         if score < self.change_threshold and now - self.last_full_check < self.safety_interval:
             return False
@@ -115,6 +133,14 @@ class Detector:
         """抓取画面：手动区域 或 自动游戏窗口"""
         if not self.auto_window:
             return self.capture.grab(self.region)
+        # 只在前台时识别：若开启且当前前台不是原神，跳过（不截图识别）
+        if self.settings.get("only_foreground", True):
+            try:
+                from capture import is_genshin_foreground
+                if not is_genshin_foreground():
+                    return None
+            except Exception:
+                pass
         now = time.time()
         if self.window_rect is None or now - self._last_win_find > 10.0:
             self._last_win_find = now
@@ -142,6 +168,25 @@ class Detector:
 
     # ---------- 完整检测 ----------
 
+    def _dbg(self):
+        """【临时debug】本轮定位始终开启，写入 data/debug.log（定位后删除）"""
+        return True
+
+    def _log(self, msg):
+        """【临时debug】把诊断日志写入 data/debug.log（打包版无控制台，需看文件）"""
+        try:
+            from paths import app_dir
+            p = app_dir() / "data" / "debug.log"
+            import io
+            with io.open(str(p), "a", encoding="utf-8") as f:
+                f.write(msg + "\n")
+        except Exception:
+            pass
+        try:
+            print(msg)
+        except Exception:
+            pass
+
     def _full_detect(self, frame_bgr):
         added = False
         now = time.time()
@@ -150,6 +195,8 @@ class Detector:
         # ---- 主识别（每 ocr_interval 一次）----
         if now - self._last_ocr >= self.ocr_interval:
             self._last_ocr = now
+            if self._dbg():
+                self._log(f"[DBG] full_detect 触发OCR，走 {'自动窗口锚点' if self.auto_window else '手动区域'}")
             if self.auto_window:
                 # 自动窗口模式：识别左下角拾取提示（提示出现=确定已拾取）
                 added = self._scan_left_pickups(frame) or added
@@ -200,9 +247,32 @@ class Detector:
 
     @staticmethod
     def _norm_key(text):
-        """规范化文本作为去重 key：去掉所有空格、统一 × 符号（OCR 输出不稳定）"""
+        """
+        规范化文本作为去重 key（同一行内容必须归到同一个 key，防止多记）：
+        - 去掉所有空格
+        - 统一 × 符号（OCR 输出不稳定：× x X 都归一为 x）
+        - 去掉 OCR 常带出的杂符（中文引号、弯引号、句号、点、波浪线等），
+          防止 `混沌机关×3` 与 `"混沌机关×3` 被当成两个 key
+        - 保留数量和汉字（数量不能丢，要真实累计）
+        """
         t = re.sub(r"\s+", "", text or "")
+        # 只保留：汉字、数字、x（×归一后）、以及常见数量分隔
+        t = re.sub(r"[^\u4e00-\u9fff0-9xX×]", "", t)
         return t.replace("×", "x").replace("X", "x").replace("x", "x")
+
+    @staticmethod
+    def _cleaner_text(text):
+        """
+        文本"干净度"评分：杂符（引号/破折号/符号等）越少、汉字越多，越干净。
+        用于同一行被切碎成多段时，挑选最完整干净的一段来解析统计。
+        """
+        if not text:
+            return -1
+        chars = text.strip()
+        total = max(1, len(chars))
+        # 干净字符：汉字 + 数字 + x + ×
+        clean = len(re.findall(r"[\u4e00-\u9fff0-9xX×]", chars))
+        return clean / total
 
     def _scan_left_pickups(self, frame):
         """
@@ -213,10 +283,40 @@ class Detector:
         所有区域共享 seen 去重（同一提示不会重复统计）。
         """
         added = False
+        now = time.time()
         regions = []
-        anchor = self._find_anchor_region(frame)
-        if anchor:
-            regions.append(anchor)
+
+        # —— 思路一：锚点记忆 ——
+        # "获得"标题通常比下面那几列收获物消失得更快。
+        # 优先用已记住的提示栏区域识别（即使"获得"已消失）；
+        # 只要"获得"还能找到，就刷新记忆和到期时间；很久没找到则丢弃记忆重新定位。
+        anchor_ok = self._anchor_region is not None and now - self._anchor_extend < self._anchor_expire
+        if self._dbg():
+            self._log(f"[DBG] scan_left: anchor_ok={anchor_ok} anchor={self._anchor_region}")
+        if anchor_ok:
+            regions.append(self._anchor_region)
+            # 记忆还生效时，仍尝试重新定位"获得"来续期（OCR 有节流，不会太频繁）
+            cur = self._find_anchor_region(frame)
+            if self._dbg():
+                self._log(f"[DBG]   续期找获得 cur={cur}")
+            if cur:
+                self._anchor_region = cur
+                self._anchor_extend = now
+        else:
+            new_anchor = self._find_anchor_region(frame)
+            if self._dbg():
+                self._log(f"[DBG]   冷启动找获得 new_anchor={new_anchor}")
+            if new_anchor:
+                self._anchor_region = new_anchor
+                self._anchor_extend = now
+                regions.append(new_anchor)
+            elif self._anchor_region is not None:
+                # 找不到"获得"，但记忆过期前收获物可能还在显示：多沿用一小段
+                if now - self._anchor_extend < self._anchor_expire + 2.0:
+                    regions.append(self._anchor_region)
+                else:
+                    self._anchor_region = None
+
         sr = self.settings.get("region")
         if sr and self.window_rect:
             fr = self._region_to_frame(sr)
@@ -224,8 +324,72 @@ class Detector:
                 regions.append(fr)
         if not regions:
             regions.append(self._pickup_region(frame))
+        if self._dbg():
+            self._log(f"[DBG]   最终识别区域数={len(regions)} regions={regions}")
         for reg in regions:
-            added = self._scan_region_rows(frame, reg) or added
+            added = self._scan_region_boxes(frame, reg) or added
+        return added
+
+    def _scan_region_boxes(self, frame, reg):
+        """
+        用 OCR 自动分行识别收获行（替代易失效的"投影找行"法）。
+        RapidOCR 的 recognize_boxes 会自动检测文字框位置并逐条识别，
+        能正确处理收获行区域的背景干扰。
+        返回是否统计到新收益（沿用 seen 去重，保留真实数量）。
+        """
+        x0, y0, x1, y1 = reg
+        x0, y0 = max(0, x0), max(0, y0)
+        x1 = min(frame.shape[1], x1)
+        y1 = min(frame.shape[0], y1)
+        if y1 - y0 < 30 or x1 - x0 < 30:
+            return False
+        region = frame[y0:y1, x0:x1]
+        added = False
+        try:
+            lines = self.ocr.recognize_boxes(region)
+            if not lines:
+                return added
+            # 收集所有文本（排除"获得"标题），按 y 排序
+            texts = []
+            for text, score, box in lines:
+                if not text or "获得" in text:
+                    continue
+                bx, by, bw, bh = box
+                texts.append((by, text.strip()))
+            # 把同一行被切成多段的，按规范化 key 相邻去重合并（防多记，保留数量）
+            texts.sort(key=lambda t: t[0])
+            line_texts = []
+            for by, text in texts:
+                key = self._norm_key(text)
+                if not key:
+                    continue
+                if line_texts and line_texts[-1][2] == key and by - line_texts[-1][0] < 30:
+                    # 同一行碎片（y 接近 且 key 相同）：保留更干净的一段
+                    if self._cleaner_text(text) > self._cleaner_text(line_texts[-1][3]):
+                        line_texts[-1] = (by, by, key, text)
+                    continue
+                line_texts.append((by, by, key, text))
+            # 逐条解析统计
+            current = set()
+            for by, _, key, text in line_texts:
+                current.add(key)
+                if key not in self._seen or self._seen[key] >= 2:
+                    ev = self._parse_pickup_text(text)
+                    if self._dbg():
+                        self._log(f"[DBG]   boxes行key={key!r} text={text!r} seen={self._seen.get(key)} ev={ev}")
+                    if ev is not None:
+                        added = self._apply_event(ev, frame, 0.0, use_tracker=False) or added
+            # 更新消失计数 / 清理
+            for t in current:
+                self._seen[t] = 0
+            for t in list(self._seen):
+                if t not in current:
+                    self._seen[t] += 1
+            for t in list(self._seen):
+                if self._seen[t] > 60:
+                    del self._seen[t]
+        except Exception:
+            pass
         return added
 
     def _find_anchor_region(self, frame):
@@ -277,6 +441,9 @@ class Detector:
         try:
             rows = self._find_text_rows(region)
             current = set()
+            # 同一行可能被背景切成多段 → 先收集所有文本，按规范化 key 去重合并
+            # （保留数量：合并后仍只统计一次，但数量取第一个有效值）
+            line_texts = []  # 每个元素: (规范化key, 原始text)
             for (ry0, ry1) in rows:
                 crop = region[max(0, ry0 - 2):min(region.shape[0], ry1 + 3), :]
                 text, score = self.ocr.recognize_line(crop)
@@ -285,13 +452,28 @@ class Detector:
                 key = self._norm_key(text)
                 if not key:
                     continue
+                line_texts.append((key, text.strip()))
+            # 相邻相同 key 的行合并（背景把一行切碎成多段的典型情况）
+            merged_texts = []
+            for key, text in line_texts:
+                if merged_texts and merged_texts[-1][0] == key:
+                    # 同一行碎片：优先保留更"干净"（杂符更少、长度更合理）的文本，
+                    # 避免带引号/破折号的片段进入解析，同时避免重复统计
+                    prev_key, prev_text = merged_texts[-1]
+                    if self._cleaner_text(text) > self._cleaner_text(prev_text):
+                        merged_texts[-1] = (key, text)
+                else:
+                    merged_texts.append((key, text))
+            for key, text in merged_texts:
                 current.add(key)
                 # 新出现（从未见过）或 消失足够久后重现（独立的新拾取）→ 统计
                 if key not in self._seen or self._seen[key] >= 2:
-                    ev = self._parse_pickup_text(text.strip())
+                    ev = self._parse_pickup_text(text)
+                    if self._dbg():
+                        self._log(f"[DBG]   行key={key!r} text={text!r} seen={self._seen.get(key)} ev={ev}")
                     if ev is not None:
                         # seen 状态机已保证不重复，不用 tracker（同类连续拾取间隔可能很短）
-                        added = self._apply_event(ev, frame, score, use_tracker=False) or added
+                        added = self._apply_event(ev, frame, 0.0, use_tracker=False) or added
             # 更新消失计数：当前出现的=0，没出现的=+1（消失≥2帧后同文本重现视为新拾取）
             for t in current:
                 self._seen[t] = 0
@@ -317,7 +499,8 @@ class Detector:
         if not t or "获得" in t:
             return None  # "获得"是提示栏标题，不是拾取物
         # 摩拉："摩拉 ×200" / "摩拉×200" / "摩拉 200"
-        if "摩拉" in t:
+        # 也兼容 OCR 把"摩拉"读成近似错字（魔拉/磨拉/莫拉 等）
+        if "摩" in t:
             m = re.search(r"[×xX]?\s*([\d,]{2,6})", t)
             if m:
                 amount = int(m.group(1).replace(",", ""))
@@ -333,11 +516,37 @@ class Detector:
         count = int(m.group(2)) if m.group(2) else 1
         if any(k in name for k in IGNORE_NAMES):
             return None  # 经验书等：不算收益
-        if name in self.known_names:
-            return {"type": "material", "name": name, "count": count, "category": "monster"}
-        if self._is_artifact_name(name):
+        # 1) 先精确匹配圣遗物名单（最准，防止误判为材料）
+        if name in ARTIFACT_NAME_SET:
+            if not self.settings.get("enable_artifact", True):
+                return None
             return {"type": "artifact", "count": count}
-        # 其它材料（采集物等）：同样计入材料（名单还在完善，暂不区分怪物/普通）
+        # 2) 材料库已知材料
+        if name in MATERIAL_NAME_SET or name in self.known_names:
+            if not self.settings.get("enable_material", True):
+                return None
+            return {"type": "material", "name": name, "count": count, "category": "monster"}
+        # 3) 圣遗物关键词兜底（防名单遗漏）
+        if self._is_artifact_name(name):
+            if not self.settings.get("enable_artifact", True):
+                return None
+            return {"type": "artifact", "count": count}
+        # 3.5) 一字差自动纠错（OCR 受游戏背景遮挡产生错字时，纠正成库中正确名字）
+        if self.settings.get("enable_artifact", True):
+            corr = self._fuzzy_match(name, ARTIFACT_NAME_SET)
+            if corr:
+                return {"type": "artifact", "count": count}
+        if self.settings.get("enable_material", True):
+            corr = self._fuzzy_match(name, MATERIAL_NAME_SET)
+            if corr:
+                return {"type": "material", "name": corr, "count": count, "category": "monster"}
+        # 3.5) 大数字兜底：名字不在任何名单，但数字较大（≥20）
+        #      → 极可能是摩拉被 OCR 读丢"摩"字（摩拉 ×200 只读到部分）
+        #      材料的数量几乎不会 ≥20，用此区分摩拉与材料
+        if count >= 20:
+            if self.settings.get("enable_mora", True):
+                return {"type": "mora", "name": "摩拉", "amount": count, "count": 1}
+        # 4) 其它材料（自动登记）
         if not self.settings.get("enable_material", True):
             return None
         return {"type": "material", "name": name, "count": count, "category": "monster"}
@@ -463,6 +672,46 @@ class Detector:
         if any(name.endswith(s) for s in ARTIFACT_SUFFIX):
             return True
         return False
+
+    def _fuzzy_match(self, name, name_set):
+        """
+        一字差自动纠错：识别出的名字不在名单里时，
+        从名单中找一个"只差一个字/缺一个字/多一个字"的正确名字返回。
+        找不到返回 None。
+        """
+        if not name or not name_set:
+            return None
+        n = len(name)
+        best = None
+        best_score = 0.0
+        # 限定长度相近（差 ≤2），避免把长名字错配
+        for cand in name_set:
+            cn = len(cand)
+            if abs(cn - n) > 2:
+                continue
+            # 用最长公共子序列占比衡量相似度
+            score = self._sim(name, cand)
+            if score > best_score:
+                best_score = score
+                best = cand
+        # 相似度 ≥ 0.75 视为"一字差"可纠（例如 "魔拉" ~ "摩拉"）
+        if best is not None and best_score >= 0.75:
+            return best
+        return None
+
+    @staticmethod
+    def _sim(a, b):
+        """简易相似度：最长公共子序列占比"""
+        m, n = len(a), len(b)
+        dp = [[0] * (n + 1) for _ in range(m + 1)]
+        for i in range(1, m + 1):
+            for j in range(1, n + 1):
+                if a[i - 1] == b[j - 1]:
+                    dp[i][j] = dp[i - 1][j - 1] + 1
+                else:
+                    dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
+        lcs = dp[m][n]
+        return lcs / max(m, n)
 
     def _register_material(self, name):
         """把未知拾取物自动加入材料库（防止无限膨胀）"""

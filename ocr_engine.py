@@ -24,13 +24,27 @@ class OcrEngine:
 
     def _preprocess(self, frame_bgr):
         """
-        识别前预处理（参考 BetterGI：灰度 + Otsu 二值化 + 3倍放大）。
-        游戏里的小字（如 ×2）在二值化放大后也能被 OCR 检测到，
-        3 倍放大保证连在一起的"名字 ×N"数字也不会丢失。
+        识别前预处理：灰度 + 自适应阈值 + 放大。
+        用自适应阈值（adaptiveThreshold）而非全局 Otsu，
+        更擅长处理游戏里"文字被深色/浅色背景遮挡、对比度不均"的情况——每个小区域各自取阈值，
+        不会再因为整帧只取一个折中阈值而把低对比度的字吞掉。
         """
         gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
-        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        big = cv2.resize(binary, None, fx=self._upscale, fy=self._upscale, interpolation=cv2.INTER_NEAREST)
+        # 自适应阈值：局部邻域内文字(亮)和背景(暗)分开
+        binary = cv2.adaptiveThreshold(
+            gray, 255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY_INV,
+            blockSize=21,
+            C=6,
+        )
+        # 与全局 Otsu 结合兜底：两种都能识别时保留，避免自适应在某些文字上失效
+        _, otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        otsu_inv = cv2.bitwise_not(otsu)  # 转成"文字白、背景黑"与自适应一致
+        combined = cv2.bitwise_or(binary, otsu_inv)
+        # 降噪：去掉细小的孤立噪点
+        combined = cv2.morphologyEx(combined, cv2.MORPH_OPEN, np.ones((1, 2), np.uint8))
+        big = cv2.resize(combined, None, fx=self._upscale, fy=self._upscale, interpolation=cv2.INTER_NEAREST)
         return cv2.cvtColor(big, cv2.COLOR_GRAY2BGR)
 
     def recognize(self, frame_bgr):

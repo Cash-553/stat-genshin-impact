@@ -66,6 +66,40 @@ def find_game_window():
     return None
 
 
+def is_genshin_foreground():
+    """
+    判断当前前台（活动）窗口是否是原神游戏窗口。
+    用于：切到别的应用时不截图识别，只在原神在前台时才识别。
+    返回 True=是原神在前台，False=不是（或判断失败）。
+    """
+    try:
+        user32 = ctypes.windll.user32
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return False
+        # 前台窗口标题
+        n = user32.GetWindowTextLengthW(hwnd)
+        buf = ctypes.create_unicode_buffer(n + 1)
+        user32.GetWindowTextW(hwnd, buf, n + 1)
+        title = buf.value
+        # 前台窗口类名
+        cls_buf = ctypes.create_unicode_buffer(64)
+        user32.GetClassNameW(hwnd, cls_buf, 64)
+        cls = cls_buf.value
+        # 排除我们自己的工具和其它
+        if any(k in title for k in ("StatGI", "原神挂机", "BetterGI", "BetterGenshin", "BetterGenshinImpact")):
+            return False
+        # 与 find_game_window 相同的匹配规则
+        is_game = ("原神" in title and "米哈游启动器" not in title) \
+            or "genshin" in title.lower() or "yuanshen" in title.lower() \
+            or "云原神" in title or "yunyuanshen" in title.lower() \
+            or ("原" in title and cls == "UnityWndClass") \
+            or ("Genshin" in title and cls == "UnityWndClass")
+        return is_game
+    except Exception:
+        return False
+
+
 class ScreenCapture:
     """屏幕捕捉器"""
 

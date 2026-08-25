@@ -612,7 +612,7 @@ class MainApp(ctk.CTk):
         # 次要按钮
         sub_btns = ctk.CTkFrame(page, fg_color="transparent")
         sub_btns.grid(row=3, column=0, sticky="ew", pady=(0, 6))
-        for i in range(4):
+        for i in range(5):
             sub_btns.grid_columnconfigure(i, weight=1)
         ctk.CTkButton(
             sub_btns, text="重新框选", font=(FONT, 13),
@@ -631,10 +631,15 @@ class MainApp(ctk.CTk):
             command=self.on_clear_today,
         ).grid(row=0, column=2, sticky="ew", padx=5)
         ctk.CTkButton(
+            sub_btns, text="清空时间", font=(FONT, 13),
+            height=40, corner_radius=8, fg_color=DANGER, hover_color=DANGER_HOVER,
+            command=self.on_clear_runtime,
+        ).grid(row=0, column=3, sticky="ew", padx=5)
+        ctk.CTkButton(
             sub_btns, text="📷 诊断截图", font=(FONT, 12),
             height=40, corner_radius=8, fg_color=BTN, hover_color=BTN_HOVER,
             command=self.on_debug_screenshot,
-        ).grid(row=0, column=3, sticky="ew", padx=(5, 0))
+        ).grid(row=0, column=4, sticky="ew", padx=(5, 0))
 
         # 使用流程卡片
         guide = self._make_card(page)
@@ -846,6 +851,13 @@ class MainApp(ctk.CTk):
             text_color=TEXT, text_color_disabled=DIM,
         ).pack(padx=20, pady=(0, 12))
 
+        self._setting_row(card4, "只在原神前台时识别", "切到其他应用就暂停识别，回到原神自动继续（推荐开启，避免误识别别的窗口）")
+        self.only_foreground_var = ctk.BooleanVar(value=bool(self.settings.get("only_foreground", True)))
+        ctk.CTkSwitch(
+            card4, text="开启", variable=self.only_foreground_var, onvalue=True, offvalue=False,
+            font=(FONT, 12), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
+        ).pack(anchor="w", padx=20, pady=(0, 12))
+
         # ---- 6. 外观 ----
         card6 = self._make_card(scroll)
         card6.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
@@ -897,6 +909,40 @@ class MainApp(ctk.CTk):
         ctk.CTkSwitch(
             card6, text="开启", variable=self.glass_var, onvalue=True, offvalue=False,
             font=(FONT, 12), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
+        ).pack(anchor="w", padx=20, pady=(0, 12))
+
+        # ---- 6.5 OBS 浏览器源 ----
+        card_obs = self._make_card(scroll)
+        card_obs.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
+        ctk.CTkLabel(card_obs, text="📺 连接 OBS 直播覆盖", font=(FONT, 13, "bold"), text_color=ACCENT).pack(padx=20, pady=(12, 4))
+        ctk.CTkLabel(
+            card_obs, text="开启后，StatGI 会提供一个本地网页地址。\n"
+                           "在 OBS 里添加「浏览器源」，粘贴这个地址，\n"
+                           "即可在直播画面上显示收益统计（弹幕区 + 2×2 收益 + 备注区）。",
+            font=(FONT, 11), text_color=DIM, justify="left",
+        ).pack(anchor="w", padx=20, pady=(0, 8))
+        self.obs_var = ctk.BooleanVar(value=bool(self.settings.get("obs_browser_source", False)))
+        ctk.CTkSwitch(
+            card_obs, text="开启 OBS 浏览器源", variable=self.obs_var, onvalue=True, offvalue=False,
+            font=(FONT, 12), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
+            command=self._toggle_obs_source,
+        ).pack(anchor="w", padx=20, pady=(0, 6))
+        # 地址行
+        obs_row = ctk.CTkFrame(card_obs, fg_color="transparent")
+        obs_row.pack(fill="x", padx=20, pady=(0, 4))
+        api_port = int(self.settings.get("api_port", 8765))
+        self._obs_addr_label = ctk.CTkLabel(
+            obs_row, text=f"地址：http://127.0.0.1:{api_port}/overlay",
+            font=(FONT, 11), text_color=TEXT,
+        )
+        self._obs_addr_label.pack(side="left")
+        ctk.CTkButton(
+            obs_row, text="复制", font=(FONT, 11), width=52, height=26,
+            corner_radius=8, fg_color=BTN, hover_color=BTN_HOVER, command=self._copy_obs_addr,
+        ).pack(side="right")
+        ctk.CTkLabel(
+            card_obs, text="备注：透明背景，可直接叠在游戏画面上。",
+            font=(FONT, 10), text_color=DIM,
         ).pack(anchor="w", padx=20, pady=(0, 12))
 
         # ---- 7. 关于 / 更新 ----
@@ -960,6 +1006,25 @@ class MainApp(ctk.CTk):
         else:
             self.accent_var.set(prev)
 
+    def _toggle_obs_source(self):
+        """开启/关闭 OBS 浏览器源（本地服务已在启动时开启，这里主要是反馈）"""
+        on = bool(self.obs_var.get())
+        self.settings["obs_browser_source"] = on
+        # 地址一直有效（服务始终在跑），开关主要作为记忆/显示
+        self._set_status("OBS 浏览器源已" + ("开启" if on else "关闭"), GOOD if on else DIM)
+
+    def _copy_obs_addr(self):
+        """复制 OBS 浏览器源地址到剪贴板"""
+        try:
+            from tkinter import Tk
+            port = int(self.settings.get("api_port", 8765))
+            url = f"http://127.0.0.1:{port}/overlay"
+            r = self.clipboard_clear()
+            self.clipboard_append(url)
+            messagebox.showinfo("已复制", f"OBS 浏览器源地址已复制：\n{url}")
+        except Exception:
+            messagebox.showerror("失败", "复制失败，请手动复制地址。")
+
     def _choose_bg_image(self):
         """选择自定义背景图片（立即预览）"""
         p = filedialog.askopenfilename(
@@ -1007,6 +1072,7 @@ class MainApp(ctk.CTk):
         self.settings["enable_mora"] = bool(self.enable_mora_var.get())
         self.settings["enable_material"] = bool(self.enable_mat_var.get())
         self.settings["enable_artifact"] = bool(self.enable_art_var.get())
+        self.settings["only_foreground"] = bool(self.only_foreground_var.get()) if hasattr(self, "only_foreground_var") else self.settings.get("only_foreground", True)
         self.settings["close_behavior"] = {"每次询问": "ask", "最小化到托盘": "tray", "直接退出": "exit"}.get(
             self.close_btn_var.get(), "ask"
         )
@@ -1023,6 +1089,7 @@ class MainApp(ctk.CTk):
             self.settings["accent_color"] = ac_sel
         self.settings["bg_image"] = self.settings.get("bg_image", "")
         self.settings["sidebar_glass"] = bool(self.glass_var.get())
+        self.settings["obs_browser_source"] = bool(self.obs_var.get())
         config_manager.save_settings(self.settings)
         # 应用到正在运行的检测器
         if self.detector:
@@ -1352,6 +1419,17 @@ class MainApp(ctk.CTk):
         self.stats.clear_today()
         self._refresh_ui()
         messagebox.showinfo("已清空", "今天的收益已清空")
+
+    def on_clear_runtime(self):
+        """单独清空挂机时间（收益数据不动）。正在监测时从中断点重新计时。"""
+        if not messagebox.askyesno("确认", "确定清空挂机时间吗？\n（摩拉、材料等收益不受影响）"):
+            return
+        self.stats.clear_running_seconds()
+        # 若正在监测，重置本次开始时间，让挂机时间从 0 重新累计
+        if self.monitoring:
+            self._monitor_start = time.monotonic()
+        self._refresh_ui()
+        messagebox.showinfo("已清空", "挂机时间已清空")
 
     def on_debug_screenshot(self):
         """保存当前识别区域的截图，并 OCR 显示画面里有什么（用于确认框选是否正确）"""
