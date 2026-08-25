@@ -1,9 +1,16 @@
 # -*- coding: utf-8 -*-
 """
 OCR 引擎模块
-封装 rapidocr，专门用于读取掉落提示里的数字：
-- 摩拉数量（例如 +7050）
-- 材料数量（例如 ×2）
+
+使用 RapidOCR（内置 PP-OCRv3，识别质量经实测优于 PaddleOCR v6 on 原神小字场景）。
+保留自适应阈值预处理 + 一字差纠错（在 detector 层）。
+
+对外接口：
+- recognize(frame) -> [(文字, 置信度), ...]
+- recognize_boxes(frame) -> [(文字, 置信度, (x,y,w,h)), ...]
+- recognize_line(frame) -> (文字, 置信度)
+- extract_mora_amount(frame) -> int|None
+- extract_material_count(frame) -> int
 """
 import re
 import cv2
@@ -30,7 +37,6 @@ class OcrEngine:
         不会再因为整帧只取一个折中阈值而把低对比度的字吞掉。
         """
         gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
-        # 自适应阈值：局部邻域内文字(亮)和背景(暗)分开
         binary = cv2.adaptiveThreshold(
             gray, 255,
             cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
@@ -38,23 +44,15 @@ class OcrEngine:
             blockSize=21,
             C=6,
         )
-        # 与全局 Otsu 结合兜底：两种都能识别时保留，避免自适应在某些文字上失效
         _, otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         otsu_inv = cv2.bitwise_not(otsu)  # 转成"文字白、背景黑"与自适应一致
         combined = cv2.bitwise_or(binary, otsu_inv)
-        # 降噪：去掉细小的孤立噪点
         combined = cv2.morphologyEx(combined, cv2.MORPH_OPEN, np.ones((1, 2), np.uint8))
         big = cv2.resize(combined, None, fx=self._upscale, fy=self._upscale, interpolation=cv2.INTER_NEAREST)
         return cv2.cvtColor(big, cv2.COLOR_GRAY2BGR)
 
     def recognize(self, frame_bgr):
-        """
-        识别图片（BGR 格式 numpy 数组）
-        返回 [(文字, 置信度), ...]
-
-        预处理：灰度 + Otsu 二值化 + 放大 2 倍（参考 BetterGI），
-        游戏里的小字（如 ×2）也能被识别。
-        """
+        """识别图片（BGR 格式 numpy 数组），返回 [(文字, 置信度), ...]"""
         self._ensure()
         processed = self._preprocess(frame_bgr)
         result, _ = self._ocr(processed)
@@ -64,10 +62,7 @@ class OcrEngine:
         return lines
 
     def recognize_boxes(self, frame_bgr):
-        """
-        识别图片并返回文字位置（用于自动提取图标）
-        返回 [(文字, 置信度, (x, y, w, h)), ...]，坐标为原始图片坐标
-        """
+        """识别图片并返回文字位置，返回 [(文字, 置信度, (x, y, w, h)), ...]"""
         self._ensure()
         processed = self._preprocess(frame_bgr)
         result, _ = self._ocr(processed)
@@ -83,8 +78,7 @@ class OcrEngine:
 
     def recognize_line(self, frame_bgr):
         """
-        照搬 BetterGI：把一整条文字直接送进识别模型（跳过文字检测），最快。
-        输入：裁剪好的单行文字条（BGR numpy 数组）。
+        识别一整条文字（跳过检测，最快）。
         返回 (文字, 置信度)；识别不到返回 (None, 0.0)。
         """
         if frame_bgr is None or frame_bgr.size == 0:
@@ -93,7 +87,6 @@ class OcrEngine:
         try:
             processed = self._preprocess(frame_bgr)
             out = self._ocr.text_recognizer(processed)
-            # 返回格式通常是 ([('文字', 分数)], 耗时) 或直接列表
             items = out[0] if isinstance(out, tuple) else out
             if items:
                 text, score = items[0]
@@ -121,17 +114,12 @@ class OcrEngine:
         )
 
     def extract_mora_amount(self, frame_bgr):
-        """
-        从画面中提取摩拉数字（例如 +7050 → 7050）
-        找不到返回 None
-        """
+        """从画面中提取摩拉数字（例如 +7050 → 7050），找不到返回 None"""
         lines = self.recognize(frame_bgr)
-        # 方式1：找 "+数字" 模式（游戏显示"摩拉 +7050"）
         for text, score in lines:
             m = re.search(r"\+[,\s]*([\d,]{2,})", text)
             if m:
                 return int(self._clean_number(m.group(1)).replace(",", ""))
-        # 方式2：找独立的 3~7 位数字（可能加号没被识别出来）
         best = None
         for text, score in lines:
             cleaned = self._clean_number(text)
@@ -142,18 +130,13 @@ class OcrEngine:
         return best[0] if best else None
 
     def extract_material_count(self, frame_bgr):
-        """
-        从画面中提取材料数量（例如 ×2 → 2）
-        找不到时返回 1（游戏默认掉落 1 个）
-        """
+        """从画面中提取材料数量（例如 ×2 → 2），找不到返回 1"""
         lines = self.recognize(frame_bgr)
-        # 方式1：找 "×数字" 或 "x数字" 模式
         for text, score in lines:
             cleaned = self._clean_number(text)
             m = re.search(r"[x×X]\s*(\d{1,2})", cleaned)
             if m:
                 return int(m.group(1))
-        # 方式2：找单独的 1~2 位数字
         for text, score in lines:
             cleaned = self._clean_number(text)
             for m in re.finditer(r"(?<![\d])(\d{1,2})(?![\d])", cleaned):

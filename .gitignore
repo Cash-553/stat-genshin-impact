@@ -21,6 +21,11 @@ dist/
 StatGI/
 原神挂机收益统计器/
 
+# v6 OCR 实验残留（已回退 RapidOCR，不上传）
+assets/
+ocr_v6.py
+_dev_*.png
+
 # 用户数据（7.0掉落物JSON等）
 新建文件夹/
 

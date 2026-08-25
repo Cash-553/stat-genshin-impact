@@ -23,6 +23,7 @@ from capture import ScreenCapture
 from ocr_engine import OcrEngine
 from stats import DailyStats, EventTracker
 from generated_names import ARTIFACT_NAMES, MATERIAL_NAMES
+from ui_detector import UiDetector
 
 # 圣遗物具体件名集合（精确匹配，来自用户提供的名单）
 ARTIFACT_NAME_SET = set(ARTIFACT_NAMES)
@@ -68,6 +69,7 @@ class Detector:
 
         self.capture = ScreenCapture()
         self.ocr = OcrEngine()
+        self.ui_detector = UiDetector()  # 判断是否在主界面（无返回/关闭键）
         self.stats = stats if stats is not None else DailyStats()
         self.tracker = EventTracker(
             end_window=float(self.settings.get("event_end_window", 1.5))
@@ -156,8 +158,18 @@ class Detector:
             return None
 
     def _change_score(self, frame_bgr):
-        """计算画面和上一帧的差异程度（0~255 均值）"""
-        small = cv2.resize(frame_bgr, (64, 48), interpolation=cv2.INTER_AREA)
+        """
+        计算画面和上一帧的差异程度（0~255 均值）。
+        只对"收获行区域"做变化检测（而非整张图），大幅降低 CPU 占用：
+        - resize 的成本只在收获行小区域上
+        - 只有收获行区域变化才触发识别（主界面其他地方的动态不影响）
+        """
+        try:
+            x0, y0, x1, y1 = self._pickup_region(frame_bgr)
+            sub = frame_bgr[y0:y1, x0:x1]
+        except Exception:
+            sub = frame_bgr
+        small = cv2.resize(sub, (64, 48), interpolation=cv2.INTER_AREA)
         gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
         if self.prev_small is None:
             self.prev_small = gray
@@ -191,6 +203,13 @@ class Detector:
         added = False
         now = time.time()
         frame = frame_bgr
+
+        # 判断是否在主界面：检测到返回/关闭键说明打开了其他界面，暂停识别
+        try:
+            if not self.ui_detector.in_main_ui(frame):
+                return False  # 非主界面，不识别（避免把界面文字当掉落）
+        except Exception:
+            pass
 
         # ---- 主识别（每 ocr_interval 一次）----
         if now - self._last_ocr >= self.ocr_interval:
@@ -514,7 +533,8 @@ class Detector:
             return None
         name = m.group(1)
         count = int(m.group(2)) if m.group(2) else 1
-        if any(k in name for k in IGNORE_NAMES):
+        # 经验书等：不算收益。用宽松匹配（含"经验"即忽略，覆盖 OCR 错字如"鱼色经验"）
+        if any(k in name for k in IGNORE_NAMES) or "经验" in name:
             return None  # 经验书等：不算收益
         # 1) 先精确匹配圣遗物名单（最准，防止误判为材料）
         if name in ARTIFACT_NAME_SET:
