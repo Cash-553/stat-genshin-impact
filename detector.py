@@ -30,6 +30,14 @@ ARTIFACT_NAME_SET = set(ARTIFACT_NAMES)
 # 材料名集合（精确匹配）
 MATERIAL_NAME_SET = set(MATERIAL_NAMES)
 
+# 按名字长度分组索引（纠错时只遍历长度相近的候选，避免全集合遍历导致卡顿）
+_ART_INDEX = {}
+for _n in ARTIFACT_NAME_SET:
+    _ART_INDEX.setdefault(len(_n), []).append(_n)
+_MAT_INDEX = {}
+for _n in MATERIAL_NAME_SET:
+    _MAT_INDEX.setdefault(len(_n), []).append(_n)
+
 # 圣遗物套装关键词（用于把拾取物分为"狗粮"，来源：B站Wiki圣遗物套装清单）
 ARTIFACT_KEYWORDS = (
     # 基础套
@@ -75,9 +83,20 @@ class Detector:
             end_window=float(self.settings.get("event_end_window", 1.5))
         )
 
-        # 左下角拾取提示状态机（防重复）：
-        # 记录每个提示文本的"消失计数"，新出现（或消失≥2帧后重现）= 新拾取才统计
-        self._seen = {}  # text -> 连续消失帧数（0=正在显示）
+        # 掉落事件生命周期（防重复）：
+        # 不能用“连续漏掉两帧就算消失”的方法：OCR 会偶发漏字/漏行，
+        # 会把同一条仍显示的提示当成新事件而多记。这里按真实时间跟踪，
+        # 并在提示稳定可见后才入账。原神掉落提示完整显示约 3.5 秒，
+        # 实测中一条提示有时只能被 OCR 成功读到一次（淡出、遮挡、换行都会影响），
+        # 因此新行首次识别就入账；后续帧由“行实例队列”保证不会重复入账。
+        self._lifecycles = {}  # 事件身份 -> {first_seen,last_seen,hits,counted,candidates}
+        self._confirm_seconds = float(self.settings.get("event_confirm_seconds", 0.15))
+        self._absence_seconds = float(self.settings.get("event_end_window", 1.5))
+        # 收获栏是“最多五行的队列”，同名物品可同时占多行。不能只用名称
+        # 做 key，否则连续捡到 5 个同名材料会被合并而漏记。
+        self._row_tracks = {}       # track id -> 单行生命周期
+        self._last_row_order = []   # 上一次 OCR 中行实例的从上到下顺序
+        self._next_row_track_id = 1
 
         # 提示栏锚点记忆（思路一）：
         # 首次找到「获得」标题后，记住其下方的提示栏区域，即使「获得」随后消失
@@ -345,8 +364,10 @@ class Detector:
             regions.append(self._pickup_region(frame))
         if self._dbg():
             self._log(f"[DBG]   最终识别区域数={len(regions)} regions={regions}")
-        for reg in regions:
-            added = self._scan_region_boxes(frame, reg) or added
+        # 多个重叠区域会把同一行 OCR 两遍，反而破坏“行队列”判断。
+        # 锚点区域优先；没有锚点时才使用手动区域/固定区域。
+        if regions:
+            added = self._scan_region_boxes(frame, regions[0]) or added
         return added
 
     def _scan_region_boxes(self, frame, reg):
@@ -388,28 +409,167 @@ class Detector:
                         line_texts[-1] = (by, by, key, text)
                     continue
                 line_texts.append((by, by, key, text))
-            # 逐条解析统计
-            current = set()
+            # 先组成一整个“从上到下的提示行快照”，再按行队列比对。
+            # 这样同名材料的多行不会被合并成一条。
+            observations = []
             for by, _, key, text in line_texts:
-                current.add(key)
-                if key not in self._seen or self._seen[key] >= 2:
-                    ev = self._parse_pickup_text(text)
-                    if self._dbg():
-                        self._log(f"[DBG]   boxes行key={key!r} text={text!r} seen={self._seen.get(key)} ev={ev}")
-                    if ev is not None:
-                        added = self._apply_event(ev, frame, 0.0, use_tracker=False) or added
-            # 更新消失计数 / 清理
-            for t in current:
-                self._seen[t] = 0
-            for t in list(self._seen):
-                if t not in current:
-                    self._seen[t] += 1
-            for t in list(self._seen):
-                if self._seen[t] > 60:
-                    del self._seen[t]
+                ev = self._parse_pickup_text(text)
+                if self._dbg():
+                    self._log(f"[DBG]   boxes行key={key!r} text={text!r} ev={ev}")
+                if ev is not None:
+                    observations.append(ev)
+            added = self._observe_row_snapshot(observations, frame) or added
         except Exception:
             pass
         return added
+
+    @staticmethod
+    def _row_label(ev):
+        """行匹配只看收益类别和名称；数量属于同一行的 OCR 读数。"""
+        if ev["type"] == "mora":
+            return "mora"
+        if ev["type"] == "artifact":
+            return "artifact"
+        return "material:" + ev["name"]
+
+    @staticmethod
+    def _lcs_pairs(old_labels, new_labels):
+        """返回两个有序提示行快照的最长公共子序列配对下标。"""
+        rows, cols = len(old_labels), len(new_labels)
+        dp = [[0] * (cols + 1) for _ in range(rows + 1)]
+        for i in range(rows - 1, -1, -1):
+            for j in range(cols - 1, -1, -1):
+                if old_labels[i] == new_labels[j]:
+                    dp[i][j] = 1 + dp[i + 1][j + 1]
+                else:
+                    dp[i][j] = max(dp[i + 1][j], dp[i][j + 1])
+        pairs, i, j = [], 0, 0
+        while i < rows and j < cols:
+            if old_labels[i] == new_labels[j]:
+                pairs.append((i, j))
+                i, j = i + 1, j + 1
+            elif dp[i + 1][j] >= dp[i][j + 1]:
+                i += 1
+            else:
+                j += 1
+        return pairs
+
+    def _observe_row_snapshot(self, observations, frame):
+        """按收获栏的行队列追踪事件并只在稳定后入账。
+
+        新物品从底部插入、旧行上推；使用有序序列匹配可保留原有行实例。
+        因而即使五行都是同一种材料，新增的第六次拾取仍会产生一个新实例。
+        """
+        if not observations:
+            return False
+        now = time.time()
+        old_ids = [track_id for track_id in self._last_row_order
+                   if track_id in self._row_tracks and now - self._row_tracks[track_id]["last_seen"] <= self._absence_seconds]
+        old_labels = [self._row_tracks[track_id]["label"] for track_id in old_ids]
+        new_labels = [self._row_label(ev) for ev in observations]
+        pairs = self._lcs_pairs(old_labels, new_labels)
+        matched_new = {new_i: old_ids[old_i] for old_i, new_i in pairs}
+        current_ids = []
+        added = False
+
+        for index, ev in enumerate(observations):
+            label = new_labels[index]
+            track_id = matched_new.get(index)
+            if track_id is None:
+                track_id = self._next_row_track_id
+                self._next_row_track_id += 1
+                self._row_tracks[track_id] = {
+                    "label": label, "first_seen": now, "last_seen": now,
+                    "last_sample": float("-inf"), "hits": 0, "counted": False,
+                    "candidates": {},
+                }
+            state = self._row_tracks[track_id]
+            state["last_seen"] = now
+            if now - state["last_sample"] >= 0.08:
+                reading = self._event_reading_key(ev)
+                candidate = state["candidates"].setdefault(reading, {"hits": 0, "event": ev, "last_seen": 0.0})
+                candidate["hits"] += 1
+                candidate["event"] = ev
+                candidate["last_seen"] = now
+                state["hits"] += 1
+                state["last_sample"] = now
+            # 真实画面中有些行仅成功 OCR 一次，等待第二次会造成系统性漏记。
+            # 本方法只会为“队列中新插入的一行”创建一次 track，故可立即入账。
+            if not state["counted"]:
+                best = max(state["candidates"].values(), key=lambda item: (item["hits"], item["last_seen"]))
+                state["counted"] = True
+                added = self._apply_event(best["event"], frame, 0.0, use_tracker=False) or added
+            current_ids.append(track_id)
+
+        self._last_row_order = current_ids
+        # 长时间不再出现的行实例回收，避免长时间挂机占用内存。
+        for track_id in list(self._row_tracks):
+            if now - self._row_tracks[track_id]["last_seen"] > 15.0:
+                del self._row_tracks[track_id]
+        return added
+
+    @staticmethod
+    def _event_identity(ev):
+        """同一条提示在 OCR 中数量/符号波动时，仍归为同一个事件。"""
+        if ev["type"] == "mora":
+            return "mora"
+        if ev["type"] == "artifact":
+            return "artifact"
+        return "material:" + ev["name"]
+
+    @staticmethod
+    def _event_reading_key(ev):
+        """一条完整 OCR 读数的键；用于从多次读数中选出最可信的数量。"""
+        if ev["type"] == "mora":
+            return ("mora", ev["amount"])
+        if ev["type"] == "artifact":
+            return ("artifact", 1)
+        return ("material", ev["name"], ev["count"])
+
+    def _observe_event(self, ev, frame):
+        """记录一次 OCR 观察，并在事件稳定后只入账一次。
+
+        同一事件必须跨至少两次 OCR、持续 ``_confirm_seconds`` 才会入账。
+        “last_seen”按真实秒数判断，不再因两次 OCR 漏读就结束事件。
+        """
+        now = time.time()
+        identity = self._event_identity(ev)
+        state = self._lifecycles.get(identity)
+        if state is None or now - state["last_seen"] > self._absence_seconds:
+            state = {
+                "first_seen": now,
+                "last_seen": now,
+                "hits": 0,
+                "counted": False,
+                "candidates": {},
+                # 负无穷保证第一条观察一定计入样本，不能用 0：
+                # 在单元测试或刚启动时 now 可能正好为 0。
+                "last_sample": float("-inf"),
+            }
+            self._lifecycles[identity] = state
+
+        # 自动锚点、用户区域可能同时覆盖同一条提示；同一轮扫描只算一次样本。
+        if now - state["last_sample"] >= 0.08:
+            reading = self._event_reading_key(ev)
+            entry = state["candidates"].setdefault(reading, {"hits": 0, "event": ev, "last_seen": 0.0})
+            entry["hits"] += 1
+            entry["event"] = ev
+            entry["last_seen"] = now
+            state["hits"] += 1
+            state["last_sample"] = now
+        state["last_seen"] = now
+
+        if state["counted"]:
+            return False
+        if state["hits"] < 2 or now - state["first_seen"] < self._confirm_seconds:
+            return False
+
+        # 选择重复出现次数最多的读数；并列时保留最新读数。
+        best = max(state["candidates"].values(), key=lambda item: (item["hits"], item["last_seen"]))
+        state["counted"] = True
+        if self._dbg():
+            self._log(f"[DBG] 生命周期确认 identity={identity!r} hits={state['hits']} event={best['event']}")
+        return self._apply_event(best["event"], frame, 0.0, use_tracker=False)
 
     def _find_anchor_region(self, frame):
         """在左下角区域找"获得"标题，返回其下方提示栏区域；找不到返回 None"""
@@ -528,7 +688,8 @@ class Detector:
                 return {"type": "mora", "name": "摩拉", "amount": amount, "count": 1}
             return None
         # 材料 / 圣遗物："名称" + 可选 [×] + 可选数量
-        m = re.match(r"^([\u4e00-\u9fff]{1,10})\s*[×xX]?\s*(\d{1,4})?$", t)
+        # 注意：游戏掉落提示会显示「」书名号，正则需允许这些字符
+        m = re.match(r"^([\u4e00-\u9fff「」]{1,10})\s*[×xX]?\s*(\d{1,4})?$", t)
         if not m:
             return None
         name = m.group(1)
@@ -551,13 +712,13 @@ class Detector:
             if not self.settings.get("enable_artifact", True):
                 return None
             return {"type": "artifact", "count": count}
-        # 3.5) 一字差自动纠错（OCR 受游戏背景遮挡产生错字时，纠正成库中正确名字）
+        # 3.5) 名单纠错（OCR 错字时，从名单找最相似的名字纠正）
         if self.settings.get("enable_artifact", True):
-            corr = self._fuzzy_match(name, ARTIFACT_NAME_SET)
+            corr = self._fuzzy_match(name, ARTIFACT_NAME_SET, _ART_INDEX)
             if corr:
                 return {"type": "artifact", "count": count}
         if self.settings.get("enable_material", True):
-            corr = self._fuzzy_match(name, MATERIAL_NAME_SET)
+            corr = self._fuzzy_match(name, MATERIAL_NAME_SET, _MAT_INDEX)
             if corr:
                 return {"type": "material", "name": corr, "count": count, "category": "monster"}
         # 3.5) 大数字兜底：名字不在任何名单，但数字较大（≥20）
@@ -566,7 +727,9 @@ class Detector:
         if count >= 20:
             if self.settings.get("enable_mora", True):
                 return {"type": "mora", "name": "摩拉", "amount": count, "count": 1}
-        # 4) 其它材料（自动登记）
+        # 4) 其它材料：掉落提示中也会出现采集物等不在初始怪物库里的物品。
+        # 这里仍允许正常入账；真正的防误记由“稳定确认 + 行生命周期”负责，
+        # 不能粗暴过滤，否则会出现明明 OCR 成功却什么都不统计的情况。
         if not self.settings.get("enable_material", True):
             return None
         return {"type": "material", "name": name, "count": count, "category": "monster"}
@@ -659,7 +822,7 @@ class Detector:
         # 材料/圣遗物："名字" 或 "名字×N"（整行必须是这种形式，防止把说明文字当掉落）
         # 注意：OCR 偶尔会读丢数量（如"破损的面具×2"读成"破损的面具×"），
         # 这时按 1 个算，不能整行丢弃导致漏记。
-        m = re.match(r"^([\u4e00-\u9fff]{1,8})\s*(?:[×xX]\s*(\d{1,3}))?\s*[×xX]?$", text)
+        m = re.match(r"^([\u4e00-\u9fff「」]{1,8})\s*(?:[×xX]\s*(\d{1,3}))?\s*[×xX]?$", text)
         if m:
             name = m.group(1)
             count = int(m.group(2)) if m.group(2) else 1
@@ -693,10 +856,13 @@ class Detector:
             return True
         return False
 
-    def _fuzzy_match(self, name, name_set):
+    def _fuzzy_match(self, name, name_set, index=None):
         """
-        一字差自动纠错：识别出的名字不在名单里时，
-        从名单中找一个"只差一个字/缺一个字/多一个字"的正确名字返回。
+        名单纠错：识别出的名字不在名单里时，从名单中找最相似的正确名字返回。
+
+        优化：用"按长度分组"的索引，只遍历长度相近的候选，避免对整份名单
+        （材料 574 + 圣遗物 299）逐个算相似度导致卡顿。
+        相似度阈值 0.6（比一字差的 0.75 更宽松，让识别到的东西尽量归到名单内）。
         找不到返回 None。
         """
         if not name or not name_set:
@@ -704,18 +870,18 @@ class Detector:
         n = len(name)
         best = None
         best_score = 0.0
-        # 限定长度相近（差 ≤2），避免把长名字错配
-        for cand in name_set:
-            cn = len(cand)
-            if abs(cn - n) > 2:
-                continue
-            # 用最长公共子序列占比衡量相似度
-            score = self._sim(name, cand)
-            if score > best_score:
-                best_score = score
-                best = cand
-        # 相似度 ≥ 0.75 视为"一字差"可纠（例如 "魔拉" ~ "摩拉"）
-        if best is not None and best_score >= 0.75:
+        if index is None:
+            index = {}
+            for cand in name_set:
+                index.setdefault(len(cand), []).append(cand)
+        # 只遍历长度差 ≤ 2 的候选
+        for ln in range(n - 2, n + 3):
+            for cand in index.get(ln, []):
+                score = self._sim(name, cand)
+                if score > best_score:
+                    best_score = score
+                    best = cand
+        if best is not None and best_score >= 0.6:
             return best
         return None
 
