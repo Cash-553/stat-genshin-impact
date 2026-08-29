@@ -20,6 +20,7 @@ import numpy as np
 
 import materials_db
 from capture import ScreenCapture
+from printwindow_capture import WindowCapture, find_game_window_hwnd
 from ocr_engine import OcrEngine
 from stats import DailyStats, EventTracker
 from generated_names import ARTIFACT_NAMES, MATERIAL_NAMES
@@ -75,7 +76,9 @@ class Detector:
         self.region = region  # None = 自动检测游戏窗口（不用手动框选）
         self.settings = settings or {}
 
-        self.capture = ScreenCapture()
+        # PrintWindow 截取窗口本身内容（覆盖在游戏上的 BetterGI 提示不会混入）
+        self.capture = WindowCapture()
+        self.window_hwnd = None  # 游戏窗口句柄
         self.ocr = OcrEngine()
         self.ui_detector = UiDetector()  # 判断是否在主界面（无返回/关闭键）
         self.stats = stats if stats is not None else DailyStats()
@@ -163,16 +166,16 @@ class Detector:
             except Exception:
                 pass
         now = time.time()
-        if self.window_rect is None or now - self._last_win_find > 10.0:
+        if self.window_hwnd is None or now - self._last_win_find > 10.0:
             self._last_win_find = now
-            from capture import find_game_window
-            rect = find_game_window()
-            if rect:
-                self.window_rect = rect
-        if self.window_rect is None:
+            found = find_game_window_hwnd()
+            if found:
+                self.window_hwnd, self.window_rect = found
+        if self.window_hwnd is None:
             return None  # 还没找到游戏窗口
         try:
-            return self.capture.grab(self.window_rect)
+            # PrintWindow 截取窗口本身内容（不包含覆盖在上面的 BetterGI 窗口）
+            return self.capture.grab(self.window_hwnd)
         except Exception:
             return None
 
@@ -455,58 +458,83 @@ class Detector:
         return pairs
 
     def _observe_row_snapshot(self, observations, frame):
-        """按收获栏的行队列追踪事件并只在稳定后入账。
-
-        新物品从底部插入、旧行上推；使用有序序列匹配可保留原有行实例。
-        因而即使五行都是同一种材料，新增的第六次拾取仍会产生一个新实例。
         """
-        if not observations:
-            return False
+        5 行 FIFO 拾取 Track 生命周期（最终方案）。
+
+        - 拾取提示建模为最多 5 行的有序 FIFO 队列。
+        - Track 身份 = 有序队列连续 + identity，不用 Y 坐标（补位会变）。
+        - 用"最大有序重叠"（LCS）匹配旧 Track 与当前行，保留原有 Track。
+        - 只有"队尾新增"的行才创建新 Track 并入账一次。
+        - 两帧完全相同、无可证明的新事件时，不新增不统计。
+        - counted 的 Track 生命周期内只入账一次。
+        - OCR 短暂漏读进入 MISSING，不等于结束。
+        """
         now = time.time()
-        old_ids = [track_id for track_id in self._last_row_order
-                   if track_id in self._row_tracks and now - self._row_tracks[track_id]["last_seen"] <= self._absence_seconds]
-        old_labels = [self._row_tracks[track_id]["label"] for track_id in old_ids]
+        if not observations:
+            # 没有观察到任何行：把未超时的 Track 标记为 MISSING（不立即 END）
+            for tid in list(self._row_tracks):
+                st = self._row_tracks[tid]
+                if st["state"] != "ended":
+                    if now - st["last_seen"] > self._absence_seconds:
+                        st["state"] = "ended"
+                    else:
+                        st["state"] = "missing"
+            self._prune_tracks(now)
+            return False
+
+        # 1. 活跃 Track（未 ended、且在 absence 窗口内）
+        active_ids = [tid for tid in self._last_row_order
+                      if tid in self._row_tracks
+                      and self._row_tracks[tid].get("state") != "ended"
+                      and now - self._row_tracks[tid]["last_seen"] <= self._absence_seconds]
+        old_labels = [self._row_tracks[tid]["label"] for tid in active_ids]
         new_labels = [self._row_label(ev) for ev in observations]
+
+        # 2. 最大有序重叠（LCS）：保留原有 Track，识别队尾新增
         pairs = self._lcs_pairs(old_labels, new_labels)
-        matched_new = {new_i: old_ids[old_i] for old_i, new_i in pairs}
+        matched_new = {new_i: active_ids[old_i] for old_i, new_i in pairs}
+
         current_ids = []
         added = False
-
         for index, ev in enumerate(observations):
             label = new_labels[index]
             track_id = matched_new.get(index)
             if track_id is None:
+                # 队尾新增 → 新 Track，可靠识别后立即入账一次
                 track_id = self._next_row_track_id
                 self._next_row_track_id += 1
                 self._row_tracks[track_id] = {
-                    "label": label, "first_seen": now, "last_seen": now,
-                    "last_sample": float("-inf"), "hits": 0, "counted": False,
-                    "candidates": {},
+                    "label": label,
+                    "identity": self._event_identity(ev),
+                    "event": ev,
+                    "first_seen": now,
+                    "last_seen": now,
+                    "state": "visible",
+                    "counted": False,
                 }
-            state = self._row_tracks[track_id]
-            state["last_seen"] = now
-            if now - state["last_sample"] >= 0.08:
-                reading = self._event_reading_key(ev)
-                candidate = state["candidates"].setdefault(reading, {"hits": 0, "event": ev, "last_seen": 0.0})
-                candidate["hits"] += 1
-                candidate["event"] = ev
-                candidate["last_seen"] = now
-                state["hits"] += 1
-                state["last_sample"] = now
-            # 真实画面中有些行仅成功 OCR 一次，等待第二次会造成系统性漏记。
-            # 本方法只会为“队列中新插入的一行”创建一次 track，故可立即入账。
-            if not state["counted"]:
-                best = max(state["candidates"].values(), key=lambda item: (item["hits"], item["last_seen"]))
-                state["counted"] = True
-                added = self._apply_event(best["event"], frame, 0.0, use_tracker=False) or added
+                # 新 Track 入账一次，之后不再重复
+                self._row_tracks[track_id]["counted"] = True
+                added = self._apply_event(ev, frame, 0.0, use_tracker=False) or added
+            else:
+                # 复用旧 Track（同一行提示的连续帧）
+                st = self._row_tracks[track_id]
+                st["last_seen"] = now
+                st["state"] = "visible"
+                st["event"] = ev  # 更新最新读数
             current_ids.append(track_id)
 
         self._last_row_order = current_ids
-        # 长时间不再出现的行实例回收，避免长时间挂机占用内存。
-        for track_id in list(self._row_tracks):
-            if now - self._row_tracks[track_id]["last_seen"] > 15.0:
-                del self._row_tracks[track_id]
+        self._prune_tracks(now)
         return added
+
+    def _prune_tracks(self, now):
+        """回收 ended 或超时的 Track，避免内存增长"""
+        for tid in list(self._row_tracks):
+            st = self._row_tracks[tid]
+            if now - st["last_seen"] > self._absence_seconds:
+                st["state"] = "ended"
+            if now - st["last_seen"] > 15.0:
+                del self._row_tracks[tid]
 
     @staticmethod
     def _event_identity(ev):

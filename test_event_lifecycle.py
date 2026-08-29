@@ -1,71 +1,110 @@
 # -*- coding: utf-8 -*-
-"""不需要游戏画面的核心防重复测试。"""
+"""5行FIFO拾取Track生命周期测试（最终方案）"""
 import unittest
 from unittest.mock import patch
 
 from detector import Detector
 
 
-class EventLifecycleTests(unittest.TestCase):
-    def make_detector(self):
-        detector = Detector.__new__(Detector)
-        detector._lifecycles = {}
-        detector._confirm_seconds = 0.60
-        detector._absence_seconds = 1.50
-        detector._row_tracks = {}
-        detector._last_row_order = []
-        detector._next_row_track_id = 1
-        detector._dbg = lambda: False
-        detector._apply_event = lambda event, frame, score, use_tracker: recorded.append(event.copy()) or True
-        return detector
+def make_detector():
+    det = Detector.__new__(Detector)
+    det._lifecycles = {}
+    det._row_tracks = {}
+    det._last_row_order = []
+    det._next_row_track_id = 1
+    det._confirm_seconds = 0.15
+    det._absence_seconds = 1.5
+    det._dbg = lambda: False
+    det.accounted = []
+    det._apply_event = lambda event, frame, score, use_tracker: det.accounted.append(event) or True
+    return det
 
-    def test_one_visible_prompt_is_recorded_once_despite_ocr_variation(self):
-        global recorded
-        recorded = []
-        detector = self.make_detector()
-        # OCR 从缺失数量、读成 1，到稳定读成 3：仍是同一个提示生命周期。
-        readings = [
-            {"type": "material", "name": "破损的面具", "count": 1},
-            {"type": "material", "name": "破损的面具", "count": 3},
-            {"type": "material", "name": "破损的面具", "count": 3},
-            {"type": "material", "name": "破损的面具", "count": 3},
+
+def ev_mat(name="霜仙花", count=1):
+    return {"type": "material", "name": name, "count": count, "category": "monster"}
+
+
+def run_frames(det, frames, times):
+    """用连续时间喂帧。times 是每帧对应的时间戳列表（单调递增）。"""
+    results = []
+    for obs, t in zip(frames, times):
+        with patch("detector.time.time", return_value=t):
+            results.append(det._observe_row_snapshot(obs, None))
+    return results
+
+
+class TestFifoRowTracks(unittest.TestCase):
+
+    def test_same_row_continuous_frames_counts_once(self):
+        det = make_detector()
+        frames = [[ev_mat("霜仙花")]] * 10
+        times = [0.1 * i for i in range(10)]
+        results = run_frames(det, frames, times)
+        self.assertEqual(results, [True] + [False] * 9)
+        self.assertEqual(len(det.accounted), 1)
+
+    def test_count_loss_does_not_break_track(self):
+        det = make_detector()
+        frames = [[ev_mat("霜仙花", 1)] for _ in range(4)]
+        times = [0.1 * i for i in range(4)]
+        run_frames(det, frames, times)
+        self.assertEqual(len(det.accounted), 1)
+
+    def test_rapid_same_item_counts_multiple(self):
+        det = make_detector()
+        frames = [
+            [ev_mat("霜仙花")],
+            [ev_mat("霜仙花"), ev_mat("霜仙花")],
+            [ev_mat("霜仙花"), ev_mat("霜仙花"), ev_mat("霜仙花")],
+            [ev_mat("霜仙花"), ev_mat("霜仙花"), ev_mat("霜仙花"), ev_mat("霜仙花")],
+            [ev_mat("霜仙花"), ev_mat("霜仙花"), ev_mat("霜仙花"), ev_mat("霜仙花"), ev_mat("霜仙花")],
         ]
-        with patch("detector.time.time", side_effect=[0.0, 0.30, 0.61, 1.00]):
-            results = [detector._observe_event(event, None) for event in readings]
-        self.assertEqual(results, [False, False, True, False])
-        self.assertEqual(recorded, [{"type": "material", "name": "破损的面具", "count": 3}])
+        times = [0.1 * i for i in range(5)]
+        run_frames(det, frames, times)
+        self.assertEqual(len(det.accounted), 5)
 
-    def test_same_item_can_be_recorded_again_only_after_real_absence(self):
-        global recorded
-        recorded = []
-        detector = self.make_detector()
-        event = {"type": "material", "name": "破损的面具", "count": 1}
-        with patch("detector.time.time", side_effect=[0.0, 0.61, 1.00, 3.00, 3.61]):
-            results = [detector._observe_event(event, None) for _ in range(5)]
-        self.assertEqual(results, [False, True, False, False, True])
-        self.assertEqual(len(recorded), 2)
+    def test_disappear_and_reappear_counts_again(self):
+        det = make_detector()
+        # t=0 出现 → +1；t=0.3 仍在；然后消失超过 absence，t=2.0 重现 → +1
+        times = [0.0, 0.3, 2.0, 2.3]
+        frames = [
+            [ev_mat("霜仙花")],
+            [ev_mat("霜仙花")],
+            [],  # 空帧（可能漏读，但 t=2.0 已超 absence）
+            [ev_mat("霜仙花")],
+        ]
+        results = run_frames(det, frames, times)
+        # 第4帧重现应入账
+        self.assertTrue(results[3])
+        self.assertEqual(len(det.accounted), 2)
 
-    def test_five_same_material_rows_are_five_independent_events(self):
-        global recorded
-        recorded = []
-        detector = self.make_detector()
-        rows = [{"type": "material", "name": "破损的面具", "count": 1} for _ in range(5)]
-        with patch("detector.time.time", side_effect=[0.0, 0.30, 0.61, 1.00]):
-            for _ in range(4):
-                detector._observe_row_snapshot(rows, None)
-        self.assertEqual(len(recorded), 5)
+    def test_two_identical_frames_no_new(self):
+        det = make_detector()
+        times = [0.0, 0.1]
+        frames = [[ev_mat("霜仙花")], [ev_mat("霜仙花")]]
+        run_frames(det, frames, times)
+        self.assertEqual(len(det.accounted), 1)
 
-    def test_new_same_material_row_at_bottom_is_not_merged(self):
-        global recorded
-        recorded = []
-        detector = self.make_detector()
-        event = {"type": "material", "name": "破损的面具", "count": 1}
-        with patch("detector.time.time", side_effect=[0.0, 0.61, 1.00, 1.61]):
-            detector._observe_row_snapshot([event], None)
-            detector._observe_row_snapshot([event], None)
-            detector._observe_row_snapshot([event, event], None)
-            detector._observe_row_snapshot([event, event], None)
-        self.assertEqual(len(recorded), 2)
+    def test_five_same_head_exit_new_enter(self):
+        det = make_detector()
+        times = [0.0, 0.3]
+        frames = [
+            [ev_mat("霜仙花")] * 5,
+            [ev_mat("霜仙花")] * 5,
+        ]
+        run_frames(det, frames, times)
+        # 两帧全同名且信息相同 → 按方案第8条：无法证明新事件，不新增
+        self.assertEqual(len(det.accounted), 5)
+
+    def test_distinct_items_in_queue(self):
+        det = make_detector()
+        times = [0.0, 0.1]
+        frames = [
+            [ev_mat("霜仙花"), ev_mat("甜甜花"), ev_mat("薄荷")],
+            [ev_mat("霜仙花"), ev_mat("甜甜花"), ev_mat("薄荷")],
+        ]
+        run_frames(det, frames, times)
+        self.assertEqual(len(det.accounted), 3)
 
 
 if __name__ == "__main__":

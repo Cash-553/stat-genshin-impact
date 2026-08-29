@@ -455,7 +455,7 @@ class MainApp(ctk.CTk):
             btn.pack(fill="x", padx=10, pady=2)
             self.nav_btns[key] = btn
 
-        ctk.CTkLabel(self.sidebar, text="V0.3", font=(FONT, 10), text_color=DIM).pack(side="bottom", pady=12)
+        ctk.CTkLabel(self.sidebar, text="V0.4", font=(FONT, 10), text_color=DIM).pack(side="bottom", pady=12)
 
         # 右侧内容区（透明）
         self.content = ctk.CTkFrame(body, corner_radius=0, fg_color="transparent")
@@ -950,7 +950,7 @@ class MainApp(ctk.CTk):
         card5.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
         ctk.CTkLabel(card5, text="ℹ️ 关于 / 更新", font=(FONT, 13, "bold"), text_color=ACCENT).pack(padx=20, pady=(12, 4))
         ctk.CTkLabel(
-            card5, text="StatGI V0.3（测试版）\n"
+            card5, text="StatGI V0.4（测试版）\n"
                      "· 识别只靠文字（OCR），不读内存、不控制游戏\n"
                      "· 防重复统计：同一个掉落提示只统计一次\n"
                      "· 数据保存在程序旁边的 data 文件夹",
@@ -1381,9 +1381,9 @@ class MainApp(ctk.CTk):
                 with urllib.request.urlopen(req, timeout=8) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
                 latest = str(data.get("tag_name", "")).lstrip("v")
-                current = "0.3"
+                current = "0.4"
                 if latest and latest != current:
-                    url = data.get("html_url", "https://github.com/Cash-553/genshin-income-tracker/releases")
+                    url = data.get("html_url", "https://github.com/Cash-553/StatGI/releases")
                     self.after(0, lambda: self._update_found(latest, current, url))
                 elif latest:
                     self.after(0, lambda: self.update_status_label.configure(text="已是最新版本", text_color=theme.GOOD))
