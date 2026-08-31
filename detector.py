@@ -760,12 +760,18 @@ class Detector:
         if count >= 20:
             if self.settings.get("enable_mora", True):
                 return {"type": "mora", "name": "摩拉", "amount": count, "count": 1}
-        # 4) 其它材料：掉落提示中也会出现采集物等不在初始怪物库里的物品。
-        # 这里仍允许正常入账；真正的防误记由“稳定确认 + 行生命周期”负责，
-        # 不能粗暴过滤，否则会出现明明 OCR 成功却什么都不统计的情况。
+        # 4) 其它材料（不在名单里的未知文本）：
+        # 原版对任何 1-10 字中文都无条件入账，导致地图地名、UI按钮文字、
+        # 元素反应字（如"华光林""角色""扩散"）被误当成掉落材料。
+        # 收紧：未知文本必须带数量且数量 ≥2 才入账。
+        # - 真实掉落提示几乎都带数量（"破损的面具×3"）
+        # - 地名/UI/状态字都是单个词、无数量的（"华光林""角色""扩散"）
+        # 这样既能防漏记（带数量的采集物仍统计），又能挡住无数量的地名/UI误读。
         if not self.settings.get("enable_material", True):
             return None
-        return {"type": "material", "name": name, "count": count, "category": "monster"}
+        if count >= 2:
+            return {"type": "material", "name": name, "count": count, "category": "monster"}
+        return None
 
     def _scan_full(self, frame_bgr):
         """全屏识别兜底（手动区域主用），返回是否统计到新收益"""
