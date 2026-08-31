@@ -21,10 +21,11 @@ import numpy as np
 import materials_db
 from capture import ScreenCapture
 from printwindow_capture import WindowCapture, find_game_window_hwnd
+from dataset_collector import DatasetCollector
 from ocr_engine import OcrEngine
 from stats import DailyStats, EventTracker
 from generated_names import ARTIFACT_NAMES, MATERIAL_NAMES
-from ui_detector import UiDetector
+from main_ui_model import MainUiDetector
 
 # 圣遗物具体件名集合（精确匹配，来自用户提供的名单）
 ARTIFACT_NAME_SET = set(ARTIFACT_NAMES)
@@ -79,8 +80,9 @@ class Detector:
         # PrintWindow 截取窗口本身内容（覆盖在游戏上的 BetterGI 提示不会混入）
         self.capture = WindowCapture()
         self.window_hwnd = None  # 游戏窗口句柄
+        self.dataset = DatasetCollector(self.settings)  # AI 样本采集（开发者选项，默认关闭）
         self.ocr = OcrEngine()
-        self.ui_detector = UiDetector()  # 判断是否在主界面（无返回/关闭键）
+        self.ui_detector = MainUiDetector()  # AI 判断是否在主界面（含2.5秒离开缓冲）
         self.stats = stats if stats is not None else DailyStats()
         self.tracker = EventTracker(
             end_window=float(self.settings.get("event_end_window", 1.5))
@@ -226,9 +228,12 @@ class Detector:
         now = time.time()
         frame = frame_bgr
 
-        # 判断是否在主界面：检测到返回/关闭键说明打开了其他界面，暂停识别
+        # 判断是否在主界面（AI 模型，含 2.5 秒离开缓冲）
         try:
-            if not self.ui_detector.in_main_ui(frame):
+            in_ui = self.ui_detector.in_main_ui(frame)
+            if self._dbg():
+                self._log(f"[DBG] AI主界面 sim={self.ui_detector.last_sim:.3f} thr={self.ui_detector._threshold} in_ui={in_ui}")
+            if not in_ui:
                 return False  # 非主界面，不识别（避免把界面文字当掉落）
         except Exception:
             pass
@@ -826,6 +831,12 @@ class Detector:
                 self.stats.add_artifact()
                 self.last_event = (time.time(), "狗粮 +1")
                 added = True
+        # 开发者选项：确认拾取后，后台采集 GAMEPLAY 训练样本
+        if added:
+            try:
+                self.dataset.capture_gameplay(frame, str(ev.get("name", "")))
+            except Exception:
+                pass
         return added
 
     def _parse_text_event(self, text):

@@ -35,6 +35,7 @@ from stats import DailyStats
 from icon_manager import IconManagerWindow
 from tray import Tray
 from api_server import ApiServer
+from dataset_collector import DatasetCollector
 
 BASE_DIR = paths.app_dir()
 ICONS_DIR = paths.icons_dir()
@@ -455,7 +456,7 @@ class MainApp(ctk.CTk):
             btn.pack(fill="x", padx=10, pady=2)
             self.nav_btns[key] = btn
 
-        ctk.CTkLabel(self.sidebar, text="V0.4", font=(FONT, 10), text_color=DIM).pack(side="bottom", pady=12)
+        ctk.CTkLabel(self.sidebar, text="V0.5", font=(FONT, 10), text_color=DIM).pack(side="bottom", pady=12)
 
         # 右侧内容区（透明）
         self.content = ctk.CTkFrame(body, corner_radius=0, fg_color="transparent")
@@ -950,7 +951,7 @@ class MainApp(ctk.CTk):
         card5.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
         ctk.CTkLabel(card5, text="ℹ️ 关于 / 更新", font=(FONT, 13, "bold"), text_color=ACCENT).pack(padx=20, pady=(12, 4))
         ctk.CTkLabel(
-            card5, text="StatGI V0.4（测试版）\n"
+            card5, text="StatGI V0.5（测试版）\n"
                      "· 识别只靠文字（OCR），不读内存、不控制游戏\n"
                      "· 防重复统计：同一个掉落提示只统计一次\n"
                      "· 数据保存在程序旁边的 data 文件夹",
@@ -972,6 +973,10 @@ class MainApp(ctk.CTk):
             font=(FONT, 10), text_color=DIM,
         ).pack(anchor="w", padx=20, pady=(0, 12))
 
+        # ---- 8. 开发者选项（仅开发者模式显示，默认隐藏）----
+        if self.settings.get("developer_mode", False):
+            self._build_dev_card(scroll, r); r += 1
+
         # 保存按钮（固定在底部）
         ctk.CTkButton(
             page, text="💾 保存设置", font=(FONT, 14),
@@ -982,6 +987,129 @@ class MainApp(ctk.CTk):
     def _setting_row(self, card, title, desc):
         ctk.CTkLabel(card, text=title, font=(FONT, 13), text_color=TEXT).pack(padx=20, pady=(6, 0), anchor="w")
         ctk.CTkLabel(card, text=desc, font=(FONT, 11), text_color=DIM).pack(padx=20, pady=(0, 4), anchor="w")
+
+    # ---------- 开发者选项（AI 样本采集）----------
+
+    def _build_dev_card(self, scroll, r):
+        """构建开发者选项卡片（仅开发者模式显示）"""
+        card = self._make_card(scroll)
+        card.grid(row=r, column=0, sticky="ew", pady=(0, 10))
+        ctk.CTkLabel(card, text="🛠 开发者选项", font=(FONT, 13, "bold"), text_color=ACCENT).pack(padx=20, pady=(12, 4))
+        ctk.CTkLabel(
+            card, text="本地 AI 样本采集（仅供开发者收集训练数据，不影响普通使用）。\n"
+                       "截图全部保存在本地，不上传、不联网、不进 Git。",
+            font=(FONT, 10), text_color=DIM, justify="left",
+        ).pack(anchor="w", padx=20, pady=(0, 8))
+
+        # 启用样本采集
+        self.dataset_enabled_var = ctk.BooleanVar(value=bool(self.settings.get("dataset_enabled", False)))
+        ctk.CTkSwitch(
+            card, text="启用样本采集", variable=self.dataset_enabled_var, onvalue=True, offvalue=False,
+            font=(FONT, 12), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
+        ).pack(anchor="w", padx=20, pady=(0, 6))
+
+        # 保存位置
+        self._setting_row(card, "保存位置", "样本保存目录（默认在用户目录，不在项目内）")
+        path_row = ctk.CTkFrame(card, fg_color="transparent")
+        path_row.pack(fill="x", padx=20, pady=(0, 4))
+        self._dataset_path_label = ctk.CTkLabel(
+            path_row, text=self._dev_path_display(), font=(FONT, 10), text_color=TEXT, anchor="w",
+        )
+        self._dataset_path_label.pack(side="left", fill="x", expand=True)
+        ctk.CTkButton(
+            path_row, text="浏览…", font=(FONT, 11), width=60, height=26,
+            corner_radius=8, fg_color=BTN, hover_color=BTN_HOVER, command=self._on_choose_dataset_path,
+        ).pack(side="right")
+
+        # 统计
+        self._dev_stats_label = ctk.CTkLabel(card, text="", font=(FONT, 10), text_color=DIM, justify="left")
+        self._dev_stats_label.pack(anchor="w", padx=20, pady=(4, 6))
+        self._refresh_dev_stats()
+
+        # 手动采集 + 操作按钮
+        btns = ctk.CTkFrame(card, fg_color="transparent")
+        btns.pack(fill="x", padx=20, pady=(0, 6))
+        ctk.CTkButton(
+            btns, text="采集 GAMEPLAY", font=(FONT, 11), height=28, corner_radius=8,
+            fg_color=BTN, hover_color=BTN_HOVER, command=lambda: self._on_manual_capture("gameplay"),
+        ).pack(side="left", padx=(0, 6))
+        ctk.CTkButton(
+            btns, text="采集 NON_GAMEPLAY", font=(FONT, 11), height=28, corner_radius=8,
+            fg_color=BTN, hover_color=BTN_HOVER, command=lambda: self._on_manual_capture("non_gameplay"),
+        ).pack(side="left", padx=(0, 6))
+        ctk.CTkButton(
+            btns, text="打开文件夹", font=(FONT, 11), height=28, corner_radius=8,
+            fg_color=BTN, hover_color=BTN_HOVER, command=self._on_open_dataset,
+        ).pack(side="left", padx=(0, 6))
+        ctk.CTkButton(
+            btns, text="清空样本", font=(FONT, 11), height=28, corner_radius=8,
+            fg_color=DANGER, hover_color=DANGER_HOVER, command=self._on_clear_dataset,
+        ).pack(side="left")
+
+    def _dev_path_display(self):
+        p = self.settings.get("dataset_path") or ""
+        if p:
+            return p
+        from dataset_collector import DEFAULT_PATH
+        return str(DEFAULT_PATH)
+
+    def _dev_collector(self):
+        return DatasetCollector(self.settings)
+
+    def _refresh_dev_stats(self):
+        try:
+            s = self._dev_collector().stats()
+            if hasattr(self, "_dev_stats_label"):
+                self._dev_stats_label.configure(
+                    text=f"GAMEPLAY：{s['gameplay']}    NON_GAMEPLAY：{s['non_gameplay']}\n"
+                         f"总样本：{s['total']}    占用：{s['size_mb']} MB / {s['max_mb']} MB"
+                )
+        except Exception:
+            pass
+
+    def _on_choose_dataset_path(self):
+        p = filedialog.askdirectory(title="选择样本保存目录", initialdir=self._dev_path_display())
+        if not p:
+            return
+        # 检查是否在项目目录内
+        try:
+            proj = str(Path(__file__).resolve().parent)
+            if proj in p:
+                if not messagebox.askyesno("警告", "⚠️ 当前样本保存目录位于 StatGI 项目目录中。\n"
+                                                 "这些截图可能被 Git 跟踪或误提交到 GitHub。\n"
+                                                 "建议选择项目目录之外的位置。\n\n是否仍然使用？"):
+                    return
+        except Exception:
+            pass
+        self.settings["dataset_path"] = p
+        self._dataset_path_label.configure(text=p)
+        self._refresh_dev_stats()
+
+    def _on_manual_capture(self, label):
+        try:
+            if self.detector is not None:
+                frame = self.detector._grab()
+                self._dev_collector().capture_manual(frame, label)
+                self.after(500, self._refresh_dev_stats)
+                messagebox.showinfo("已采集", f"已触发 {label} 样本采集（后台处理）。")
+            else:
+                messagebox.showinfo("提示", "请先开始监测，才能采集画面。")
+        except Exception as e:
+            messagebox.showerror("失败", f"采集失败：{e}")
+
+    def _on_open_dataset(self):
+        import os
+        try:
+            os.startfile(self._dev_path_display())
+        except Exception as e:
+            messagebox.showerror("失败", f"无法打开文件夹：{e}")
+
+    def _on_clear_dataset(self):
+        if not messagebox.askyesno("确认", "确定要删除所有本地 AI 样本吗？\n\n此操作无法恢复。\n\n[取消] / [确认删除]"):
+            return
+        ok = self._dev_collector().clear_all()
+        self._refresh_dev_stats()
+        messagebox.showinfo("已清空", "本地 AI 样本已清空。" if ok else "清空失败。")
 
     # ---------- 外观设置 ----------
 
@@ -1073,6 +1201,8 @@ class MainApp(ctk.CTk):
         self.settings["enable_material"] = bool(self.enable_mat_var.get())
         self.settings["enable_artifact"] = bool(self.enable_art_var.get())
         self.settings["only_foreground"] = bool(self.only_foreground_var.get()) if hasattr(self, "only_foreground_var") else self.settings.get("only_foreground", True)
+        if hasattr(self, "dataset_enabled_var"):
+            self.settings["dataset_enabled"] = bool(self.dataset_enabled_var.get())
         self.settings["close_behavior"] = {"每次询问": "ask", "最小化到托盘": "tray", "直接退出": "exit"}.get(
             self.close_btn_var.get(), "ask"
         )
@@ -1381,7 +1511,7 @@ class MainApp(ctk.CTk):
                 with urllib.request.urlopen(req, timeout=8) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
                 latest = str(data.get("tag_name", "")).lstrip("v")
-                current = "0.4"
+                current = "0.5"
                 if latest and latest != current:
                     url = data.get("html_url", "https://github.com/Cash-553/StatGI/releases")
                     self.after(0, lambda: self._update_found(latest, current, url))

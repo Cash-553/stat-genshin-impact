@@ -30,6 +30,10 @@ DEFAULT_SETTINGS = {
     "enable_artifact": True,         # 识别圣遗物（狗粮）
     "auto_register_material": True,  # 遇到不认识的材料自动登记到材料库
     "only_foreground": True,       # 只在原神窗口在前台时识别（切到其他应用停止识别）
+    # 开发者选项（默认隐藏，不采集，不影响普通用户）
+    "developer_mode": False,       # 开发者模式（开启后显示开发者选项）
+    "dataset_enabled": False,      # AI 样本采集开关
+    "dataset_path": "",            # 样本保存目录（空=默认 %LOCALAPPDATA%/StatGI/dataset）
     "save_debug": False,           # 自动保存诊断截图（已停用：识别完不留文件；手动诊断仍可用）
     "close_behavior": "ask",       # 点 ✕ 时：ask=每次询问 / tray=最小化到托盘 / exit=直接退出
     # 外观设置（改后重启程序生效；预设名见 theme.py）

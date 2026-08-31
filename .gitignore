@@ -16,6 +16,7 @@ __pycache__/
 build/
 dist/
 *.spec
+!StatGI.spec
 *.exe
 发布版/
 StatGI/
@@ -40,3 +41,10 @@ docs/
 # 系统文件
 Thumbs.db
 Desktop.ini
+
+# AI 训练样本数据集（本地，绝不上传/不提交）
+dataset/
+gameplay/
+non_gameplay/
+dataset_stats.json
+
