@@ -47,6 +47,7 @@ DEFAULT_SETTINGS = {
         "slot2": "_bar_slot2.png",   # 材料（内置）
         "slot3": "_bar_slot3.png",   # 狗粮（内置）
         "always_on_top": True,       # 是否置顶
+        "opacity": 1.0,              # 统计条透明度（0.2~1.0，1.0=不透明）
     },
 }
 
