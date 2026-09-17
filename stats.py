@@ -117,7 +117,7 @@ class DailyStats:
         self.save()
 
     def clear_today(self):
-        """清空今日收益（历史数据不动，挂机时间保留）"""
+        """清空今日收益（历史数据不动，监测时间保留）"""
         self.mora = 0
         self.materials = {}
         self.normal_materials = {}
@@ -125,7 +125,7 @@ class DailyStats:
         self.save()
 
     def clear_running_seconds(self):
-        """单独清空挂机时间（收益数据不动）"""
+        """单独清空监测时间（收益数据不动）"""
         self.running_seconds = 0
         self.save()
 

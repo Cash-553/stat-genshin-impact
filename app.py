@@ -26,6 +26,7 @@ import tkinter as tk
 from tkinter import messagebox, filedialog, colorchooser
 
 import config_manager
+import sessions
 import materials_db
 import paths
 import region_selector
@@ -80,25 +81,31 @@ class MainApp(ctk.CTk):
         super().__init__()
         self.title("StatGI")
         self.overrideredirect(True)   # 无边框窗口（插件风格）
-        # 初始大小与 BetterGI 源码一致（900×600），窗口居中
+        # 把 CustomTkinter 的缩放锁成整数 1.0。
+        # 原因：110% / 125% 这类「非整数缩放」会让 canvas 的坐标出现小数，
+        # 滚动时像素对不齐 —— 表现就是设置页上下滚动时文字留下很重的拖影。
+        # 锁成 1.0 后所有控件按整像素渲染，拖影消失（文字会略小一点点）。
         try:
-            import ctypes
-            hdc = ctypes.windll.user32.GetDC(0)
-            dpi = ctypes.windll.gdi32.GetDeviceCaps(hdc, 88)  # LOGPIXELSX
-            ctypes.windll.user32.ReleaseDC(0, hdc)
-            scale = (dpi if dpi > 0 else 96) / 96.0
+            from customtkinter.windows.widgets.scaling.scaling_tracker import ScalingTracker as _ST
+            _d = _ST.get_window_dpi_scaling(self) or 1.0
+            ctk.set_widget_scaling(1.0 / _d)
+            ctk.set_window_scaling(1.0 / _d)
         except Exception:
-            scale = 1.0
-        self.geometry(f"{int(900 / scale)}x{int(600 / scale)}")
+            try:
+                ctk.set_widget_scaling(1.0)
+                ctk.set_window_scaling(1.0)
+            except Exception:
+                pass
+        # 初始大小 900×600，窗口居中
+        self.geometry("900x600")
         self.resizable(False, False)  # 无边框窗口用自定义边缘拖拽调大小
-        # 居中显示（与 BetterGI CenterScreen 一致）
         self.update_idletasks()
         try:
             sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
             w, h = self.winfo_width(), self.winfo_height()
             x = max(0, (sw - w) // 2)
             y = max(0, (sh - h) // 2)
-            self.geometry(f"+{int(x / scale)}+{int(y / scale)}")
+            self.geometry(f"+{int(x)}+{int(y)}")
         except Exception:
             pass
         # 无边框窗口也显示在任务栏（图标 + 按钮）
@@ -122,7 +129,6 @@ class MainApp(ctk.CTk):
         self.stats = DailyStats()
         self.detector = None          # 开始监测时才创建
         self.monitoring = False
-        self.demo_active = False      # 演示模式开关
         self.stat_bar = None          # 横向统计条窗口
         self._monitor_start = None    # 本次监测开始的时间
         self._prev_list_sig = None    # 上次刷新的素材列表签名
@@ -475,6 +481,7 @@ class MainApp(ctk.CTk):
             ("launch", "🚀", "启动"),
             ("home", "📊", "今日统计"),
             ("bar", "📶", "收益统计条"),
+            ("records", "📋", "收益记录"),
             ("settings", "⚙", "设置"),
         ]:
             btn = ctk.CTkButton(
@@ -499,6 +506,7 @@ class MainApp(ctk.CTk):
         self._build_page_launch()
         self._build_page_home()
         self._build_page_bar()
+        self._build_page_records()
         self._build_page_settings()
 
         # ---- 无边框窗口的边缘调整大小条 ----
@@ -608,84 +616,80 @@ class MainApp(ctk.CTk):
         ctk.CTkLabel(page, text="启动", font=(FONT, 20, "bold"), text_color=ACCENT).grid(
             row=0, column=0, sticky="w", pady=(0, 12))
 
-        # 状态卡片
+        # 状态卡片（精简成一行）
         status_card = self._make_card(page)
         status_card.grid(row=1, column=0, sticky="ew")
-        head = ctk.CTkFrame(status_card, fg_color="transparent")
-        head.pack(fill="x", padx=20, pady=(12, 2))
-        ctk.CTkLabel(head, text="监测状态", font=(FONT, 12, "bold"), text_color=ACCENT).pack(side="left")
-        row1 = ctk.CTkFrame(status_card, fg_color="transparent")
-        row1.pack(fill="x", padx=20, pady=(4, 2))
-        ctk.CTkLabel(row1, text="🟢 状态：", font=(FONT, 13), text_color=DIM).pack(side="left")
-        self.launch_status_label = ctk.CTkLabel(row1, text="未开始", font=(FONT, 13, "bold"), text_color=BAD)
-        self.launch_status_label.pack(side="left")
-        row2 = ctk.CTkFrame(status_card, fg_color="transparent")
-        row2.pack(fill="x", padx=20, pady=2)
-        ctk.CTkLabel(row2, text="📍 识别区域：", font=(FONT, 13), text_color=DIM).pack(side="left")
-        self.launch_region_label = ctk.CTkLabel(row2, text="未设置", font=(FONT, 13), text_color=TEXT)
-        self.launch_region_label.pack(side="left")
-        row3 = ctk.CTkFrame(status_card, fg_color="transparent")
-        row3.pack(fill="x", padx=20, pady=(2, 12))
-        ctk.CTkLabel(row3, text="🕐 最后识别：", font=(FONT, 13), text_color=DIM).pack(side="left")
-        self.last_event_label = ctk.CTkLabel(row3, text="—", font=(FONT, 13), text_color=TEXT)
+        srow = ctk.CTkFrame(status_card, fg_color="transparent")
+        srow.pack(fill="x", padx=20, pady=12)
+        ctk.CTkLabel(srow, text="🟢", font=(FONT, 12)).pack(side="left")
+        self.launch_status_label = ctk.CTkLabel(srow, text="未开始", font=(FONT, 13, "bold"), text_color=BAD)
+        self.launch_status_label.pack(side="left", padx=(4, 18))
+        ctk.CTkLabel(srow, text="📍 识别区域：", font=(FONT, 12), text_color=DIM).pack(side="left")
+        self.launch_region_label = ctk.CTkLabel(srow, text="未设置", font=(FONT, 12), text_color=TEXT)
+        self.launch_region_label.pack(side="left", padx=(0, 18))
+        ctk.CTkLabel(srow, text="🕐 最后识别：", font=(FONT, 12), text_color=DIM).pack(side="left")
+        self.last_event_label = ctk.CTkLabel(srow, text="—", font=(FONT, 12), text_color=TEXT)
         self.last_event_label.pack(side="left")
 
-        # 主按钮（开始监测）
-        main_btns = ctk.CTkFrame(page, fg_color="transparent")
-        main_btns.grid(row=2, column=0, sticky="ew", pady=(14, 6))
-        main_btns.grid_columnconfigure(0, weight=1)
-        self.start_btn = ctk.CTkButton(
-            main_btns, text="▶ 开始监测", font=(FONT, 18),
-            height=54, corner_radius=RADIUS_BTN, fg_color=ACCENT, hover_color=ACCENT_DARK,
-            text_color="#FFFFFF", command=self.on_start_stop,
-        )
-        self.start_btn.grid(row=0, column=0, sticky="ew")
+        # ---- 功能大卡片：每张大卡片中间再套一张小卡片（放图标）----
+        grid = ctk.CTkFrame(page, fg_color="transparent")
+        grid.grid(row=2, column=0, sticky="nsew", pady=(12, 0))
+        page.grid_rowconfigure(2, weight=1)
+        for _c in range(2):
+            grid.grid_columnconfigure(_c, weight=1)
+        for _r in range(3):
+            grid.grid_rowconfigure(_r, weight=1)
 
-        # 次要按钮
-        sub_btns = ctk.CTkFrame(page, fg_color="transparent")
-        sub_btns.grid(row=3, column=0, sticky="ew", pady=(0, 6))
-        for i in range(5):
-            sub_btns.grid_columnconfigure(i, weight=1)
-        ctk.CTkButton(
-            sub_btns, text="重新框选", font=(FONT, 13),
-            height=40, corner_radius=8, fg_color=BTN, hover_color=BTN_HOVER,
-            command=self.on_reselect,
-        ).grid(row=0, column=0, sticky="ew", padx=(0, 5))
-        self.demo_btn = ctk.CTkButton(
-            sub_btns, text="🎬 演示模式", font=(FONT, 12),
-            height=40, corner_radius=8, fg_color=BTN, hover_color=BTN_HOVER,
-            command=self.on_demo,
-        )
-        self.demo_btn.grid(row=0, column=1, sticky="ew", padx=5)
-        ctk.CTkButton(
-            sub_btns, text="清空今日", font=(FONT, 13),
-            height=40, corner_radius=8, fg_color=DANGER, hover_color=DANGER_HOVER,
-            command=self.on_clear_today,
-        ).grid(row=0, column=2, sticky="ew", padx=5)
-        ctk.CTkButton(
-            sub_btns, text="清空时间", font=(FONT, 13),
-            height=40, corner_radius=8, fg_color=DANGER, hover_color=DANGER_HOVER,
-            command=self.on_clear_runtime,
-        ).grid(row=0, column=3, sticky="ew", padx=5)
-        ctk.CTkButton(
-            sub_btns, text="📷 诊断截图", font=(FONT, 12),
-            height=40, corner_radius=8, fg_color=BTN, hover_color=BTN_HOVER,
-            command=self.on_debug_screenshot,
-        ).grid(row=0, column=4, sticky="ew", padx=(5, 0))
+        # 「开始监测」占满整行 + 强调色
+        self.start_card, self.start_card_title = self._make_action_card(
+            grid, "▶", "开始监测", self.on_start_stop, accent=True)
+        self.start_card.grid(row=0, column=0, columnspan=2, sticky="nsew", pady=(0, 8))
 
-        # 使用流程卡片
-        guide = self._make_card(page)
-        guide.grid(row=4, column=0, sticky="ew", pady=(10, 0))
-        ctk.CTkLabel(guide, text="使用流程", font=(FONT, 13, "bold"), text_color=ACCENT).pack(padx=20, pady=(12, 4))
-        ctk.CTkLabel(
-            guide,
-            text="1️⃣ 打开原神（建议无边框窗口模式）\n"
-                 "2️⃣ 点「开始监测」——程序自动找到游戏窗口并识别\n"
-                 "   （不用手动框选，掉落提示出现在哪里都能识别）\n"
-                 "3️⃣ 在「今日统计」查看收益，或打开「收益统计条」放直播间\n"
-                 "4️⃣ 想只识别某一小块区域？点「重新框选」手动指定",
-            font=(FONT, 12), text_color=DIM, justify="left",
-        ).pack(padx=20, pady=(0, 14))
+        _items = [
+            ("🎯", "重新框选", self.on_reselect),
+            ("🧹", "清空今日", self.on_clear_today),
+            ("⏱", "清空时间", self.on_clear_runtime),
+            ("📷", "诊断截图", self.on_debug_screenshot),
+        ]
+        for _i, (_icon, _title, _cmd) in enumerate(_items):
+            _row, _col = 1 + _i // 2, _i % 2
+            _card = self._make_action_card(grid, _icon, _title, _cmd)[0]
+            _card.grid(
+                row=_row, column=_col, sticky="nsew",
+                padx=((0, 8) if _col == 0 else (8, 0)),
+                pady=((0, 8) if _row == 1 else (0, 0)),
+            )
+
+    def _make_action_card(self, parent, icon, title, command, accent=False):
+        """启动页的功能大卡片：大卡片中间套一张小卡片（图标），下面写名字。
+
+        整张卡片（含小卡片和文字）都可以点。
+        """
+        big = ctk.CTkFrame(parent, corner_radius=RADIUS_CARD, fg_color=CARD,
+                           border_width=1, border_color=theme.BORDER)
+        small = ctk.CTkFrame(big, width=56, height=56, corner_radius=16,
+                             fg_color=(ACCENT if accent else CARD_INNER), border_width=0)
+        small.pack(pady=(16, 8))
+        small.pack_propagate(False)
+        icon_lbl = ctk.CTkLabel(small, text=icon, font=(FONT, 22),
+                                text_color=("#FFFFFF" if accent else ACCENT))
+        icon_lbl.place(relx=0.5, rely=0.5, anchor="center")
+        title_lbl = ctk.CTkLabel(big, text=title, font=(FONT, 13, "bold"), text_color=TEXT)
+        title_lbl.pack(pady=(0, 16))
+
+        def _click(_e=None):
+            try:
+                command()
+            except Exception:
+                pass
+
+        for _w in (big, small, icon_lbl, title_lbl):
+            try:
+                _w.bind("<Button-1>", _click)
+                _w.configure(cursor="hand2")
+            except Exception:
+                pass
+        return big, title_lbl
 
     # ---- 页面：今日统计 ----
 
@@ -694,7 +698,7 @@ class MainApp(ctk.CTk):
         page.grid(row=0, column=0, sticky="nsew", padx=22, pady=18)
         page.grid_columnconfigure(0, weight=1)
 
-        # 上排三个卡片：摩拉 / 狗粮 / 挂机时间
+        # 上排三个卡片：摩拉 / 狗粮 / 监测时间
         cards = ctk.CTkFrame(page, fg_color="transparent")
         cards.grid(row=0, column=0, sticky="ew")
         for i in range(3):
@@ -714,7 +718,7 @@ class MainApp(ctk.CTk):
 
         time_card = self._make_card(cards)
         time_card.grid(row=0, column=2, sticky="nsew", padx=(6, 0))
-        ctk.CTkLabel(time_card, text="⏱ 挂机时间", font=(FONT, 12), text_color=DIM).pack(pady=(14, 2))
+        ctk.CTkLabel(time_card, text="⏱ 监测时间", font=(FONT, 12), text_color=DIM).pack(pady=(14, 2))
         self.time_label = ctk.CTkLabel(time_card, text="00:00:00", font=(FONT, 26, "bold"), text_color=TEXT)
         self.time_label.pack(pady=(6, 14))
 
@@ -847,23 +851,162 @@ class MainApp(ctk.CTk):
         except Exception:
             pass
 
-    # ---- 页面：设置（可滚动，分组卡片 + 更多选项）----
+    # ---- 页面：收益记录（每次「开始监测→停止监测」记一条）----
 
-    def _build_page_settings(self):
+    def _build_page_records(self):
         page = ctk.CTkFrame(self.content, fg_color="transparent")
         page.grid(row=0, column=0, sticky="nsew", padx=22, pady=18)
         page.grid_columnconfigure(0, weight=1)
         page.grid_rowconfigure(1, weight=1)
 
-        ctk.CTkLabel(page, text="设置", font=(FONT, 20, "bold"), text_color=ACCENT).grid(
-            row=0, column=0, sticky="w", pady=(0, 12))
+        head = ctk.CTkFrame(page, fg_color="transparent")
+        head.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        ctk.CTkLabel(head, text="收益记录", font=(FONT, 20, "bold"), text_color=ACCENT).pack(side="left")
+        ctk.CTkButton(
+            head, text="🗑 清空记录", font=(FONT, 12), width=100, height=30,
+            corner_radius=RADIUS_BTN, fg_color=DANGER, hover_color=DANGER_HOVER,
+            command=self.on_clear_records,
+        ).pack(side="right")
 
-        # 滚动容器（选项多，一页放不下）
-        # 注意：这里必须用【不透明】背景色。用 "transparent" 时，
-        # 滚动过程中 canvas 不会重绘底下的内容，文字会留下很重的拖影。
-        scroll = ctk.CTkScrollableFrame(page, corner_radius=0, fg_color=BG)
-        scroll.grid(row=1, column=0, sticky="nsew")
-        scroll.grid_columnconfigure(0, weight=1)
+        self.records_scroll = ctk.CTkScrollableFrame(page, corner_radius=RADIUS_CARD, fg_color=CARD)
+        self.records_scroll.grid(row=1, column=0, sticky="nsew")
+        self.records_scroll.grid_columnconfigure(0, weight=1)
+
+        self._rec_open = set()
+        self._rec_widgets = {}
+        self._rebuild_records()
+
+    @staticmethod
+    def _fmt_dur(sec):
+        sec = int(max(0, sec))
+        h, m, s = sec // 3600, (sec % 3600) // 60, sec % 60
+        if h:
+            return f"{h}小时{m}分"
+        if m:
+            return f"{m}分{s}秒"
+        return f"{s}秒"
+
+    def _rebuild_records(self):
+        sc = getattr(self, "records_scroll", None)
+        if sc is None:
+            return
+        for w in sc.winfo_children():
+            w.destroy()
+        self._rec_widgets = {}
+        items = sessions.load_sessions()
+        if not items:
+            ctk.CTkLabel(
+                sc, text="（还没有记录）\n点「开始监测」跑一段时间，再点「停止监测」，就会生成一条。",
+                font=(FONT, 12), text_color=DIM, justify="left",
+            ).pack(pady=24)
+            return
+        # 最新的排在最上面
+        for idx in range(len(items) - 1, -1, -1):
+            self._make_record_card(sc, idx, items[idx])
+
+    def _make_record_card(self, parent, idx, rec):
+        card = ctk.CTkFrame(parent, fg_color=CARD_INNER, corner_radius=10)
+        card.pack(fill="x", padx=8, pady=4)
+
+        top = ctk.CTkFrame(card, fg_color="transparent")
+        top.pack(fill="x", padx=12, pady=(10, 2))
+        ctk.CTkLabel(top, text=f"{rec.get('start', '')}  →  {rec.get('end', '')}",
+                     font=(FONT, 11), text_color=DIM).pack(side="left")
+        ctk.CTkLabel(top, text=self._fmt_dur(rec.get("seconds", 0)),
+                     font=(FONT, 12, "bold"), text_color=ACCENT).pack(side="right")
+
+        mid = ctk.CTkFrame(card, fg_color="transparent")
+        mid.pack(fill="x", padx=12, pady=(2, 6))
+        ctk.CTkLabel(mid, text=f"💰 {int(rec.get('mora', 0)):,}", font=(FONT, 13), text_color=TEXT).pack(
+            side="left", padx=(0, 18))
+        ctk.CTkLabel(mid, text=f"💠 狗粮 ×{int(rec.get('artifact', 0))}", font=(FONT, 13), text_color=TEXT).pack(
+            side="left", padx=(0, 18))
+        _mats = rec.get("materials") or {}
+        ctk.CTkLabel(mid, text=f"⚔ 材料 {len(_mats)} 种 / {sum(_mats.values())} 个",
+                     font=(FONT, 13), text_color=TEXT).pack(side="left")
+
+        # 明细区（默认收起）
+        detail = ctk.CTkFrame(card, fg_color="transparent")
+        if _mats:
+            for name, cnt in sorted(_mats.items(), key=lambda kv: -kv[1]):
+                r = ctk.CTkFrame(detail, fg_color="transparent")
+                r.pack(fill="x", pady=1)
+                ctk.CTkLabel(r, text=name, font=(FONT, 12), text_color=TEXT).pack(side="left")
+                ctk.CTkLabel(r, text=f"×{cnt}", font=(FONT, 12, "bold"), text_color=ACCENT).pack(side="right")
+        else:
+            ctk.CTkLabel(detail, text="（这段时间没有识别到材料）",
+                         font=(FONT, 11), text_color=DIM).pack(anchor="w")
+
+        btn_row = ctk.CTkFrame(card, fg_color="transparent")
+        btn_row.pack(fill="x", padx=12, pady=(0, 10))
+        btn = ctk.CTkButton(
+            btn_row, text="查看明细 ▾", font=(FONT, 12), width=100, height=28,
+            corner_radius=RADIUS_BTN, fg_color=BTN, hover_color=BTN_HOVER,
+            command=lambda i=idx: self._toggle_record_detail(i),
+        )
+        btn.pack(side="right")
+
+        self._rec_widgets[idx] = (detail, btn)
+        if idx in getattr(self, "_rec_open", set()):
+            detail.pack(fill="x", padx=12, pady=(0, 8))
+            btn.configure(text="收起明细 ▴")
+
+    def _toggle_record_detail(self, idx):
+        w = getattr(self, "_rec_widgets", {}).get(idx)
+        if not w:
+            return
+        detail, btn = w
+        if not hasattr(self, "_rec_open"):
+            self._rec_open = set()
+        if idx in self._rec_open:
+            self._rec_open.discard(idx)
+            detail.pack_forget()
+            btn.configure(text="查看明细 ▾")
+        else:
+            self._rec_open.add(idx)
+            detail.pack(fill="x", padx=12, pady=(0, 8))
+            btn.configure(text="收起明细 ▴")
+
+    def on_clear_records(self):
+        if not messagebox.askyesno("确认", "确定清空所有收益记录吗？\n（今日统计的数据不受影响）"):
+            return
+        sessions.clear_sessions()
+        self._rec_open = set()
+        self._rebuild_records()
+        messagebox.showinfo("已清空", "收益记录已清空")
+
+    # ---- 页面：设置（标签页 + 分组卡片）----
+
+    def _build_page_settings(self):
+        page = ctk.CTkFrame(self.content, fg_color="transparent")
+        page.grid(row=0, column=0, sticky="nsew", padx=22, pady=18)
+        page.grid_columnconfigure(0, weight=1)
+        page.grid_rowconfigure(2, weight=1)
+
+        ctk.CTkLabel(page, text="设置", font=(FONT, 20, "bold"), text_color=ACCENT).grid(
+            row=0, column=0, sticky="w", pady=(0, 10))
+
+        # ---- 标签栏：设置项很多，分组显示，尽量不用滚动 ----
+        self.settings_tab_var = ctk.StringVar(value="识别")
+        ctk.CTkSegmentedButton(
+            page, values=["识别", "统计", "外观", "关于"], variable=self.settings_tab_var,
+            font=(FONT, 12), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
+            text_color=TEXT, text_color_disabled=DIM, command=self._on_settings_tab,
+        ).grid(row=1, column=0, sticky="ew", pady=(0, 10))
+
+        holder = ctk.CTkFrame(page, fg_color="transparent")
+        holder.grid(row=2, column=0, sticky="nsew")
+        holder.grid_columnconfigure(0, weight=1)
+        holder.grid_rowconfigure(0, weight=1)
+        self._settings_tabs = {}
+        for _name in ("识别", "统计", "外观", "关于"):
+            _f = ctk.CTkScrollableFrame(holder, corner_radius=0, fg_color=BG)
+            _f.grid(row=0, column=0, sticky="nsew")
+            _f.grid_columnconfigure(0, weight=1)
+            self._settings_tabs[_name] = _f
+
+        # 当前标签的滚动容器（下面各分区依次往里放卡片）
+        scroll = self._settings_tabs["识别"]
 
         r = 0
 
@@ -919,7 +1062,8 @@ class MainApp(ctk.CTk):
             text_color=TEXT,
         ).pack(anchor="w", padx=20, pady=(0, 12))
 
-        # ---- 3. 识别内容 ----
+        # ---- 3. 识别内容（切到「统计」标签）----
+        scroll = self._settings_tabs["统计"]; r = 0
         card3 = self._make_card(scroll)
         card3.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
         ctk.CTkLabel(card3, text="🎯 识别内容（想统计什么就开什么）", font=(FONT, 13, "bold"), text_color=ACCENT).pack(padx=20, pady=(12, 6))
@@ -961,7 +1105,8 @@ class MainApp(ctk.CTk):
             font=(FONT, 12), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
         ).pack(anchor="w", padx=20, pady=(0, 12))
 
-        # ---- 6. 外观 ----
+        # ---- 6. 外观（切到「外观」标签）----
+        scroll = self._settings_tabs["外观"]; r = 0
         card6 = self._make_card(scroll)
         card6.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
         ctk.CTkLabel(card6, text="🎨 外观（改后重启程序生效）", font=(FONT, 13, "bold"), text_color=ACCENT).pack(padx=20, pady=(12, 6))
@@ -1048,7 +1193,8 @@ class MainApp(ctk.CTk):
             font=(FONT, 10), text_color=DIM,
         ).pack(anchor="w", padx=20, pady=(0, 12))
 
-        # ---- 7. 关于 / 更新 ----
+        # ---- 7. 关于 / 更新（切到「关于」标签）----
+        scroll = self._settings_tabs["关于"]; r = 0
         card5 = self._make_card(scroll)
         card5.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
         ctk.CTkLabel(card5, text="ℹ️ 关于 / 更新", font=(FONT, 13, "bold"), text_color=ACCENT).pack(padx=20, pady=(12, 4))
@@ -1084,7 +1230,25 @@ class MainApp(ctk.CTk):
             page, text="💾 保存设置", font=(FONT, 14),
             height=42, corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_DARK,
             text_color="#FFFFFF", command=self.on_save_settings,
-        ).grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        ).grid(row=3, column=0, sticky="ew", pady=(10, 0))
+
+        # 默认显示第一个标签
+        self._on_settings_tab("识别")
+
+    def _on_settings_tab(self, name):
+        """切换设置页标签：同一格里只显示当前标签的滚动容器"""
+        try:
+            for k, f in getattr(self, "_settings_tabs", {}).items():
+                if k == name:
+                    f.grid()
+                    try:
+                        f._parent_canvas.yview_moveto(0)
+                    except Exception:
+                        pass
+                else:
+                    f.grid_remove()
+        except Exception:
+            pass
 
     def _setting_row(self, card, title, desc):
         ctk.CTkLabel(card, text=title, font=(FONT, 13), text_color=TEXT).pack(padx=20, pady=(6, 0), anchor="w")
@@ -1341,7 +1505,7 @@ class MainApp(ctk.CTk):
 
     def _show_page(self, key):
         self._current_page = key
-        pages = {"launch": 0, "home": 1, "bar": 2, "settings": 3}
+        pages = {"launch": 0, "home": 1, "bar": 2, "records": 3, "settings": 4}
         for i, child in enumerate(self.content.winfo_children()):
             if i != pages[key]:
                 child.grid_remove()
@@ -1352,6 +1516,12 @@ class MainApp(ctk.CTk):
                 btn.configure(fg_color=NAV_ON, text_color=ACCENT, font=(FONT, 13, "bold"))
             else:
                 btn.configure(fg_color="transparent", text_color=DIM, font=(FONT, 13))
+        # 进「收益记录」时刷新一次列表
+        if key == "records":
+            try:
+                self._rebuild_records()
+            except Exception:
+                pass
 
     # ================= 主循环 =================
 
@@ -1406,8 +1576,6 @@ class MainApp(ctk.CTk):
             pass
 
     def start_monitor(self):
-        self.demo_active = False
-        self.demo_btn.configure(text="🎬 演示模式（模拟掉落，自动统计）")
         # 预热 OCR 模型（主线程加载，1~3秒；避免后台线程首次加载闪退）
         self._set_status("正在加载识别模型…", DIM)
         self.update_idletasks()
@@ -1435,8 +1603,16 @@ class MainApp(ctk.CTk):
         self._detect_thread.start()
         self.monitoring = True
         self._monitor_start = time.monotonic()
+        # 收益记录：记下开始时的数据快照，停止时算差值写一条记录
+        self._sess_start_ts = time.time()
+        self._sess_snapshot = (
+            self.stats.mora,
+            self.stats.artifact,
+            dict(self.stats.materials),
+            dict(self.stats.normal_materials),
+        )
         self._set_status(mode_text, GOOD)
-        self.start_btn.configure(text="⏸ 停止监测")
+        self.start_card_title.configure(text="⏸ 停止监测")
 
     def _detect_loop(self, region):
         """后台检测线程：识别（含慢速OCR）全部在这里跑，主线程只管界面"""
@@ -1486,6 +1662,7 @@ class MainApp(ctk.CTk):
         if self.monitoring and self._monitor_start:
             self.stats.running_seconds += int(time.monotonic() - self._monitor_start)
             self.stats.save()
+        self._record_session()   # 写入「收益记录」
         self.monitoring = False
         self._monitor_start = None
         # 停止后台检测线程（daemon，不 join 避免卡界面；detector 在线程内已 close）
@@ -1496,81 +1673,45 @@ class MainApp(ctk.CTk):
                 pass
         self._detect_stop = None
         self._detect_thread = None
-        if self.demo_active:
-            self.demo_active = False
-            self.demo_btn.configure(text="🎬 演示模式（模拟掉落，自动统计）")
         self._set_status("已暂停", BAD)
-        self.start_btn.configure(text="▶ 开始监测")
+        self.start_card_title.configure(text="▶ 开始监测")
 
-    def on_demo(self):
-        """演示模式：不用游戏也能看到统计流程跑起来"""
-        if self.demo_active:
-            # 退出演示
-            self.stop_monitor()
-            self._refresh_region_state()
-            return
-        # 启动演示
-        if self.monitoring:
-            self.stop_monitor()
-        self.demo_active = True
-        self._detect_stop = threading.Event()
-        self._detect_queue = queue.Queue()
-        self._detect_err_streak = 0
-        self._detect_thread = threading.Thread(
-            target=self._demo_loop, args=(), daemon=True
-        )
-        self._detect_thread.start()
-        self.monitoring = True
-        self._monitor_start = time.monotonic()
-        self._set_status("演示模式（模拟掉落）", ACCENT)
-        self.start_btn.configure(text="⏸ 停止监测")
-        self.demo_btn.configure(text="⏹ 退出演示")
-
-    def _demo_loop(self):
-        """演示模式的检测线程（模拟画面，走完整识别流程）"""
-        stop_ev = self._detect_stop  # 局部引用，避免竞态
+    def _record_session(self):
+        """把这次监测的收益差值写进「收益记录」"""
         try:
-            import demo
-            det = demo.create_demo_detector(
-                {"x": 0, "y": 0, "w": 700, "h": 160},
-                self.stats,
-                {"event_end_window": 2.0, "change_threshold": 2.0},
+            snap = getattr(self, "_sess_snapshot", None)
+            start_ts = getattr(self, "_sess_start_ts", None)
+            if snap is None or start_ts is None:
+                return
+            self._sess_snapshot = None
+            self._sess_start_ts = None
+            s_mora, s_art, s_mat, s_norm = snap
+            # 当前材料（怪物 + 普通合并）
+            cur = dict(self.stats.materials)
+            for k, v in self.stats.normal_materials.items():
+                cur[k] = cur.get(k, 0) + v
+            old = dict(s_mat)
+            for k, v in s_norm.items():
+                old[k] = old.get(k, 0) + v
+            gained = {}
+            for k, v in cur.items():
+                d = int(v) - int(old.get(k, 0))
+                if d > 0:
+                    gained[k] = d
+            now = time.time()
+            rec = sessions.make_record(
+                start_ts, now, now - start_ts,
+                self.stats.mora - s_mora,
+                self.stats.artifact - s_art,
+                gained,
             )
+            sessions.add_session(rec)
+            try:
+                self._rebuild_records()
+            except Exception:
+                pass
         except Exception:
-            try:
-                self._detect_queue.put(("error", "演示启动失败"))
-            except Exception:
-                pass
-            return
-        self.detector = det
-        try:
-            last_ts = None
-            while stop_ev is not None and not stop_ev.is_set():
-                try:
-                    det.tick()
-                    self._detect_err_streak = 0
-                except Exception:
-                    self._detect_err_streak += 1
-                    if self._detect_err_streak > 20:
-                        try:
-                            self._detect_queue.put(("error", "演示出错"))
-                        except Exception:
-                            pass
-                        break
-                ev = det.last_event
-                if ev is not None and ev[0] != last_ts:
-                    last_ts = ev[0]
-                    try:
-                        self._detect_queue.put(("event", ev))
-                    except Exception:
-                        pass
-                stop_ev.wait(0.05)
-        finally:
-            try:
-                det.close()
-            except Exception:
-                pass
-            self.detector = None
+            pass
 
     def on_reselect(self):
         """重新框选识别区域（不隐藏主窗口，遮罩本身在最顶层）"""
@@ -1653,15 +1794,15 @@ class MainApp(ctk.CTk):
         messagebox.showinfo("已清空", "今天的收益已清空")
 
     def on_clear_runtime(self):
-        """单独清空挂机时间（收益数据不动）。正在监测时从中断点重新计时。"""
-        if not messagebox.askyesno("确认", "确定清空挂机时间吗？\n（摩拉、材料等收益不受影响）"):
+        """单独清空监测时间（收益数据不动）。正在监测时从中断点重新计时。"""
+        if not messagebox.askyesno("确认", "确定清空监测时间吗？\n（摩拉、材料等收益不受影响）"):
             return
         self.stats.clear_running_seconds()
-        # 若正在监测，重置本次开始时间，让挂机时间从 0 重新累计
+        # 若正在监测，重置本次开始时间，让监测时间从 0 重新累计
         if self.monitoring:
             self._monitor_start = time.monotonic()
         self._refresh_ui()
-        messagebox.showinfo("已清空", "挂机时间已清空")
+        messagebox.showinfo("已清空", "监测时间已清空")
 
     def on_debug_screenshot(self):
         """保存当前识别区域的截图，并 OCR 显示画面里有什么（用于确认框选是否正确）"""
@@ -1745,13 +1886,13 @@ class MainApp(ctk.CTk):
         if not r:
             # 自动模式：不用框选，程序自动找游戏窗口
             self._set_status("未框选（自动检测游戏窗口）", DIM)
-            self.start_btn.configure(state="normal", text="▶ 开始监测")
+            self.start_card_title.configure(text="▶ 开始监测")
             try:
                 self.launch_region_label.configure(text="自动检测游戏窗口（也可「重新框选」手动指定）")
             except Exception:
                 pass
         else:
-            self.start_btn.configure(state="normal", text="▶ 开始监测")
+            self.start_card_title.configure(text="▶ 开始监测")
             try:
                 self.launch_region_label.configure(text=f"({r['x']}, {r['y']})  {r['w']}×{r['h']}")
             except Exception:
@@ -1770,7 +1911,7 @@ class MainApp(ctk.CTk):
         try:
             # 今日摩拉（千分位）
             self.mora_label.configure(text=f"{self.stats.mora:,}")
-            # 挂机时间
+            # 监测时间
             total = self.stats.running_seconds
             if self.monitoring and self._monitor_start:
                 total += int(time.monotonic() - self._monitor_start)
