@@ -96,8 +96,8 @@ class MainApp(ctk.CTk):
                 ctk.set_window_scaling(1.0)
             except Exception:
                 pass
-        # 初始大小 900×600，窗口居中
-        self.geometry("900x600")
+        # 初始大小 900×660（卡片放大后需要更高的窗口），窗口居中
+        self.geometry("900x660")
         self.resizable(False, False)  # 无边框窗口用自定义边缘拖拽调大小
         self.update_idletasks()
         try:
@@ -437,20 +437,20 @@ class MainApp(ctk.CTk):
         header.grid_columnconfigure(1, weight=1)
 
         title_lbl = ctk.CTkLabel(header, text="🍃  StatGI",
-                                 font=(FONT, 15, "bold"), text_color=TEXT)
+                                 font=(FONT, 18, "bold"), text_color=TEXT)
         title_lbl.pack(side="left", padx=16)
 
         self.status_label = ctk.CTkLabel(header, text="未开始",
-                                         font=(FONT, 12, "bold"), text_color=BAD)
+                                         font=(FONT, 15, "bold"), text_color=BAD)
         self.status_label.pack(side="left", padx=14)
 
         close_btn = ctk.CTkButton(
-            header, text="✕", width=36, height=26, corner_radius=RADIUS_BTN, font=(FONT, 13),
+            header, text="✕", width=36, height=26, corner_radius=RADIUS_BTN, font=(FONT, 16),
             fg_color="transparent", hover_color="#3A2A2A", text_color=TEXT, command=self.on_close,
         )
         close_btn.pack(side="right", padx=(0, 10), pady=9)
         min_btn = ctk.CTkButton(
-            header, text="─", width=36, height=26, corner_radius=RADIUS_BTN, font=(FONT, 13),
+            header, text="─", width=36, height=26, corner_radius=RADIUS_BTN, font=(FONT, 16),
             fg_color="transparent", hover_color=BTN_HOVER, text_color=TEXT, command=self._minimize_to_tray,
         )
         min_btn.pack(side="right", padx=(0, 2), pady=9)
@@ -486,7 +486,7 @@ class MainApp(ctk.CTk):
         ]:
             btn = ctk.CTkButton(
                 self.sidebar, text=f"{icon}  {label}",
-                font=(FONT, 13),
+                font=(FONT, 16),
                 height=40, corner_radius=RADIUS_BTN,
                 fg_color="transparent", hover_color=NAV_ON,
                 text_color=DIM, anchor="w",
@@ -495,7 +495,7 @@ class MainApp(ctk.CTk):
             btn.pack(fill="x", padx=10, pady=2)
             self.nav_btns[key] = btn
 
-        ctk.CTkLabel(self.sidebar, text="V0.5", font=(FONT, 10), text_color=DIM).pack(side="bottom", pady=12)
+        ctk.CTkLabel(self.sidebar, text="V0.6", font=(FONT, 12), text_color=DIM).pack(side="bottom", pady=12)
 
         # 右侧内容区（透明）
         self.content = ctk.CTkFrame(body, corner_radius=0, fg_color="transparent")
@@ -613,7 +613,7 @@ class MainApp(ctk.CTk):
         page.grid(row=0, column=0, sticky="nsew", padx=22, pady=18)
         page.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(page, text="启动", font=(FONT, 20, "bold"), text_color=ACCENT).grid(
+        ctk.CTkLabel(page, text="启动", font=(FONT, 23, "bold"), text_color=ACCENT).grid(
             row=0, column=0, sticky="w", pady=(0, 12))
 
         # ---- 顶部：大标题 + 状态 + 装饰区 ----
@@ -624,19 +624,19 @@ class MainApp(ctk.CTk):
                             fg_color=CARD_INNER, border_width=1, border_color=theme.BORDER)
         deco.pack(side="right", padx=(8, 12), pady=9)
         deco.pack_propagate(False)
-        ctk.CTkLabel(deco, text="🍃", font=(FONT, 20)).pack(pady=(6, 0))
-        ctk.CTkLabel(deco, text="StatGI V0.5", font=(FONT, 9, "bold"), text_color=ACCENT).pack()
+        ctk.CTkLabel(deco, text="🍃", font=(FONT, 23)).pack(pady=(6, 0))
+        ctk.CTkLabel(deco, text="StatGI V0.6", font=(FONT, 11, "bold"), text_color=ACCENT).pack()
 
         hl = ctk.CTkFrame(header, fg_color="transparent")
         hl.pack(side="left", fill="both", expand=True, padx=16, pady=8)
-        ctk.CTkLabel(hl, text="🍃  StatGI", font=(FONT, 16, "bold"), text_color=TEXT).pack(anchor="w")
+        ctk.CTkLabel(hl, text="🍃  StatGI", font=(FONT, 19, "bold"), text_color=TEXT).pack(anchor="w")
         _r1 = ctk.CTkFrame(hl, fg_color="transparent")
         _r1.pack(anchor="w")
-        self.launch_status_label = ctk.CTkLabel(_r1, text="🟢 未开始", font=(FONT, 11, "bold"), text_color=BAD)
+        self.launch_status_label = ctk.CTkLabel(_r1, text="🟢 未开始", font=(FONT, 13, "bold"), text_color=BAD)
         self.launch_status_label.pack(side="left")
-        self.launch_region_label = ctk.CTkLabel(_r1, text="　📍 自动检测游戏窗口", font=(FONT, 9), text_color=DIM)
+        self.launch_region_label = ctk.CTkLabel(_r1, text="　📍 自动检测游戏窗口", font=(FONT, 11), text_color=DIM)
         self.launch_region_label.pack(side="left")
-        self.last_event_label = ctk.CTkLabel(hl, text="🕐 最后识别：—", font=(FONT, 9), text_color=DIM)
+        self.last_event_label = ctk.CTkLabel(hl, text="🕐 最后识别：—", font=(FONT, 11), text_color=DIM)
         self.last_event_label.pack(anchor="w")
 
         # ---- 功能卡片：横向长条（左图标 / 中标题说明 / 右按钮）----
@@ -669,28 +669,28 @@ class MainApp(ctk.CTk):
                             border_width=1, border_color=theme.BORDER)
 
         btn = ctk.CTkButton(
-            card, text=btn_text, font=(FONT, 11), width=76, height=28,
+            card, text=btn_text, font=(FONT, 13), width=84, height=34,
             corner_radius=RADIUS_BTN,
             fg_color=(ACCENT if accent else BTN),
             hover_color=(ACCENT_DARK if accent else BTN_HOVER),
             text_color=("#FFFFFF" if accent else TEXT),
             command=command,
         )
-        btn.pack(side="right", padx=(10, 12), pady=5)
+        btn.pack(side="right", padx=(10, 14), pady=9)
 
-        ic = ctk.CTkFrame(card, width=34, height=34, corner_radius=10,
+        ic = ctk.CTkFrame(card, width=42, height=42, corner_radius=12,
                           fg_color=(ACCENT if accent else CARD_INNER))
-        ic.pack(side="left", padx=(12, 10), pady=5)
+        ic.pack(side="left", padx=(14, 12), pady=9)
         ic.pack_propagate(False)
-        _il = ctk.CTkLabel(ic, text=icon, font=(FONT, 15),
+        _il = ctk.CTkLabel(ic, text=icon, font=(FONT, 20),
                            text_color=("#FFFFFF" if accent else ACCENT))
         _il.place(relx=0.5, rely=0.5, anchor="center")
 
         mid = ctk.CTkFrame(card, fg_color="transparent")
-        mid.pack(side="left", fill="both", expand=True, pady=5)
-        tl = ctk.CTkLabel(mid, text=title, font=(FONT, 12, "bold"), text_color=TEXT, anchor="w")
+        mid.pack(side="left", fill="both", expand=True, pady=9)
+        tl = ctk.CTkLabel(mid, text=title, font=(FONT, 15, "bold"), text_color=TEXT, anchor="w")
         tl.pack(anchor="w")
-        ctk.CTkLabel(mid, text=desc, font=(FONT, 9), text_color=DIM, anchor="w").pack(anchor="w", pady=(1, 0))
+        ctk.CTkLabel(mid, text=desc, font=(FONT, 11), text_color=DIM, anchor="w").pack(anchor="w", pady=(2, 0))
 
         def _click(_e=None):
             try:
@@ -722,20 +722,20 @@ class MainApp(ctk.CTk):
 
         mora_card = self._make_card(cards)
         mora_card.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
-        ctk.CTkLabel(mora_card, text="💰 今日摩拉", font=(FONT, 12), text_color=DIM).pack(pady=(14, 2))
-        self.mora_label = ctk.CTkLabel(mora_card, text="0", font=(FONT, 34, "bold"), text_color=ACCENT)
+        ctk.CTkLabel(mora_card, text="💰 今日摩拉", font=(FONT, 15), text_color=DIM).pack(pady=(14, 2))
+        self.mora_label = ctk.CTkLabel(mora_card, text="0", font=(FONT, 36, "bold"), text_color=ACCENT)
         self.mora_label.pack(pady=(0, 14))
 
         art_card = self._make_card(cards)
         art_card.grid(row=0, column=1, sticky="nsew", padx=6)
-        ctk.CTkLabel(art_card, text="💠 狗粮（圣遗物）", font=(FONT, 12), text_color=DIM).pack(pady=(14, 2))
-        self.artifact_label = ctk.CTkLabel(art_card, text="×0", font=(FONT, 34, "bold"), text_color=ACCENT)
+        ctk.CTkLabel(art_card, text="💠 狗粮（圣遗物）", font=(FONT, 15), text_color=DIM).pack(pady=(14, 2))
+        self.artifact_label = ctk.CTkLabel(art_card, text="×0", font=(FONT, 36, "bold"), text_color=ACCENT)
         self.artifact_label.pack(pady=(0, 14))
 
         time_card = self._make_card(cards)
         time_card.grid(row=0, column=2, sticky="nsew", padx=(6, 0))
-        ctk.CTkLabel(time_card, text="⏱ 监测时间", font=(FONT, 12), text_color=DIM).pack(pady=(14, 2))
-        self.time_label = ctk.CTkLabel(time_card, text="00:00:00", font=(FONT, 26, "bold"), text_color=TEXT)
+        ctk.CTkLabel(time_card, text="⏱ 监测时间", font=(FONT, 15), text_color=DIM).pack(pady=(14, 2))
+        self.time_label = ctk.CTkLabel(time_card, text="00:00:00", font=(FONT, 28, "bold"), text_color=TEXT)
         self.time_label.pack(pady=(6, 14))
 
         # 素材区（双列：怪物素材 | 普通材料）
@@ -745,10 +745,10 @@ class MainApp(ctk.CTk):
 
         head2 = ctk.CTkFrame(recent, fg_color="transparent")
         head2.pack(fill="x", padx=14, pady=(12, 2))
-        ctk.CTkLabel(head2, text="⚔ 材料", font=(FONT, 14, "bold"), text_color=ACCENT).pack(side="left")
+        ctk.CTkLabel(head2, text="⚔ 材料", font=(FONT, 17, "bold"), text_color=ACCENT).pack(side="left")
         # 「查看明细」按钮：原「素材明细」页已合并到这里，点它就地展开明细
         self.detail_toggle_btn = ctk.CTkButton(
-            head2, text="查看明细", font=(FONT, 11), width=84, height=26,
+            head2, text="查看明细", font=(FONT, 13), width=84, height=26,
             corner_radius=RADIUS_BTN, fg_color=BTN, hover_color=BTN_HOVER,
             text_color=TEXT, command=self._toggle_material_detail,
         )
@@ -763,7 +763,7 @@ class MainApp(ctk.CTk):
         self.detail_scroll = ctk.CTkScrollableFrame(
             self.detail_frame, corner_radius=RADIUS_INNER, fg_color=CARD_INNER)
         self.detail_scroll.pack(fill="both", expand=True)
-        self.detail_total_label = ctk.CTkLabel(self.detail_frame, text="", font=(FONT, 12), text_color=DIM)
+        self.detail_total_label = ctk.CTkLabel(self.detail_frame, text="", font=(FONT, 15), text_color=DIM)
         self.detail_total_label.pack(anchor="w", padx=6, pady=(6, 0))
         self.detail_scroll2 = self.detail_scroll   # 兼容旧引用
         self._detail_shown = False
@@ -793,23 +793,23 @@ class MainApp(ctk.CTk):
         page.grid(row=0, column=0, sticky="nsew", padx=22, pady=18)
         page.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(page, text="收益统计条", font=(FONT, 20, "bold"), text_color=ACCENT).grid(
+        ctk.CTkLabel(page, text="收益统计条", font=(FONT, 23, "bold"), text_color=ACCENT).grid(
             row=0, column=0, sticky="w", pady=(0, 12))
 
         card = self._make_card(page)
         card.grid(row=1, column=0, sticky="ew")
         ctk.CTkLabel(
             card, text="直播间小窗口：摩拉 / 材料 / 狗粮 三个格子，图标在上、数量在下。",
-            font=(FONT, 13), text_color=TEXT,
+            font=(FONT, 16), text_color=TEXT,
         ).pack(padx=20, pady=(16, 4))
         ctk.CTkLabel(
             card, text="· 打开后可以随便拖动位置，放到直播间角落\n"
                        "· 三个格子的图标已内置（默认图标）\n"
                        "· OBS 里用「窗口捕获」选「收益统计条」窗口即可上屏",
-            font=(FONT, 12), text_color=DIM, justify="left",
+            font=(FONT, 15), text_color=DIM, justify="left",
         ).pack(padx=20, pady=(0, 12))
         self.bar_btn = ctk.CTkButton(
-            card, text="📶 打开统计条", font=(FONT, 14),
+            card, text="📶 打开统计条", font=(FONT, 17),
             height=44, corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_DARK,
             text_color="#FFFFFF", command=self.on_stat_bar_toggle,
         )
@@ -818,14 +818,14 @@ class MainApp(ctk.CTk):
         # ---- 子选项：统计条透明度 ----
         op_card = self._make_card(page)
         op_card.grid(row=2, column=0, sticky="ew", pady=(10, 0))
-        ctk.CTkLabel(op_card, text="🌓 统计条透明度", font=(FONT, 14, "bold"),
+        ctk.CTkLabel(op_card, text="🌓 统计条透明度", font=(FONT, 17, "bold"),
                      text_color=ACCENT).pack(anchor="w", padx=20, pady=(14, 2))
         ctk.CTkLabel(op_card, text="往左拉更透明，放在直播画面上不容易挡到游戏画面。",
-                     font=(FONT, 12), text_color=DIM).pack(anchor="w", padx=20, pady=(0, 8))
+                     font=(FONT, 15), text_color=DIM).pack(anchor="w", padx=20, pady=(0, 8))
 
         op_row = ctk.CTkFrame(op_card, fg_color="transparent")
         op_row.pack(fill="x", padx=20, pady=(0, 16))
-        self.bar_opacity_label = ctk.CTkLabel(op_row, text="", font=(FONT, 13, "bold"),
+        self.bar_opacity_label = ctk.CTkLabel(op_row, text="", font=(FONT, 16, "bold"),
                                               text_color=TEXT, width=56)
         self.bar_opacity_label.pack(side="right", padx=(12, 0))
         _cur_op = float((self.settings.get("stat_bar") or {}).get("opacity", 1.0))
@@ -877,9 +877,9 @@ class MainApp(ctk.CTk):
 
         head = ctk.CTkFrame(page, fg_color="transparent")
         head.grid(row=0, column=0, sticky="ew", pady=(0, 10))
-        ctk.CTkLabel(head, text="收益记录", font=(FONT, 20, "bold"), text_color=ACCENT).pack(side="left")
+        ctk.CTkLabel(head, text="收益记录", font=(FONT, 23, "bold"), text_color=ACCENT).pack(side="left")
         ctk.CTkButton(
-            head, text="🗑 清空记录", font=(FONT, 12), width=100, height=30,
+            head, text="🗑 清空记录", font=(FONT, 15), width=100, height=30,
             corner_radius=RADIUS_BTN, fg_color=DANGER, hover_color=DANGER_HOVER,
             command=self.on_clear_records,
         ).pack(side="right")
@@ -913,7 +913,7 @@ class MainApp(ctk.CTk):
         if not items:
             ctk.CTkLabel(
                 sc, text="（还没有记录）\n点「开始监测」跑一段时间，再点「停止监测」，就会生成一条。",
-                font=(FONT, 12), text_color=DIM, justify="left",
+                font=(FONT, 15), text_color=DIM, justify="left",
             ).pack(pady=24)
             return
         # 最新的排在最上面
@@ -927,19 +927,19 @@ class MainApp(ctk.CTk):
         top = ctk.CTkFrame(card, fg_color="transparent")
         top.pack(fill="x", padx=12, pady=(10, 2))
         ctk.CTkLabel(top, text=f"{rec.get('start', '')}  →  {rec.get('end', '')}",
-                     font=(FONT, 11), text_color=DIM).pack(side="left")
+                     font=(FONT, 13), text_color=DIM).pack(side="left")
         ctk.CTkLabel(top, text=self._fmt_dur(rec.get("seconds", 0)),
-                     font=(FONT, 12, "bold"), text_color=ACCENT).pack(side="right")
+                     font=(FONT, 15, "bold"), text_color=ACCENT).pack(side="right")
 
         mid = ctk.CTkFrame(card, fg_color="transparent")
         mid.pack(fill="x", padx=12, pady=(2, 6))
-        ctk.CTkLabel(mid, text=f"💰 {int(rec.get('mora', 0)):,}", font=(FONT, 13), text_color=TEXT).pack(
+        ctk.CTkLabel(mid, text=f"💰 {int(rec.get('mora', 0)):,}", font=(FONT, 16), text_color=TEXT).pack(
             side="left", padx=(0, 18))
-        ctk.CTkLabel(mid, text=f"💠 狗粮 ×{int(rec.get('artifact', 0))}", font=(FONT, 13), text_color=TEXT).pack(
+        ctk.CTkLabel(mid, text=f"💠 狗粮 ×{int(rec.get('artifact', 0))}", font=(FONT, 16), text_color=TEXT).pack(
             side="left", padx=(0, 18))
         _mats = rec.get("materials") or {}
         ctk.CTkLabel(mid, text=f"⚔ 材料 {len(_mats)} 种 / {sum(_mats.values())} 个",
-                     font=(FONT, 13), text_color=TEXT).pack(side="left")
+                     font=(FONT, 16), text_color=TEXT).pack(side="left")
 
         # 明细区（默认收起）
         detail = ctk.CTkFrame(card, fg_color="transparent")
@@ -947,16 +947,16 @@ class MainApp(ctk.CTk):
             for name, cnt in sorted(_mats.items(), key=lambda kv: -kv[1]):
                 r = ctk.CTkFrame(detail, fg_color="transparent")
                 r.pack(fill="x", pady=1)
-                ctk.CTkLabel(r, text=name, font=(FONT, 12), text_color=TEXT).pack(side="left")
-                ctk.CTkLabel(r, text=f"×{cnt}", font=(FONT, 12, "bold"), text_color=ACCENT).pack(side="right")
+                ctk.CTkLabel(r, text=name, font=(FONT, 15), text_color=TEXT).pack(side="left")
+                ctk.CTkLabel(r, text=f"×{cnt}", font=(FONT, 15, "bold"), text_color=ACCENT).pack(side="right")
         else:
             ctk.CTkLabel(detail, text="（这段时间没有识别到材料）",
-                         font=(FONT, 11), text_color=DIM).pack(anchor="w")
+                         font=(FONT, 13), text_color=DIM).pack(anchor="w")
 
         btn_row = ctk.CTkFrame(card, fg_color="transparent")
         btn_row.pack(fill="x", padx=12, pady=(0, 10))
         btn = ctk.CTkButton(
-            btn_row, text="查看明细 ▾", font=(FONT, 12), width=100, height=28,
+            btn_row, text="查看明细 ▾", font=(FONT, 15), width=100, height=28,
             corner_radius=RADIUS_BTN, fg_color=BTN, hover_color=BTN_HOVER,
             command=lambda i=idx: self._toggle_record_detail(i),
         )
@@ -999,14 +999,14 @@ class MainApp(ctk.CTk):
         page.grid_columnconfigure(0, weight=1)
         page.grid_rowconfigure(2, weight=1)
 
-        ctk.CTkLabel(page, text="设置", font=(FONT, 20, "bold"), text_color=ACCENT).grid(
+        ctk.CTkLabel(page, text="设置", font=(FONT, 23, "bold"), text_color=ACCENT).grid(
             row=0, column=0, sticky="w", pady=(0, 10))
 
         # ---- 标签栏：设置项很多，分组显示，尽量不用滚动 ----
         self.settings_tab_var = ctk.StringVar(value="识别")
         ctk.CTkSegmentedButton(
             page, values=["识别", "统计", "外观", "关于"], variable=self.settings_tab_var,
-            font=(FONT, 12), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
+            font=(FONT, 15), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
             text_color=TEXT, text_color_disabled=DIM, command=self._on_settings_tab,
         ).grid(row=1, column=0, sticky="ew", pady=(0, 10))
 
@@ -1029,11 +1029,11 @@ class MainApp(ctk.CTk):
         # ---- 1. 检测设置 ----
         card1 = self._make_card(scroll)
         card1.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
-        ctk.CTkLabel(card1, text="⚙️ 检测设置", font=(FONT, 13, "bold"), text_color=ACCENT).pack(padx=20, pady=(12, 6))
+        ctk.CTkLabel(card1, text="⚙️ 检测设置", font=(FONT, 16, "bold"), text_color=ACCENT).pack(padx=20, pady=(12, 6))
 
         self._setting_row(card1, "检测间隔（毫秒）", "每多少毫秒检查一次画面（默认 50，可填 10~5000）")
         self.tick_entry = ctk.CTkEntry(
-            card1, font=(FONT, 13), height=32, fg_color=CARD_INNER,
+            card1, font=(FONT, 16), height=32, fg_color=CARD_INNER,
             text_color=TEXT, border_color=BTN_HOVER,
         )
         self.tick_entry.insert(0, str(int(self.settings.get("tick_interval", 50))))
@@ -1043,20 +1043,20 @@ class MainApp(ctk.CTk):
         self.change_var = ctk.StringVar(value=str(self.settings.get("change_level", "中")))
         ctk.CTkSegmentedButton(
             card1, values=["高", "中", "低"], variable=self.change_var,
-            font=(FONT, 12), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
+            font=(FONT, 15), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
             text_color=TEXT, text_color_disabled=DIM,
         ).pack(padx=20, pady=(0, 12))
 
         # ---- 2. 识别设置 ----
         card2 = self._make_card(scroll)
         card2.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
-        ctk.CTkLabel(card2, text="🔍 识别设置", font=(FONT, 13, "bold"), text_color=ACCENT).pack(padx=20, pady=(12, 6))
+        ctk.CTkLabel(card2, text="🔍 识别设置", font=(FONT, 16, "bold"), text_color=ACCENT).pack(padx=20, pady=(12, 6))
 
         self._setting_row(card2, "防重复窗口（秒）", "同一提示消失多久后再出现才算新掉落（默认 1.5 秒）")
         self.event_var = ctk.StringVar(value=str(self.settings.get("event_end_window", 1.5)))
         ctk.CTkSegmentedButton(
             card2, values=["1.0", "1.5", "2.5"], variable=self.event_var,
-            font=(FONT, 12), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
+            font=(FONT, 15), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
             text_color=TEXT, text_color_disabled=DIM,
         ).pack(padx=20, pady=(0, 10))
 
@@ -1066,7 +1066,7 @@ class MainApp(ctk.CTk):
         )
         ctk.CTkSegmentedButton(
             card2, values=["快", "标准", "慢"], variable=self.ocr_var,
-            font=(FONT, 12), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
+            font=(FONT, 15), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
             text_color=TEXT, text_color_disabled=DIM,
         ).pack(padx=20, pady=(0, 10))
 
@@ -1074,7 +1074,7 @@ class MainApp(ctk.CTk):
         self.auto_reg_var = ctk.BooleanVar(value=bool(self.settings.get("auto_register_material", True)))
         ctk.CTkSwitch(
             card2, text="开启", variable=self.auto_reg_var, onvalue=True, offvalue=False,
-            font=(FONT, 12), fg_color=ACCENT, progress_color=ACCENT_DARK,
+            font=(FONT, 15), fg_color=ACCENT, progress_color=ACCENT_DARK,
             text_color=TEXT,
         ).pack(anchor="w", padx=20, pady=(0, 12))
 
@@ -1082,35 +1082,35 @@ class MainApp(ctk.CTk):
         scroll = self._settings_tabs["统计"]; r = 0
         card3 = self._make_card(scroll)
         card3.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
-        ctk.CTkLabel(card3, text="🎯 识别内容（想统计什么就开什么）", font=(FONT, 13, "bold"), text_color=ACCENT).pack(padx=20, pady=(12, 6))
+        ctk.CTkLabel(card3, text="🎯 识别内容（想统计什么就开什么）", font=(FONT, 16, "bold"), text_color=ACCENT).pack(padx=20, pady=(12, 6))
 
         self.enable_mora_var = ctk.BooleanVar(value=bool(self.settings.get("enable_mora", True)))
         ctk.CTkSwitch(
             card3, text="💰 识别摩拉", variable=self.enable_mora_var, onvalue=True, offvalue=False,
-            font=(FONT, 13), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
+            font=(FONT, 16), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
         ).pack(anchor="w", padx=20, pady=(4, 2))
         self.enable_mat_var = ctk.BooleanVar(value=bool(self.settings.get("enable_material", True)))
         ctk.CTkSwitch(
             card3, text="⚔ 识别怪物素材", variable=self.enable_mat_var, onvalue=True, offvalue=False,
-            font=(FONT, 13), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
+            font=(FONT, 16), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
         ).pack(anchor="w", padx=20, pady=2)
         self.enable_art_var = ctk.BooleanVar(value=bool(self.settings.get("enable_artifact", True)))
         ctk.CTkSwitch(
             card3, text="💠 识别圣遗物（狗粮）", variable=self.enable_art_var, onvalue=True, offvalue=False,
-            font=(FONT, 13), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
+            font=(FONT, 16), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
         ).pack(anchor="w", padx=20, pady=(2, 12))
 
         # ---- 4. 运行设置 ----
         card4 = self._make_card(scroll)
         card4.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
-        ctk.CTkLabel(card4, text="🖥 运行设置", font=(FONT, 13, "bold"), text_color=ACCENT).pack(padx=20, pady=(12, 6))
+        ctk.CTkLabel(card4, text="🖥 运行设置", font=(FONT, 16, "bold"), text_color=ACCENT).pack(padx=20, pady=(12, 6))
 
         self._setting_row(card4, "点右上角 ✕ 时", "每次询问=弹窗选择；最小化到托盘=监测继续；直接退出=关闭程序")
         _cb = {"ask": "每次询问", "tray": "最小化到托盘", "exit": "直接退出"}.get(self.settings.get("close_behavior", "ask"), "每次询问")
         self.close_btn_var = ctk.StringVar(value=_cb)
         ctk.CTkSegmentedButton(
             card4, values=["每次询问", "最小化到托盘", "直接退出"], variable=self.close_btn_var,
-            font=(FONT, 12), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
+            font=(FONT, 15), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
             text_color=TEXT, text_color_disabled=DIM,
         ).pack(padx=20, pady=(0, 12))
 
@@ -1118,14 +1118,14 @@ class MainApp(ctk.CTk):
         self.only_foreground_var = ctk.BooleanVar(value=bool(self.settings.get("only_foreground", True)))
         ctk.CTkSwitch(
             card4, text="开启", variable=self.only_foreground_var, onvalue=True, offvalue=False,
-            font=(FONT, 12), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
+            font=(FONT, 15), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
         ).pack(anchor="w", padx=20, pady=(0, 12))
 
         # ---- 6. 外观（切到「外观」标签）----
         scroll = self._settings_tabs["外观"]; r = 0
         card6 = self._make_card(scroll)
         card6.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
-        ctk.CTkLabel(card6, text="🎨 外观（改后重启程序生效）", font=(FONT, 13, "bold"), text_color=ACCENT).pack(padx=20, pady=(12, 6))
+        ctk.CTkLabel(card6, text="🎨 外观（改后重启程序生效）", font=(FONT, 16, "bold"), text_color=ACCENT).pack(padx=20, pady=(12, 6))
 
         self._setting_row(card6, "背景颜色", "窗口背景色（可以选任意颜色）")
         cur_bg = self.settings.get("bg_color", "经典深黑")
@@ -1134,7 +1134,7 @@ class MainApp(ctk.CTk):
         self.bg_var = ctk.StringVar(value=cur_bg if cur_bg in theme.BG_PRESETS else "自定义…")
         ctk.CTkSegmentedButton(
             card6, values=list(theme.BG_PRESETS.keys()) + ["自定义…"], variable=self.bg_var,
-            font=(FONT, 11), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
+            font=(FONT, 13), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
             text_color=TEXT, text_color_disabled=DIM, command=self._on_pick_bg_color,
         ).pack(padx=20, pady=(0, 10))
 
@@ -1145,7 +1145,7 @@ class MainApp(ctk.CTk):
         self.accent_var = ctk.StringVar(value=cur_ac if cur_ac in theme.ACCENT_PRESETS else "自定义…")
         ctk.CTkSegmentedButton(
             card6, values=list(theme.ACCENT_PRESETS.keys()) + ["自定义…"], variable=self.accent_var,
-            font=(FONT, 11), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
+            font=(FONT, 13), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
             text_color=TEXT, text_color_disabled=DIM, command=self._on_pick_accent_color,
         ).pack(padx=20, pady=(0, 10))
 
@@ -1153,18 +1153,18 @@ class MainApp(ctk.CTk):
         bg_row = ctk.CTkFrame(card6, fg_color="transparent")
         bg_row.pack(fill="x", padx=20, pady=(0, 4))
         ctk.CTkButton(
-            bg_row, text="🖼 选择图片…", font=(FONT, 12), height=32,
+            bg_row, text="🖼 选择图片…", font=(FONT, 15), height=32,
             fg_color=BTN, hover_color=BTN_HOVER, command=self._choose_bg_image,
         ).pack(side="left", padx=(0, 6))
         ctk.CTkButton(
-            bg_row, text="✖ 清除背景", font=(FONT, 12), height=32,
+            bg_row, text="✖ 清除背景", font=(FONT, 15), height=32,
             fg_color=DANGER, hover_color=DANGER_HOVER, command=self._clear_bg_image,
         ).pack(side="left")
         _cur_bg_file = Path(self.settings.get("bg_image") or "").name if self.settings.get("bg_image") else ""
         self._bg_img_label = ctk.CTkLabel(
             card6,
             text=f"当前：{_cur_bg_file}" if _cur_bg_file else "未设置（纯色背景）",
-            font=(FONT, 11), text_color=DIM,
+            font=(FONT, 13), text_color=DIM,
         )
         self._bg_img_label.pack(anchor="w", padx=20, pady=(0, 8))
 
@@ -1172,23 +1172,23 @@ class MainApp(ctk.CTk):
         self.glass_var = ctk.BooleanVar(value=bool(self.settings.get("sidebar_glass", True)))
         ctk.CTkSwitch(
             card6, text="开启", variable=self.glass_var, onvalue=True, offvalue=False,
-            font=(FONT, 12), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
+            font=(FONT, 15), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
         ).pack(anchor="w", padx=20, pady=(0, 12))
 
         # ---- 6.5 OBS 浏览器源 ----
         card_obs = self._make_card(scroll)
         card_obs.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
-        ctk.CTkLabel(card_obs, text="📺 连接 OBS 直播覆盖", font=(FONT, 13, "bold"), text_color=ACCENT).pack(padx=20, pady=(12, 4))
+        ctk.CTkLabel(card_obs, text="📺 连接 OBS 直播覆盖", font=(FONT, 16, "bold"), text_color=ACCENT).pack(padx=20, pady=(12, 4))
         ctk.CTkLabel(
             card_obs, text="开启后，StatGI 会提供一个本地网页地址。\n"
                            "在 OBS 里添加「浏览器源」，粘贴这个地址，\n"
                            "即可在直播画面上显示收益统计（弹幕区 + 2×2 收益 + 备注区）。",
-            font=(FONT, 11), text_color=DIM, justify="left",
+            font=(FONT, 13), text_color=DIM, justify="left",
         ).pack(anchor="w", padx=20, pady=(0, 8))
         self.obs_var = ctk.BooleanVar(value=bool(self.settings.get("obs_browser_source", False)))
         ctk.CTkSwitch(
             card_obs, text="开启 OBS 浏览器源", variable=self.obs_var, onvalue=True, offvalue=False,
-            font=(FONT, 12), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
+            font=(FONT, 15), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
             command=self._toggle_obs_source,
         ).pack(anchor="w", padx=20, pady=(0, 6))
         # 地址行
@@ -1197,44 +1197,44 @@ class MainApp(ctk.CTk):
         api_port = int(self.settings.get("api_port", 8765))
         self._obs_addr_label = ctk.CTkLabel(
             obs_row, text=f"地址：http://127.0.0.1:{api_port}/overlay",
-            font=(FONT, 11), text_color=TEXT,
+            font=(FONT, 13), text_color=TEXT,
         )
         self._obs_addr_label.pack(side="left")
         ctk.CTkButton(
-            obs_row, text="复制", font=(FONT, 11), width=52, height=26,
+            obs_row, text="复制", font=(FONT, 13), width=52, height=26,
             corner_radius=8, fg_color=BTN, hover_color=BTN_HOVER, command=self._copy_obs_addr,
         ).pack(side="right")
         ctk.CTkLabel(
             card_obs, text="备注：透明背景，可直接叠在游戏画面上。",
-            font=(FONT, 10), text_color=DIM,
+            font=(FONT, 12), text_color=DIM,
         ).pack(anchor="w", padx=20, pady=(0, 12))
 
         # ---- 7. 关于 / 更新（切到「关于」标签）----
         scroll = self._settings_tabs["关于"]; r = 0
         card5 = self._make_card(scroll)
         card5.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
-        ctk.CTkLabel(card5, text="ℹ️ 关于 / 更新", font=(FONT, 13, "bold"), text_color=ACCENT).pack(padx=20, pady=(12, 4))
+        ctk.CTkLabel(card5, text="ℹ️ 关于 / 更新", font=(FONT, 16, "bold"), text_color=ACCENT).pack(padx=20, pady=(12, 4))
         ctk.CTkLabel(
-            card5, text="StatGI V0.5（测试版）\n"
+            card5, text="StatGI V0.6（测试版）\n"
                      "· 识别只靠文字（OCR），不读内存、不控制游戏\n"
                      "· 防重复统计：同一个掉落提示只统计一次\n"
                      "· 数据保存在程序旁边的 data 文件夹",
-            font=(FONT, 12), text_color=DIM, justify="left",
+            font=(FONT, 15), text_color=DIM, justify="left",
         ).pack(padx=20, pady=(0, 8))
         upd_row = ctk.CTkFrame(card5, fg_color="transparent")
         upd_row.pack(fill="x", padx=20, pady=(0, 4))
         ctk.CTkButton(
-            upd_row, text="🔍 检测更新", font=(FONT, 13), height=34,
+            upd_row, text="🔍 检测更新", font=(FONT, 16), height=34,
             corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_DARK, text_color="#FFFFFF",
             command=self.on_check_update,
         ).pack(side="left")
         self.update_status_label = ctk.CTkLabel(
-            upd_row, text="", font=(FONT, 11), text_color=DIM,
+            upd_row, text="", font=(FONT, 13), text_color=DIM,
         )
         self.update_status_label.pack(side="left", padx=10)
         ctk.CTkLabel(
             card5, text="检测更新会访问 GitHub Releases，需要联网。",
-            font=(FONT, 10), text_color=DIM,
+            font=(FONT, 12), text_color=DIM,
         ).pack(anchor="w", padx=20, pady=(0, 12))
 
         # ---- 8. 开发者选项（仅开发者模式显示，默认隐藏）----
@@ -1243,7 +1243,7 @@ class MainApp(ctk.CTk):
 
         # 保存按钮（固定在底部）
         ctk.CTkButton(
-            page, text="💾 保存设置", font=(FONT, 14),
+            page, text="💾 保存设置", font=(FONT, 17),
             height=42, corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_DARK,
             text_color="#FFFFFF", command=self.on_save_settings,
         ).grid(row=3, column=0, sticky="ew", pady=(10, 0))
@@ -1267,8 +1267,8 @@ class MainApp(ctk.CTk):
             pass
 
     def _setting_row(self, card, title, desc):
-        ctk.CTkLabel(card, text=title, font=(FONT, 13), text_color=TEXT).pack(padx=20, pady=(6, 0), anchor="w")
-        ctk.CTkLabel(card, text=desc, font=(FONT, 11), text_color=DIM).pack(padx=20, pady=(0, 4), anchor="w")
+        ctk.CTkLabel(card, text=title, font=(FONT, 16), text_color=TEXT).pack(padx=20, pady=(6, 0), anchor="w")
+        ctk.CTkLabel(card, text=desc, font=(FONT, 13), text_color=DIM).pack(padx=20, pady=(0, 4), anchor="w")
 
     # ---------- 开发者选项（AI 样本采集）----------
 
@@ -1276,18 +1276,18 @@ class MainApp(ctk.CTk):
         """构建开发者选项卡片（仅开发者模式显示）"""
         card = self._make_card(scroll)
         card.grid(row=r, column=0, sticky="ew", pady=(0, 10))
-        ctk.CTkLabel(card, text="🛠 开发者选项", font=(FONT, 13, "bold"), text_color=ACCENT).pack(padx=20, pady=(12, 4))
+        ctk.CTkLabel(card, text="🛠 开发者选项", font=(FONT, 16, "bold"), text_color=ACCENT).pack(padx=20, pady=(12, 4))
         ctk.CTkLabel(
             card, text="本地 AI 样本采集（仅供开发者收集训练数据，不影响普通使用）。\n"
                        "截图全部保存在本地，不上传、不联网、不进 Git。",
-            font=(FONT, 10), text_color=DIM, justify="left",
+            font=(FONT, 12), text_color=DIM, justify="left",
         ).pack(anchor="w", padx=20, pady=(0, 8))
 
         # 启用样本采集
         self.dataset_enabled_var = ctk.BooleanVar(value=bool(self.settings.get("dataset_enabled", False)))
         ctk.CTkSwitch(
             card, text="启用样本采集", variable=self.dataset_enabled_var, onvalue=True, offvalue=False,
-            font=(FONT, 12), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
+            font=(FONT, 15), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
         ).pack(anchor="w", padx=20, pady=(0, 6))
 
         # 保存位置
@@ -1295,16 +1295,16 @@ class MainApp(ctk.CTk):
         path_row = ctk.CTkFrame(card, fg_color="transparent")
         path_row.pack(fill="x", padx=20, pady=(0, 4))
         self._dataset_path_label = ctk.CTkLabel(
-            path_row, text=self._dev_path_display(), font=(FONT, 10), text_color=TEXT, anchor="w",
+            path_row, text=self._dev_path_display(), font=(FONT, 12), text_color=TEXT, anchor="w",
         )
         self._dataset_path_label.pack(side="left", fill="x", expand=True)
         ctk.CTkButton(
-            path_row, text="浏览…", font=(FONT, 11), width=60, height=26,
+            path_row, text="浏览…", font=(FONT, 13), width=60, height=26,
             corner_radius=8, fg_color=BTN, hover_color=BTN_HOVER, command=self._on_choose_dataset_path,
         ).pack(side="right")
 
         # 统计
-        self._dev_stats_label = ctk.CTkLabel(card, text="", font=(FONT, 10), text_color=DIM, justify="left")
+        self._dev_stats_label = ctk.CTkLabel(card, text="", font=(FONT, 12), text_color=DIM, justify="left")
         self._dev_stats_label.pack(anchor="w", padx=20, pady=(4, 6))
         self._refresh_dev_stats()
 
@@ -1312,19 +1312,19 @@ class MainApp(ctk.CTk):
         btns = ctk.CTkFrame(card, fg_color="transparent")
         btns.pack(fill="x", padx=20, pady=(0, 6))
         ctk.CTkButton(
-            btns, text="采集 GAMEPLAY", font=(FONT, 11), height=28, corner_radius=8,
+            btns, text="采集 GAMEPLAY", font=(FONT, 13), height=28, corner_radius=8,
             fg_color=BTN, hover_color=BTN_HOVER, command=lambda: self._on_manual_capture("gameplay"),
         ).pack(side="left", padx=(0, 6))
         ctk.CTkButton(
-            btns, text="采集 NON_GAMEPLAY", font=(FONT, 11), height=28, corner_radius=8,
+            btns, text="采集 NON_GAMEPLAY", font=(FONT, 13), height=28, corner_radius=8,
             fg_color=BTN, hover_color=BTN_HOVER, command=lambda: self._on_manual_capture("non_gameplay"),
         ).pack(side="left", padx=(0, 6))
         ctk.CTkButton(
-            btns, text="打开文件夹", font=(FONT, 11), height=28, corner_radius=8,
+            btns, text="打开文件夹", font=(FONT, 13), height=28, corner_radius=8,
             fg_color=BTN, hover_color=BTN_HOVER, command=self._on_open_dataset,
         ).pack(side="left", padx=(0, 6))
         ctk.CTkButton(
-            btns, text="清空样本", font=(FONT, 11), height=28, corner_radius=8,
+            btns, text="清空样本", font=(FONT, 13), height=28, corner_radius=8,
             fg_color=DANGER, hover_color=DANGER_HOVER, command=self._on_clear_dataset,
         ).pack(side="left")
 
@@ -1529,9 +1529,9 @@ class MainApp(ctk.CTk):
                 child.grid()
         for k, btn in self.nav_btns.items():
             if k == key:
-                btn.configure(fg_color=NAV_ON, text_color=ACCENT, font=(FONT, 13, "bold"))
+                btn.configure(fg_color=NAV_ON, text_color=ACCENT, font=(FONT, 16, "bold"))
             else:
-                btn.configure(fg_color="transparent", text_color=DIM, font=(FONT, 13))
+                btn.configure(fg_color="transparent", text_color=DIM, font=(FONT, 16))
         # 进「收益记录」时刷新一次列表
         if key == "records":
             try:
@@ -1770,7 +1770,7 @@ class MainApp(ctk.CTk):
                 with urllib.request.urlopen(req, timeout=8) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
                 latest = str(data.get("tag_name", "")).lstrip("v")
-                current = "0.5"
+                current = "0.6"
                 if latest and latest != current:
                     url = data.get("html_url", "https://github.com/Cash-553/StatGI/releases")
                     self.after(0, lambda: self._update_found(latest, current, url))
@@ -1966,14 +1966,14 @@ class MainApp(ctk.CTk):
         if not items:
             ctk.CTkLabel(
                 self.mat_scroll, text="（暂无，开始监测后自动统计）",
-                font=(FONT, 12), text_color=DIM,
+                font=(FONT, 15), text_color=DIM,
             ).pack(pady=16)
             return
         for name, count in items:
             row = ctk.CTkFrame(self.mat_scroll, fg_color="transparent")
             row.pack(fill="x", padx=6, pady=2)
-            ctk.CTkLabel(row, text=name, font=(FONT, 13), text_color=TEXT).pack(side="left")
-            ctk.CTkLabel(row, text=f"×{count}", font=(FONT, 13, "bold"), text_color=ACCENT).pack(side="right")
+            ctk.CTkLabel(row, text=name, font=(FONT, 16), text_color=TEXT).pack(side="left")
+            ctk.CTkLabel(row, text=f"×{count}", font=(FONT, 16, "bold"), text_color=ACCENT).pack(side="right")
 
     def _rebuild_detail_list(self):
         """素材明细页：合并怪物+普通为一个列表"""
@@ -1986,15 +1986,15 @@ class MainApp(ctk.CTk):
         if not items:
             ctk.CTkLabel(
                 self.detail_scroll, text="（还没有识别到材料）",
-                font=(FONT, 13), text_color=DIM,
+                font=(FONT, 16), text_color=DIM,
             ).pack(pady=20)
         else:
             for i, (name, count) in enumerate(items, 1):
                 row = ctk.CTkFrame(self.detail_scroll, fg_color=CARD_INNER, corner_radius=8)
                 row.pack(fill="x", padx=8, pady=3)
-                ctk.CTkLabel(row, text=f"{i:>2}", font=(FONT, 13), text_color=DIM, width=30).pack(side="left", padx=(10, 2), pady=8)
-                ctk.CTkLabel(row, text=name, font=(FONT, 14), text_color=TEXT).pack(side="left", padx=6, pady=8)
-                ctk.CTkLabel(row, text=f"×{count}", font=(FONT, 14, "bold"), text_color=ACCENT).pack(side="right", padx=14)
+                ctk.CTkLabel(row, text=f"{i:>2}", font=(FONT, 16), text_color=DIM, width=30).pack(side="left", padx=(10, 2), pady=8)
+                ctk.CTkLabel(row, text=name, font=(FONT, 17), text_color=TEXT).pack(side="left", padx=6, pady=8)
+                ctk.CTkLabel(row, text=f"×{count}", font=(FONT, 17, "bold"), text_color=ACCENT).pack(side="right", padx=14)
         total = sum(merged.values())
         self.detail_total_label.configure(
             text=f"共 {len(items)} 种材料，合计 {total} 个"
@@ -2130,11 +2130,11 @@ class MainApp(ctk.CTk):
 
         ctk.CTkLabel(
             dlg, text="要关闭程序，还是最小化到托盘？",
-            font=(FONT, 14, "bold"), text_color=TEXT,
+            font=(FONT, 17, "bold"), text_color=TEXT,
         ).pack(pady=(22, 4))
         ctk.CTkLabel(
             dlg, text="最小化后监测会继续运行",
-            font=(FONT, 11), text_color=DIM,
+            font=(FONT, 13), text_color=DIM,
         ).pack(pady=(0, 12))
 
         def _do_exit():
@@ -2160,15 +2160,15 @@ class MainApp(ctk.CTk):
         row = ctk.CTkFrame(dlg, fg_color="transparent")
         row.pack(pady=(4, 18))
         ctk.CTkButton(
-            row, text="🗑 关闭程序", font=(FONT, 13), width=100, height=36,
+            row, text="🗑 关闭程序", font=(FONT, 16), width=100, height=36,
             fg_color=DANGER, hover_color=DANGER_HOVER, text_color=TEXT, command=_do_exit,
         ).pack(side="left", padx=6)
         ctk.CTkButton(
-            row, text="📌 最小化到托盘", font=(FONT, 13), width=130, height=36,
+            row, text="📌 最小化到托盘", font=(FONT, 16), width=130, height=36,
             fg_color=ACCENT, hover_color=ACCENT_DARK, text_color="#FFFFFF", command=_do_tray,
         ).pack(side="left", padx=6)
         ctk.CTkButton(
-            row, text="取消", font=(FONT, 13), width=80, height=36,
+            row, text="取消", font=(FONT, 16), width=80, height=36,
             fg_color=BTN, hover_color=BTN_HOVER, text_color=TEXT, command=_do_cancel,
         ).pack(side="left", padx=6)
 

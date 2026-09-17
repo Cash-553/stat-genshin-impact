@@ -66,11 +66,11 @@ class IconManagerWindow(ctk.CTkToplevel):
     def _build_ui(self):
         # 顶部说明
         ctk.CTkLabel(
-            self, text="🖼 收益统计条图标", font=(FONT, 16, "bold"), text_color=TEXT,
+            self, text="🖼 收益统计条图标", font=(FONT, 19, "bold"), text_color=TEXT,
         ).pack(pady=(16, 2))
         ctk.CTkLabel(
             self, text="管理直播间统计条格子显示的图标，与识别无关。\n更换后需重启程序生效（统计条会同步更新）。",
-            font=(FONT, 11), text_color=DIM, justify="center",
+            font=(FONT, 13), text_color=DIM, justify="center",
         ).pack(pady=(0, 10))
 
         # 田字型 2×2 网格容器
@@ -87,12 +87,12 @@ class IconManagerWindow(ctk.CTkToplevel):
         ctk.CTkSwitch(
             bottom, text="统计条置顶显示", variable=self.topmost_var,
             onvalue=True, offvalue=False, command=self.on_toggle_topmost,
-            font=(FONT, 12), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
+            font=(FONT, 15), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
         ).pack(anchor="w")
 
         ctk.CTkLabel(
             self, text="💡 图标文件保存在 icons 文件夹，可随时更换。",
-            font=(FONT, 10), text_color=DIM,
+            font=(FONT, 12), text_color=DIM,
         ).pack(side="bottom", pady=(0, 8))
 
     def _refresh_slots(self):
@@ -127,17 +127,17 @@ class IconManagerWindow(ctk.CTkToplevel):
         # 右：名称 + 按钮
         right = ctk.CTkFrame(inner, fg_color="transparent")
         right.pack(side="left", fill="y", expand=True)
-        ctk.CTkLabel(right, text=label, font=(FONT, 13, "bold"), text_color=TEXT).pack(anchor="w", pady=(2, 6))
+        ctk.CTkLabel(right, text=label, font=(FONT, 16, "bold"), text_color=TEXT).pack(anchor="w", pady=(2, 6))
         btn_row = ctk.CTkFrame(right, fg_color="transparent")
         btn_row.pack(anchor="w")
         ctk.CTkButton(
-            btn_row, text="📷", font=(FONT, 12), width=40, height=28,
+            btn_row, text="📷", font=(FONT, 15), width=40, height=28,
             corner_radius=RADIUS_BTN,
             fg_color=BTN, hover_color=BTN_HOVER, text_color=TEXT,
             command=lambda k=slot_key, l=label: self.on_capture_slot(k, l),
         ).pack(side="left", padx=3)
         ctk.CTkButton(
-            btn_row, text="更换", font=(FONT, 12), width=56, height=28,
+            btn_row, text="更换", font=(FONT, 15), width=56, height=28,
             corner_radius=RADIUS_BTN,
             fg_color=ACCENT, hover_color=ACCENT_DARK, text_color="#FFFFFF",
             command=lambda k=slot_key, l=label: self.on_replace_slot(k, l),
@@ -156,7 +156,7 @@ class IconManagerWindow(ctk.CTkToplevel):
             if photo is not None:
                 preview.configure(image=photo, text="")
                 return
-        preview.configure(image=None, text="未设置", text_color=DIM, font=(FONT, 11))
+        preview.configure(image=None, text="未设置", text_color=DIM, font=(FONT, 13))
 
     # ---------- 工具 ----------
 
