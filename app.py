@@ -465,23 +465,15 @@ class MainApp(ctk.CTk):
         self.sidebar.grid(row=0, column=0, sticky="nsw")
         self.sidebar.grid_propagate(False)
 
-        # Logo 区
-        logo = ctk.CTkFrame(self.sidebar, fg_color="transparent")
-        logo.pack(fill="x", pady=(16, 2))
-        ctk.CTkLabel(logo, text="🍃", font=(FONT, 26)).pack()
-        ctk.CTkLabel(logo, text="原神收益统计器", font=(FONT, 12, "bold"), text_color=TEXT).pack()
-        ctk.CTkLabel(logo, text="StatGI", font=(FONT, 9), text_color=DIM).pack(pady=(0, 4))
-
-        self.sidebar_date = ctk.CTkLabel(
-            self.sidebar, text=self.stats.date, font=(FONT, 11), text_color=DIM,
-        )
-        self.sidebar_date.pack(pady=(6, 10))
+        # 顶部留白
+        # （原来这里是 Logo「🍃 原神收益统计器 / StatGI」和日期，已按要求去掉，
+        #   下面的选项会自动往上补位）
+        ctk.CTkFrame(self.sidebar, height=10, fg_color="transparent").pack(fill="x")
 
         self.nav_btns = {}
         for key, icon, label in [
             ("launch", "🚀", "启动"),
             ("home", "📊", "今日统计"),
-            ("materials", "⚔", "素材明细"),
             ("bar", "📶", "收益统计条"),
             ("settings", "⚙", "设置"),
         ]:
@@ -506,7 +498,6 @@ class MainApp(ctk.CTk):
 
         self._build_page_launch()
         self._build_page_home()
-        self._build_page_materials()
         self._build_page_bar()
         self._build_page_settings()
 
@@ -735,28 +726,45 @@ class MainApp(ctk.CTk):
         head2 = ctk.CTkFrame(recent, fg_color="transparent")
         head2.pack(fill="x", padx=14, pady=(12, 2))
         ctk.CTkLabel(head2, text="⚔ 材料", font=(FONT, 14, "bold"), text_color=ACCENT).pack(side="left")
+        # 「查看明细」按钮：原「素材明细」页已合并到这里，点它就地展开明细
+        self.detail_toggle_btn = ctk.CTkButton(
+            head2, text="查看明细", font=(FONT, 11), width=84, height=26,
+            corner_radius=RADIUS_BTN, fg_color=BTN, hover_color=BTN_HOVER,
+            text_color=TEXT, command=self._toggle_material_detail,
+        )
+        self.detail_toggle_btn.pack(side="right")
+
+        # 简要列表（默认显示）
         self.mat_scroll = ctk.CTkScrollableFrame(recent, corner_radius=RADIUS_INNER, fg_color=CARD_INNER)
         self.mat_scroll.pack(fill="both", expand=True, padx=10, pady=(2, 10))
 
-    # ---- 页面：素材明细 ----
+        # 明细视图（默认隐藏，点「查看明细」展开）
+        self.detail_frame = ctk.CTkFrame(recent, fg_color="transparent")
+        self.detail_scroll = ctk.CTkScrollableFrame(
+            self.detail_frame, corner_radius=RADIUS_INNER, fg_color=CARD_INNER)
+        self.detail_scroll.pack(fill="both", expand=True)
+        self.detail_total_label = ctk.CTkLabel(self.detail_frame, text="", font=(FONT, 12), text_color=DIM)
+        self.detail_total_label.pack(anchor="w", padx=6, pady=(6, 0))
+        self.detail_scroll2 = self.detail_scroll   # 兼容旧引用
+        self._detail_shown = False
 
-    def _build_page_materials(self):
-        page = ctk.CTkFrame(self.content, fg_color="transparent")
-        page.grid(row=0, column=0, sticky="nsew", padx=22, pady=18)
-        page.grid_columnconfigure(0, weight=1)
-        page.grid_rowconfigure(1, weight=1)
-        page.grid_rowconfigure(2, weight=1)
+    # ---- 材料明细 展开/收起（原「素材明细」页已合并进「今日统计」）----
 
-        ctk.CTkLabel(page, text="素材明细", font=(FONT, 20, "bold"), text_color=ACCENT).grid(
-            row=0, column=0, sticky="w", pady=(0, 12))
-        ctk.CTkLabel(page, text="⚔ 材料", font=(FONT, 14, "bold"), text_color=ACCENT).grid(
-            row=1, column=0, sticky="w", pady=(0, 4))
-        self.detail_scroll = ctk.CTkScrollableFrame(page, corner_radius=RADIUS_CARD, fg_color=CARD)
-        self.detail_scroll.grid(row=2, column=0, sticky="nsew")
-        self.detail_total_label = ctk.CTkLabel(page, text="", font=(FONT, 12), text_color=DIM)
-        self.detail_total_label.grid(row=3, column=0, sticky="w", pady=(8, 0))
-        # 保留 detail_scroll2 引用（兼容旧逻辑，不显示）
-        self.detail_scroll2 = self.detail_scroll
+    def _toggle_material_detail(self):
+        """在「今日统计」的材料卡片里，就地切换「简要列表 / 完整明细」"""
+        self._detail_shown = not getattr(self, "_detail_shown", False)
+        try:
+            if self._detail_shown:
+                self.mat_scroll.pack_forget()
+                self.detail_frame.pack(fill="both", expand=True, padx=10, pady=(2, 10))
+                self.detail_toggle_btn.configure(text="收起明细")
+                self._rebuild_detail_list()
+            else:
+                self.detail_frame.pack_forget()
+                self.mat_scroll.pack(fill="both", expand=True, padx=10, pady=(2, 10))
+                self.detail_toggle_btn.configure(text="查看明细")
+        except Exception:
+            pass
 
     # ---- 页面：收益统计条 ----
 
@@ -1279,7 +1287,7 @@ class MainApp(ctk.CTk):
 
     def _show_page(self, key):
         self._current_page = key
-        pages = {"launch": 0, "home": 1, "materials": 2, "bar": 3, "settings": 4}
+        pages = {"launch": 0, "home": 1, "bar": 2, "settings": 3}
         for i, child in enumerate(self.content.winfo_children()):
             if i != pages[key]:
                 child.grid_remove()
