@@ -67,7 +67,7 @@ def select_region(parent=None):
         vx + 12, vy + 12, anchor="nw", fill="#ffffff",
         text="拖动鼠标框住【掉落提示区域】，松开完成。按 Esc 取消。\n"
              "看不到这个界面？游戏可能全屏独占，请按 Esc 后把游戏改成无边框窗口。",
-        font=(FONT, 14, "bold"),
+        font=(FONT, 17, "bold"),
     )
     start = [0, 0]
     rect_id = [None]

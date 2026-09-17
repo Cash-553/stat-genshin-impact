@@ -95,10 +95,10 @@ class StatBar(ctk.CTkToplevel):
             cell.pack(side="left", padx=5, pady=8)
             cell.pack_propagate(False)
 
-            ctk.CTkLabel(cell, text=title, font=(FONT, 11), text_color=DIM).pack(pady=(9, 2))
+            ctk.CTkLabel(cell, text=title, font=(FONT, 13), text_color=DIM).pack(pady=(9, 2))
             icon_lbl = ctk.CTkLabel(cell, text="", width=36, height=36)
             icon_lbl.pack()
-            count_lbl = ctk.CTkLabel(cell, text="0", font=(FONT, 18, "bold"), text_color=TEXT)
+            count_lbl = ctk.CTkLabel(cell, text="0", font=(FONT, 21, "bold"), text_color=TEXT)
             count_lbl.pack(pady=(2, 6))
             self._slots.append((icon_lbl, count_lbl, key, title))
             # 整个格子都可以按住拖动，右键关闭
