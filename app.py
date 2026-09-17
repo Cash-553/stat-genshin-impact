@@ -629,7 +629,7 @@ class MainApp(ctk.CTk):
 
         hl = ctk.CTkFrame(header, fg_color="transparent")
         hl.pack(side="left", fill="both", expand=True, padx=16, pady=8)
-        ctk.CTkLabel(hl, text="🍃  StatGI", font=(FONT, 19, "bold"), text_color=TEXT).pack(anchor="w")
+        ctk.CTkLabel(hl, text="🍃  StatGI", font=(FONT, 24, "bold"), text_color=TEXT).pack(anchor="w")
         _r1 = ctk.CTkFrame(hl, fg_color="transparent")
         _r1.pack(anchor="w")
         self.launch_status_label = ctk.CTkLabel(_r1, text="🟢 未开始", font=(FONT, 13, "bold"), text_color=BAD)
@@ -651,10 +651,10 @@ class MainApp(ctk.CTk):
         self.start_card.pack(fill="x", pady=(0, 6))
 
         _items = [
+            ("🧹", "清空今日", "只清空今日统计当前的数据（收益记录不受影响）", "清空", self.on_clear_today),
+            ("⏱", "清空时间", "只清空今日统计当前的数据（收益记录不受影响）", "清空", self.on_clear_runtime),
             ("🎯", "重新框选", "手动指定要识别的屏幕区域（一般不用，自动识别即可）", "框选", self.on_reselect),
-            ("🧹", "清空今日", "把今天的摩拉 / 狗粮 / 材料清零（历史记录不受影响）", "清空", self.on_clear_today),
-            ("⏱", "清空时间", "只把监测时间清零（收益数据不受影响）", "清空", self.on_clear_runtime),
-            ("📷", "诊断截图", "保存当前识别区域的截图，用来确认识别是否正确", "截图", self.on_debug_screenshot),
+            ("📷", "诊断截图", "和自动框选配合使用，用来诊断截图内容（一般不用）", "截图", self.on_debug_screenshot),
         ]
         for _icon, _title, _desc, _btext, _cmd in _items:
             _card = self._make_row_card(rows, _icon, _title, _desc, _btext, _cmd)[0]
@@ -669,7 +669,7 @@ class MainApp(ctk.CTk):
                             border_width=1, border_color=theme.BORDER)
 
         btn = ctk.CTkButton(
-            card, text=btn_text, font=(FONT, 13), width=84, height=34,
+            card, text=btn_text, font=(FONT, 15), width=94, height=38,
             corner_radius=RADIUS_BTN,
             fg_color=(ACCENT if accent else BTN),
             hover_color=(ACCENT_DARK if accent else BTN_HOVER),
@@ -678,19 +678,19 @@ class MainApp(ctk.CTk):
         )
         btn.pack(side="right", padx=(10, 14), pady=9)
 
-        ic = ctk.CTkFrame(card, width=42, height=42, corner_radius=12,
+        ic = ctk.CTkFrame(card, width=46, height=46, corner_radius=13,
                           fg_color=(ACCENT if accent else CARD_INNER))
         ic.pack(side="left", padx=(14, 12), pady=9)
         ic.pack_propagate(False)
-        _il = ctk.CTkLabel(ic, text=icon, font=(FONT, 20),
+        _il = ctk.CTkLabel(ic, text=icon, font=(FONT, 24),
                            text_color=("#FFFFFF" if accent else ACCENT))
         _il.place(relx=0.5, rely=0.5, anchor="center")
 
         mid = ctk.CTkFrame(card, fg_color="transparent")
         mid.pack(side="left", fill="both", expand=True, pady=9)
-        tl = ctk.CTkLabel(mid, text=title, font=(FONT, 15, "bold"), text_color=TEXT, anchor="w")
+        tl = ctk.CTkLabel(mid, text=title, font=(FONT, 18, "bold"), text_color=TEXT, anchor="w")
         tl.pack(anchor="w")
-        ctk.CTkLabel(mid, text=desc, font=(FONT, 11), text_color=DIM, anchor="w").pack(anchor="w", pady=(2, 0))
+        ctk.CTkLabel(mid, text=desc, font=(FONT, 13), text_color=DIM, anchor="w").pack(anchor="w", pady=(2, 0))
 
         def _click(_e=None):
             try:
