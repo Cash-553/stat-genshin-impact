@@ -616,66 +616,81 @@ class MainApp(ctk.CTk):
         ctk.CTkLabel(page, text="启动", font=(FONT, 20, "bold"), text_color=ACCENT).grid(
             row=0, column=0, sticky="w", pady=(0, 12))
 
-        # 状态卡片（精简成一行）
-        status_card = self._make_card(page)
-        status_card.grid(row=1, column=0, sticky="ew")
-        srow = ctk.CTkFrame(status_card, fg_color="transparent")
-        srow.pack(fill="x", padx=20, pady=12)
-        ctk.CTkLabel(srow, text="🟢", font=(FONT, 12)).pack(side="left")
-        self.launch_status_label = ctk.CTkLabel(srow, text="未开始", font=(FONT, 13, "bold"), text_color=BAD)
-        self.launch_status_label.pack(side="left", padx=(4, 18))
-        ctk.CTkLabel(srow, text="📍 识别区域：", font=(FONT, 12), text_color=DIM).pack(side="left")
-        self.launch_region_label = ctk.CTkLabel(srow, text="未设置", font=(FONT, 12), text_color=TEXT)
-        self.launch_region_label.pack(side="left", padx=(0, 18))
-        ctk.CTkLabel(srow, text="🕐 最后识别：", font=(FONT, 12), text_color=DIM).pack(side="left")
-        self.last_event_label = ctk.CTkLabel(srow, text="—", font=(FONT, 12), text_color=TEXT)
-        self.last_event_label.pack(side="left")
+        # ---- 顶部：大标题 + 状态 + 装饰区 ----
+        header = self._make_card(page)
+        header.grid(row=1, column=0, sticky="ew")
 
-        # ---- 功能大卡片：每张大卡片中间再套一张小卡片（放图标）----
-        grid = ctk.CTkFrame(page, fg_color="transparent")
-        grid.grid(row=2, column=0, sticky="nsew", pady=(12, 0))
+        deco = ctk.CTkFrame(header, width=104, height=68, corner_radius=RADIUS_CARD,
+                            fg_color=CARD_INNER, border_width=1, border_color=theme.BORDER)
+        deco.pack(side="right", padx=(8, 12), pady=9)
+        deco.pack_propagate(False)
+        ctk.CTkLabel(deco, text="🍃", font=(FONT, 20)).pack(pady=(6, 0))
+        ctk.CTkLabel(deco, text="StatGI V0.5", font=(FONT, 9, "bold"), text_color=ACCENT).pack()
+
+        hl = ctk.CTkFrame(header, fg_color="transparent")
+        hl.pack(side="left", fill="both", expand=True, padx=16, pady=8)
+        ctk.CTkLabel(hl, text="🍃  StatGI", font=(FONT, 16, "bold"), text_color=TEXT).pack(anchor="w")
+        _r1 = ctk.CTkFrame(hl, fg_color="transparent")
+        _r1.pack(anchor="w")
+        self.launch_status_label = ctk.CTkLabel(_r1, text="🟢 未开始", font=(FONT, 11, "bold"), text_color=BAD)
+        self.launch_status_label.pack(side="left")
+        self.launch_region_label = ctk.CTkLabel(_r1, text="　📍 自动检测游戏窗口", font=(FONT, 9), text_color=DIM)
+        self.launch_region_label.pack(side="left")
+        self.last_event_label = ctk.CTkLabel(hl, text="🕐 最后识别：—", font=(FONT, 9), text_color=DIM)
+        self.last_event_label.pack(anchor="w")
+
+        # ---- 功能卡片：横向长条（左图标 / 中标题说明 / 右按钮）----
+        rows = ctk.CTkFrame(page, fg_color="transparent")
+        rows.grid(row=2, column=0, sticky="nsew", pady=(12, 0))
         page.grid_rowconfigure(2, weight=1)
-        for _c in range(2):
-            grid.grid_columnconfigure(_c, weight=1)
-        for _r in range(3):
-            grid.grid_rowconfigure(_r, weight=1)
+        rows.grid_columnconfigure(0, weight=1)
 
-        # 「开始监测」占满整行 + 强调色
-        self.start_card, self.start_card_title = self._make_action_card(
-            grid, "▶", "开始监测", self.on_start_stop, accent=True)
-        self.start_card.grid(row=0, column=0, columnspan=2, sticky="nsew", pady=(0, 8))
+        self.start_card, self.start_card_title, self.start_card_btn = self._make_row_card(
+            rows, "▶", "开始监测", "自动找到游戏窗口并识别掉落收益",
+            "开始", self.on_start_stop, accent=True)
+        self.start_card.pack(fill="x", pady=(0, 6))
 
         _items = [
-            ("🎯", "重新框选", self.on_reselect),
-            ("🧹", "清空今日", self.on_clear_today),
-            ("⏱", "清空时间", self.on_clear_runtime),
-            ("📷", "诊断截图", self.on_debug_screenshot),
+            ("🎯", "重新框选", "手动指定要识别的屏幕区域（一般不用，自动识别即可）", "框选", self.on_reselect),
+            ("🧹", "清空今日", "把今天的摩拉 / 狗粮 / 材料清零（历史记录不受影响）", "清空", self.on_clear_today),
+            ("⏱", "清空时间", "只把监测时间清零（收益数据不受影响）", "清空", self.on_clear_runtime),
+            ("📷", "诊断截图", "保存当前识别区域的截图，用来确认识别是否正确", "截图", self.on_debug_screenshot),
         ]
-        for _i, (_icon, _title, _cmd) in enumerate(_items):
-            _row, _col = 1 + _i // 2, _i % 2
-            _card = self._make_action_card(grid, _icon, _title, _cmd)[0]
-            _card.grid(
-                row=_row, column=_col, sticky="nsew",
-                padx=((0, 8) if _col == 0 else (8, 0)),
-                pady=((0, 8) if _row == 1 else (0, 0)),
-            )
+        for _icon, _title, _desc, _btext, _cmd in _items:
+            _card = self._make_row_card(rows, _icon, _title, _desc, _btext, _cmd)[0]
+            _card.pack(fill="x", pady=(0, 6))
 
-    def _make_action_card(self, parent, icon, title, command, accent=False):
-        """启动页的功能大卡片：大卡片中间套一张小卡片（图标），下面写名字。
+    def _make_row_card(self, parent, icon, title, desc, btn_text, command, accent=False):
+        """横向长条卡片：[图标小卡片] [标题 + 说明] ......... [按钮]
 
-        整张卡片（含小卡片和文字）都可以点。
+        返回 (卡片, 标题标签, 按钮)
         """
-        big = ctk.CTkFrame(parent, corner_radius=RADIUS_CARD, fg_color=CARD,
-                           border_width=1, border_color=theme.BORDER)
-        small = ctk.CTkFrame(big, width=56, height=56, corner_radius=16,
-                             fg_color=(ACCENT if accent else CARD_INNER), border_width=0)
-        small.pack(pady=(16, 8))
-        small.pack_propagate(False)
-        icon_lbl = ctk.CTkLabel(small, text=icon, font=(FONT, 22),
-                                text_color=("#FFFFFF" if accent else ACCENT))
-        icon_lbl.place(relx=0.5, rely=0.5, anchor="center")
-        title_lbl = ctk.CTkLabel(big, text=title, font=(FONT, 13, "bold"), text_color=TEXT)
-        title_lbl.pack(pady=(0, 16))
+        card = ctk.CTkFrame(parent, corner_radius=RADIUS_CARD, fg_color=CARD,
+                            border_width=1, border_color=theme.BORDER)
+
+        btn = ctk.CTkButton(
+            card, text=btn_text, font=(FONT, 11), width=76, height=28,
+            corner_radius=RADIUS_BTN,
+            fg_color=(ACCENT if accent else BTN),
+            hover_color=(ACCENT_DARK if accent else BTN_HOVER),
+            text_color=("#FFFFFF" if accent else TEXT),
+            command=command,
+        )
+        btn.pack(side="right", padx=(10, 12), pady=5)
+
+        ic = ctk.CTkFrame(card, width=34, height=34, corner_radius=10,
+                          fg_color=(ACCENT if accent else CARD_INNER))
+        ic.pack(side="left", padx=(12, 10), pady=5)
+        ic.pack_propagate(False)
+        _il = ctk.CTkLabel(ic, text=icon, font=(FONT, 15),
+                           text_color=("#FFFFFF" if accent else ACCENT))
+        _il.place(relx=0.5, rely=0.5, anchor="center")
+
+        mid = ctk.CTkFrame(card, fg_color="transparent")
+        mid.pack(side="left", fill="both", expand=True, pady=5)
+        tl = ctk.CTkLabel(mid, text=title, font=(FONT, 12, "bold"), text_color=TEXT, anchor="w")
+        tl.pack(anchor="w")
+        ctk.CTkLabel(mid, text=desc, font=(FONT, 9), text_color=DIM, anchor="w").pack(anchor="w", pady=(1, 0))
 
         def _click(_e=None):
             try:
@@ -683,13 +698,14 @@ class MainApp(ctk.CTk):
             except Exception:
                 pass
 
-        for _w in (big, small, icon_lbl, title_lbl):
+        # 整行都能点（按钮自己已绑定，不重复绑）
+        for _w in (card, ic, _il, mid, tl):
             try:
                 _w.bind("<Button-1>", _click)
                 _w.configure(cursor="hand2")
             except Exception:
                 pass
-        return big, title_lbl
+        return card, tl, btn
 
     # ---- 页面：今日统计 ----
 
@@ -1534,7 +1550,7 @@ class MainApp(ctk.CTk):
                     if kind == "event":
                         ts, desc = payload
                         self.last_event_label.configure(
-                            text=f"{desc}  ({time.strftime('%H:%M:%S', time.localtime(ts))})"
+                            text=f"🕐 最后识别：{desc}  ({time.strftime('%H:%M:%S', time.localtime(ts))})"
                         )
                     elif kind == "error":
                         self.stop_monitor()
@@ -1612,7 +1628,7 @@ class MainApp(ctk.CTk):
             dict(self.stats.normal_materials),
         )
         self._set_status(mode_text, GOOD)
-        self.start_card_title.configure(text="⏸ 停止监测")
+        self._set_start_ui(True)
 
     def _detect_loop(self, region):
         """后台检测线程：识别（含慢速OCR）全部在这里跑，主线程只管界面"""
@@ -1674,7 +1690,7 @@ class MainApp(ctk.CTk):
         self._detect_stop = None
         self._detect_thread = None
         self._set_status("已暂停", BAD)
-        self.start_card_title.configure(text="▶ 开始监测")
+        self._set_start_ui(False)
 
     def _record_session(self):
         """把这次监测的收益差值写进「收益记录」"""
@@ -1881,18 +1897,26 @@ class MainApp(ctk.CTk):
 
     # ================= 界面刷新 =================
 
+    def _set_start_ui(self, running):
+        """开始/停止监测时，同步更新启动页那张卡片（标题 + 按钮）"""
+        try:
+            self.start_card_title.configure(text="停止监测" if running else "开始监测")
+            self.start_card_btn.configure(text="停止" if running else "开始")
+        except Exception:
+            pass
+
     def _refresh_region_state(self):
         r = self.settings.get("region")
         if not r:
             # 自动模式：不用框选，程序自动找游戏窗口
             self._set_status("未框选（自动检测游戏窗口）", DIM)
-            self.start_card_title.configure(text="▶ 开始监测")
+            self._set_start_ui(False)
             try:
                 self.launch_region_label.configure(text="自动检测游戏窗口（也可「重新框选」手动指定）")
             except Exception:
                 pass
         else:
-            self.start_card_title.configure(text="▶ 开始监测")
+            self._set_start_ui(False)
             try:
                 self.launch_region_label.configure(text=f"({r['x']}, {r['y']})  {r['w']}×{r['h']}")
             except Exception:
