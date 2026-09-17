@@ -68,7 +68,7 @@ class StatBar(ctk.CTkToplevel):
         self._slots = []                              # (图标标签, 数量标签, 插槽名, 标题)
 
         self._build()
-        self._apply_topmost()
+        self.apply_appearance()
         self._refresh()
         self.after(500, self._loop)
 
@@ -106,10 +106,17 @@ class StatBar(ctk.CTkToplevel):
             cell.bind("<B1-Motion>", self._drag_move)
             cell.bind("<Button-3>", lambda e: self.on_closing())
 
-    def _apply_topmost(self):
+    def apply_appearance(self):
+        """应用外观设置：是否置顶 + 透明度（改动后可实时生效，无需重开）"""
         s = self.settings_provider() or {}
         try:
             self.attributes("-topmost", bool(s.get("always_on_top", True)))
+        except Exception:
+            pass
+        try:
+            op = float(s.get("opacity", 1.0))
+            op = max(0.2, min(1.0, op))
+            self.attributes("-alpha", op)
         except Exception:
             pass
 

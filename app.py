@@ -795,6 +795,58 @@ class MainApp(ctk.CTk):
         )
         self.bar_btn.pack(padx=20, pady=(4, 18))
 
+        # ---- 子选项：统计条透明度 ----
+        op_card = self._make_card(page)
+        op_card.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        ctk.CTkLabel(op_card, text="🌓 统计条透明度", font=(FONT, 14, "bold"),
+                     text_color=ACCENT).pack(anchor="w", padx=20, pady=(14, 2))
+        ctk.CTkLabel(op_card, text="往左拉更透明，放在直播画面上不容易挡到游戏画面。",
+                     font=(FONT, 12), text_color=DIM).pack(anchor="w", padx=20, pady=(0, 8))
+
+        op_row = ctk.CTkFrame(op_card, fg_color="transparent")
+        op_row.pack(fill="x", padx=20, pady=(0, 16))
+        self.bar_opacity_label = ctk.CTkLabel(op_row, text="", font=(FONT, 13, "bold"),
+                                              text_color=TEXT, width=56)
+        self.bar_opacity_label.pack(side="right", padx=(12, 0))
+        _cur_op = float((self.settings.get("stat_bar") or {}).get("opacity", 1.0))
+        _cur_op = max(0.2, min(1.0, _cur_op))
+        self.bar_opacity_slider = ctk.CTkSlider(
+            op_row, from_=0.2, to=1.0, number_of_steps=16,
+            command=self._on_bar_opacity_change,
+        )
+        self.bar_opacity_slider.set(_cur_op)
+        self.bar_opacity_slider.pack(side="left", fill="x", expand=True)
+        self.bar_opacity_label.configure(text=f"{int(round(_cur_op * 100))}%")
+
+    def _on_bar_opacity_change(self, value):
+        """统计条透明度滑块：立即预览 + 延迟保存（避免拖动时频繁写文件）"""
+        try:
+            v = max(0.2, min(1.0, float(value)))
+            bar = dict(self.settings.get("stat_bar") or {})
+            bar["opacity"] = round(v, 2)
+            self.settings["stat_bar"] = bar
+            try:
+                self.bar_opacity_label.configure(text=f"{int(round(v * 100))}%")
+            except Exception:
+                pass
+            # 统计条已打开 → 立刻生效
+            if self.stat_bar is not None:
+                try:
+                    if self.stat_bar.winfo_exists():
+                        self.stat_bar.apply_appearance()
+                except Exception:
+                    pass
+            # 延迟保存
+            if getattr(self, "_bar_op_after", None):
+                try:
+                    self.after_cancel(self._bar_op_after)
+                except Exception:
+                    pass
+            self._bar_op_after = self.after(
+                400, lambda: config_manager.save_settings(self.settings))
+        except Exception:
+            pass
+
     # ---- 页面：设置（可滚动，分组卡片 + 更多选项）----
 
     def _build_page_settings(self):
@@ -807,7 +859,9 @@ class MainApp(ctk.CTk):
             row=0, column=0, sticky="w", pady=(0, 12))
 
         # 滚动容器（选项多，一页放不下）
-        scroll = ctk.CTkScrollableFrame(page, corner_radius=0, fg_color="transparent")
+        # 注意：这里必须用【不透明】背景色。用 "transparent" 时，
+        # 滚动过程中 canvas 不会重绘底下的内容，文字会留下很重的拖影。
+        scroll = ctk.CTkScrollableFrame(page, corner_radius=0, fg_color=BG)
         scroll.grid(row=1, column=0, sticky="nsew")
         scroll.grid_columnconfigure(0, weight=1)
 
