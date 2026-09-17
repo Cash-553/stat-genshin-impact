@@ -161,7 +161,7 @@ class ApiServer:
           <div class="value" id="vArt">0</div>
         </div>
         <div class="stat-cell time">
-          <div class="label">挂机时间</div>
+          <div class="label">监测时间</div>
           <div class="value" id="vTime">00:00:00</div>
         </div>
       </div>
