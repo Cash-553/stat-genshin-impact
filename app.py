@@ -250,8 +250,36 @@ class MainApp(ctk.CTk):
         except Exception:
             pass
 
+    def _hwnd_top(self):
+        """返回【真正的顶层窗口】句柄。
+
+        重要：Tk 的无边框窗口其实有两个 HWND——
+        - self.winfo_id() 拿到的是“客户区子窗口”
+        - 真正的顶层窗口是它的根祖先（GetAncestor GA_ROOT）
+        任务栏按钮、缩略图预览、Alt+Tab、任务视图 只认顶层窗口，
+        作用在子窗口上统统无效（这就是“缩略图黑屏 / 任务视图找不到”的根源）。
+        """
+        try:
+            import ctypes
+            u = ctypes.windll.user32
+            u.GetAncestor.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+            u.GetAncestor.restype = ctypes.c_void_p
+            child = int(self.winfo_id())
+            if not child:
+                return 0
+            top = u.GetAncestor(ctypes.c_void_p(child), 2)  # GA_ROOT = 2
+            return int(top) if top else child
+        except Exception:
+            return 0
+
     def _enable_taskbar(self):
-        """让无边框窗口在任务栏显示按钮（WS_EX_APPWINDOW + ITaskbarList::AddTab）。
+        """让无边框窗口像普通程序一样出现在 任务栏 / Alt+Tab / 任务视图，
+        并且支持任务栏缩略图预览。
+
+        Tk 的 overrideredirect（无边框）顶层窗口默认带 WS_EX_TOOLWINDOW，
+        而 Windows 对“工具窗口”的处理是：任务栏、Alt+Tab、任务视图里全都
+        不显示它（所以之前任务视图里找不到、缩略图也是黑屏）。
+        修法：在【真正的顶层窗口】上去掉 TOOLWINDOW、加上 APPWINDOW。
 
         需要在窗口真正显示（Map）后再调用才有效，所以：
         - 启动后延时调用
@@ -259,15 +287,27 @@ class MainApp(ctk.CTk):
         """
         try:
             import ctypes
-            hwnd = int(self.winfo_id())
+            hwnd = self._hwnd_top()
             if hwnd == 0:
                 return  # 窗口句柄还没创建好，等下次再试
+            u = ctypes.windll.user32
+            u.GetWindowLongW.argtypes = [ctypes.c_void_p, ctypes.c_int]
+            u.GetWindowLongW.restype = ctypes.c_long
+            u.SetWindowLongW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_long]
+            u.SetWindowLongW.restype = ctypes.c_long
             GWL_EXSTYLE = -20
+            WS_EX_TOOLWINDOW = 0x00000080
             WS_EX_APPWINDOW = 0x00040000
-            style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-            ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_APPWINDOW)
+            style = u.GetWindowLongW(ctypes.c_void_p(hwnd), GWL_EXSTYLE)
+            new_style = (style & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW
+            if new_style != style:
+                u.SetWindowLongW(ctypes.c_void_p(hwnd), GWL_EXSTYLE, new_style)
             SWP_FRAMECHANGED = 0x0020
-            ctypes.windll.user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, SWP_FRAMECHANGED | 0x0001 | 0x0002)
+            SWP_NOMOVE = 0x0002
+            SWP_NOSIZE = 0x0001
+            SWP_NOZORDER = 0x0004
+            u.SetWindowPos(ctypes.c_void_p(hwnd), 0, 0, 0, 0, 0,
+                           SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER)
         except Exception:
             pass
         # ITaskbarList::AddTab 强制加入任务栏
@@ -303,7 +343,7 @@ class MainApp(ctk.CTk):
                 HrInit = ctypes.WINFUNCTYPE(ctypes.c_long, c_void_p)(vtable[3])
                 HrInit(p)
                 AddTab = ctypes.WINFUNCTYPE(ctypes.c_long, c_void_p, c_void_p)(vtable[4])
-                AddTab(p, c_void_p(int(self.winfo_id())))
+                AddTab(p, c_void_p(self._hwnd_top()))
                 Release = ctypes.WINFUNCTYPE(ctypes.c_long, c_void_p)(vtable[2])
                 Release(p)
             ole32.CoUninitialize()
@@ -1762,17 +1802,38 @@ class MainApp(ctk.CTk):
             pass
 
     def _minimize_to_tray(self):
-        """最小化按钮：隐藏窗口到托盘（稳定不卡死）。
+        """最小化窗口（用系统原生最小化，而不是 withdraw() 隐藏）。
 
-        之前用"移到屏幕外"的方案在某些系统上会触发重绘问题导致卡死/闪退，
-        改为最稳定的 withdraw() 隐藏。托盘图标和任务栏按钮都能呼出。
+        为什么不用 withdraw()：
+        withdraw() 会把窗口彻底隐藏（窗口消失），于是任务栏缩略图没有内容
+        可显示 → 预览黑屏；任务视图里也看不到这个窗口。
+        改用系统原生最小化（SW_MINIMIZE）后窗口仍然“活着”，
+        Windows 才能正常生成缩略图预览，任务视图里也能找到。
+        监测线程不受影响，照常继续。
         """
         try:
             self._min_saved_pos = (self.winfo_x(), self.winfo_y())
         except Exception:
             self._min_saved_pos = None
         self._minimized = True
-        self.withdraw()
+        ok = False
+        try:
+            import ctypes
+            hwnd = self._hwnd_top()
+            if hwnd:
+                u = ctypes.windll.user32
+                u.ShowWindow.argtypes = [ctypes.c_void_p, ctypes.c_int]
+                u.ShowWindow.restype = ctypes.c_int
+                u.ShowWindow(ctypes.c_void_p(hwnd), 6)  # SW_MINIMIZE
+                ok = True
+        except Exception:
+            ok = False
+        if not ok:
+            # 兜底：万一原生最小化失败，仍用隐藏（保证不会卡住界面）
+            try:
+                self.withdraw()
+            except Exception:
+                pass
 
     def show_main(self):
         """呼出主窗口（从任务栏按钮 / 托盘图标）"""
@@ -1784,6 +1845,18 @@ class MainApp(ctk.CTk):
                     self.geometry(f"+{self._min_saved_pos[0]}+{self._min_saved_pos[1]}")
                 except Exception:
                     pass
+            # 窗口是被原生最小化的，Tk 的 deiconify 对无边框窗口无效，
+            # 必须用系统的 SW_RESTORE 还原
+            try:
+                import ctypes
+                hwnd = self._hwnd_top()
+                if hwnd:
+                    u = ctypes.windll.user32
+                    u.ShowWindow.argtypes = [ctypes.c_void_p, ctypes.c_int]
+                    u.ShowWindow.restype = ctypes.c_int
+                    u.ShowWindow(ctypes.c_void_p(hwnd), 9)  # SW_RESTORE
+            except Exception:
+                pass
             self.deiconify()
             self.lift()
             self.focus_force()
