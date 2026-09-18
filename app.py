@@ -401,8 +401,9 @@ class MainApp(ctk.CTk):
             pass
 
     def _setup_window_extras(self):
-        """窗口显示后要做的几件事（任务栏样式 + 热键）"""
+        """窗口显示后要做的几件事（任务栏样式 + 热键 + 圆角）"""
         self._enable_taskbar()
+        self._round_window_corners()
         self._install_hotkey_proc()
         self._apply_hotkey()
 
@@ -427,6 +428,28 @@ class MainApp(ctk.CTk):
             return int(top) if top else child
         except Exception:
             return 0
+
+    def _round_window_corners(self):
+        """把窗口四个角改成圆角（用 Windows 11 自带的 DWM 圆角）
+
+        无边框窗口用这个是有效的（实测过），而且是系统画的、带抗锯齿，
+        比自己裁一块圆角区域（边缘会有锯齿）好看。
+        Win10 上不支持，会直接忽略、保持直角，不会报错。
+        """
+        try:
+            import ctypes
+            from ctypes import wintypes
+            hwnd = self._hwnd_top()
+            if not hwnd:
+                return
+            DWMWA_WINDOW_CORNER_PREFERENCE = 33
+            DWMWCP_ROUND = 2
+            pref = ctypes.c_int(DWMWCP_ROUND)
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                wintypes.HWND(hwnd), DWMWA_WINDOW_CORNER_PREFERENCE,
+                ctypes.byref(pref), ctypes.sizeof(pref))
+        except Exception:
+            pass
 
     def _enable_taskbar(self):
         """让无边框窗口像普通程序一样出现在 任务栏 / Alt+Tab / 任务视图，
@@ -486,6 +509,8 @@ class MainApp(ctk.CTk):
             SWP_NOZORDER = 0x0004
             u.SetWindowPos(ctypes.c_void_p(hwnd), 0, 0, 0, 0, 0,
                            SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER)
+            # 改了窗口样式之后，Win11 的圆角可能会被重置，这里补设一次
+            self._round_window_corners()
         except Exception:
             pass
         # ITaskbarList::AddTab 强制加入任务栏
@@ -835,10 +860,23 @@ class MainApp(ctk.CTk):
         for t, orig in list(getattr(self, "_glass_text_orig", {}).items()):
             try:
                 if t.winfo_exists():
-                    t.configure(bg=orig)
+                    bg, img, comp, px, py, bd = orig
+                    t.configure(bg=bg, image=(img if img else ""),
+                                compound=(comp or "none"),
+                                padx=px, pady=py, borderwidth=bd)
             except Exception:
                 pass
         self._glass_text_orig = {}
+        self._glass_text_photos = {}
+        self._glass_text_last = {}
+        self._glass_text_size = {}
+        for t, vals in list(getattr(self, "_glass_color_orig", {}).items()):
+            try:
+                if t.winfo_exists():
+                    t.configure(**vals)
+            except Exception:
+                pass
+        self._glass_color_orig = {}
         for lbl in getattr(self, "_bg_layers", []):
             try:
                 lbl.destroy()
@@ -889,7 +927,14 @@ class MainApp(ctk.CTk):
         return m
 
     def _glass_fix_text(self, w, base):
-        """控件内部的文字标签自带一块不透明底色，抹成该处玻璃的平均色"""
+        """控件内部的文字标签自带一块不透明底色。
+
+        tk 的标签不能真透明，但可以「图片 + 文字」一起显示：
+        把该位置的真实玻璃图铺满标签、文字叠在上面，底色就彻底看不出来了。
+        （只把底色改成一块平均色的话，在有花纹的背景图上还是能看出方块。）
+        输入框内部的 tk.Entry 不支持图片，只能给它一块平均色。
+        """
+        from PIL import Image, ImageTk
         for attr in ("_label", "_text_label", "_entry"):
             t = getattr(w, attr, None)
             if t is None:
@@ -898,14 +943,63 @@ class MainApp(ctk.CTk):
                 if not t.winfo_exists() or not t.winfo_ismapped():
                     continue
                 rect = self._glass_rect(t)
+                if rect[2] < 2 or rect[3] < 2:
+                    continue
+                # 尺寸和底图都没变、图也已经贴过，就不用重做（悬停时会频繁重画）
+                last = getattr(self, "_glass_text_last", None)
+                if last is None:
+                    last = {}
+                    self._glass_text_last = last
+                if last.get(t) == (rect, id(base)) and t.cget("image"):
+                    continue
+                # 防止「越贴越大」死循环：标签一旦比我们贴过的尺寸还大，就不再贴
+                sizes = getattr(self, "_glass_text_size", None)
+                if sizes is None:
+                    sizes = {}
+                    self._glass_text_size = sizes
+                prev = sizes.get(t)
+                if prev is not None and (rect[2] > prev[0] + 6 or rect[3] > prev[1] + 6):
+                    continue
+
+                from PIL import Image
+                if t not in self._glass_text_orig:
+                    self._glass_text_orig[t] = (t.cget("bg"), t.cget("image"),
+                                                t.cget("compound"),
+                                                t.cget("padx"), t.cget("pady"),
+                                                t.cget("borderwidth"))
+                # 关键：先把内边距 / 边框清零。
+                # tk 标签的请求宽度 = max(文字宽, 图片宽) + 2*padx + 2*border，
+                # 不清零的话，贴上图之后请求宽度每轮都会变大一点，无限膨胀
+                # （表现就是按钮、右上角叉号一直变大）。
+                if t.cget("padx") != 0 or t.cget("pady") != 0 or t.cget("borderwidth") != 0:
+                    t.configure(padx=0, pady=0, borderwidth=0)
+                    continue        # 等布局稳定，下一轮再贴
+
                 crop = self._glass_crop(base, rect)
                 if crop is None:
                     continue
-                from PIL import Image
                 r, g, b = crop.resize((1, 1), Image.BILINEAR).getpixel((0, 0))
-                if t not in self._glass_text_orig:
-                    self._glass_text_orig[t] = t.cget("bg")
-                t.configure(bg="#%02X%02X%02X" % (r, g, b))
+                avg = "#%02X%02X%02X" % (r, g, b)
+                if attr == "_entry":
+                    if str(t.cget("bg")) != avg:
+                        t.configure(bg=avg)
+                    last[t] = (rect, id(base))
+                    continue
+                photo = ImageTk.PhotoImage(crop)
+                if not hasattr(self, "_glass_text_photos"):
+                    self._glass_text_photos = {}
+                self._glass_text_photos[t] = photo      # 保住引用，否则图会被回收
+                # 只在真的不一样时才设（无条件 configure 会反复触发重绘）
+                try:
+                    if str(t.cget("bg")) == avg and t.cget("compound") == "center" \
+                            and str(t.cget("image")) == str(photo):
+                        last[t] = (rect, id(base))
+                        continue
+                except Exception:
+                    pass
+                t.configure(bg=avg, image=photo, compound="center")
+                sizes[t] = (rect[2], rect[3])
+                last[t] = (rect, id(base))
             except Exception:
                 pass
 
@@ -1043,8 +1137,30 @@ class MainApp(ctk.CTk):
         self._glass_bind(w)
         self._glass_fix_text(w, self._glass_base(tint, alpha, blur))
 
-    def _glass_paint_on_canvas(self, w, tint, alpha):
-        """把玻璃垫在画布最底层（用于图形画在画布上的控件，如开关）"""
+    def _glass_blend_color(self, base, rect, color, alpha):
+        """把 color 按 alpha 混到 base 的该区域上，返回混合后的颜色"""
+        from PIL import Image
+        c = self._as_hex(color)
+        if c is None:
+            return None
+        crop = self._glass_crop(base, rect)
+        if crop is None:
+            return None
+        r, g, b = crop.resize((1, 1), Image.BILINEAR).getpixel((0, 0))
+        cr, cg, cb = self._rgb(c)
+        a = max(0.0, min(1.0, alpha))
+        return "#%02X%02X%02X" % (int(round(r + (cr - r) * a)),
+                                  int(round(g + (cg - g) * a)),
+                                  int(round(b + (cb - b) * a)))
+
+    def _glass_paint_on_canvas(self, w, tint, alpha, blur=False):
+        """开关 / 滑块：把玻璃垫在画布最底层，并把「轨道色」也做成半透明。
+
+        它们的轨道（开关的条、滑块的槽）是直接画在画布上的实色图形，
+        垫底垫不掉它，所以再把轨道色换成「本色 × 该处背景」的混合色。
+        注意：开关/滑块的 fg_color 是【轨道色】，不是面板底色，
+        不能拿它当控件底色用（否则开关周围会出现一块和轨道同色的底）。
+        """
         from PIL import ImageTk
         canvas = getattr(w, "_canvas", None)
         if canvas is None:
@@ -1057,27 +1173,64 @@ class MainApp(ctk.CTk):
         rect = self._glass_rect(w)
         if rect[2] < 2 or rect[3] < 2:
             return
-        key = ("C", tint, round(alpha, 3), rect)
+        key = ("C", tint, round(alpha, 3), bool(blur), rect)
         placed = getattr(self, "_glass_placed", None)
         if placed is None:
             placed = {}
             self._glass_placed = placed
+        base = self._glass_base(tint, alpha, blur)
         old = placed.get(w)
-        if old is not None and old["key"] == key:
+        if old is None or old["key"] != key:
+            crop = self._glass_crop(base, rect)
+            if crop is not None:
+                photo = ImageTk.PhotoImage(crop)
+                try:
+                    canvas.delete("glassbg")
+                    canvas.create_image(0, 0, anchor="nw", image=photo, tags="glassbg")
+                    canvas.tag_lower("glassbg")
+                    placed[w] = {"lbl": None, "photo": photo, "key": key,
+                                 "tint": tint, "alpha": alpha, "blur": blur,
+                                 "canvas": True, "kind": "under"}
+                except Exception:
+                    return
+        # 轨道 / 槽的颜色也变半透明。
+        # 注意：一定要从【原始色】混合，不能拿当前值再混一次 ——
+        # 那样每重画一次就离背景更近一点，开/关最后会变成同一个颜色。
+        orig = getattr(self, "_glass_color_orig", None)
+        if orig is None:
+            orig = {}
+            self._glass_color_orig = orig
+        saved = orig.get(w)
+        props = {}
+        for name in ("fg_color", "progress_color"):
+            try:
+                cur = w.cget(name)
+            except Exception:
+                continue
+            if not cur:
+                continue
+            base_col = saved.get(name, cur) if saved else cur
+            new = self._glass_blend_color(base, rect, base_col, alpha)
+            if new:
+                props[name] = new
+        if not props:
             return
-        crop = self._glass_crop(self._glass_base(tint, alpha), rect)
-        if crop is None:
-            return
-        photo = ImageTk.PhotoImage(crop)
+        if saved is None:
+            try:
+                orig[w] = {k: w.cget(k) for k in props}
+            except Exception:
+                orig[w] = {}
+        # 只在颜色真的不一样时才设 —— 无条件 configure 会触发重绘，
+        # 重绘又回到这里，会死循环
         try:
-            canvas.delete("glassbg")
-            canvas.create_image(0, 0, anchor="nw", image=photo, tags="glassbg")
-            canvas.tag_lower("glassbg")
+            if all(str(w.cget(k)) == str(v) for k, v in props.items()):
+                return
         except Exception:
-            return
-        placed[w] = {"lbl": None, "photo": photo, "key": key,
-                     "tint": tint, "alpha": alpha, "blur": False,
-                     "canvas": True, "kind": "under"}
+            pass
+        try:
+            w.configure(**props)
+        except Exception:
+            pass
 
     def _glass_paint_viewport(self, cv, tint, alpha, blur=False):
         """普通 tk 画布（可滚动区域的视口）：把图作为画布最底层的一项。
@@ -1227,6 +1380,13 @@ class MainApp(ctk.CTk):
         sidebar = getattr(self, "sidebar", None)
         for w in children:
             cls = type(w).__name__
+            # 不可见（比如其它页面）整棵跳过：全app有七百多个控件，
+            # 每次贴图都白走一遍很费时间
+            try:
+                if not w.winfo_ismapped():
+                    continue
+            except Exception:
+                continue
             # 是不是 CustomTkinter 的控件：类名带 CTk，或者带 _fg_color。
             # 两个都要判 —— FloatingDropdown / Accordion 是自己继承的类（名字不带
             # CTk，但有 _fg_color），而 CTkScrollableFrame 只管着内部一个 frame，
@@ -1248,15 +1408,21 @@ class MainApp(ctk.CTk):
                 continue
             # 侧边栏整块走「模糊」那条线
             _blur = blur or (w is sidebar and bool(self.settings.get("sidebar_glass", True)))
+            if cls in self._GLASS_ON_CANVAS:
+                # 开关 / 滑块：它们的 fg_color 是【轨道色】不是面板底色，
+                # 所以底色用继承下来的那层，轨道色在函数里单独处理
+                try:
+                    self._glass_paint_on_canvas(w, tint, alpha, _blur)
+                except Exception:
+                    pass
+                self._glass_walk(w, tint, alpha, panel_alpha, _blur, depth + 1)
+                continue
             own = self._w_fg(w)
             if own is not None:
                 t, a = own, panel_alpha
             else:
                 t, a = tint, alpha
             try:
-                if cls in self._GLASS_ON_CANVAS:
-                    self._glass_paint_on_canvas(w, t, a)
-                    continue
                 self._glass_paint(w, t, a, _blur, pbase)
             except Exception:
                 pass
@@ -1275,7 +1441,8 @@ class MainApp(ctk.CTk):
         self._bg_busy = True
         self._bg_sig = (str(self.settings.get("bg_image") or ""),
                         round(self._glass_alpha(), 3),
-                        bool(self.settings.get("sidebar_glass", True)))
+                        bool(self.settings.get("sidebar_glass", True)),
+                        round(float(self.settings.get("bg_dim", 0.0) or 0.0), 3))
         # 每一轮允许缓存的透明度：只有结构层的 0 和当前面板透明度
         self._glass_cache_alphas = {0.0, round(self._glass_alpha(), 3)}
         _cache = getattr(self, "_glass_cache", None)
@@ -1297,7 +1464,8 @@ class MainApp(ctk.CTk):
             self.update_idletasks()
             w = max(100, self.winfo_width())
             h = max(100, self.winfo_height())
-            key = (str(img_path), w, h)
+            _dim = max(0.0, min(0.6, float(self.settings.get("bg_dim", 0.0) or 0.0)))
+            key = (str(img_path), w, h, round(_dim, 3))
             if getattr(self, "_bg_key", None) != key or getattr(self, "_bg_img", None) is None:
                 # 图或窗口尺寸变了：整体重来一次
                 self._glass_clear()
@@ -1310,7 +1478,11 @@ class MainApp(ctk.CTk):
                 )
                 x = (img.width - w) // 2
                 y = (img.height - h) // 2
-                self._bg_img = img.crop((x, y, x + w, y + h))
+                img = img.crop((x, y, x + w, y + h))
+                if _dim > 0.001:
+                    # 压暗：让文字在花哨的照片背景上也看得清
+                    img = Image.blend(img, Image.new("RGB", img.size, (0, 0, 0)), _dim)
+                self._bg_img = img
                 self._bg_key = key
                 self._glass_cache = {}
                 self._glass_cache_alphas = None
@@ -1857,7 +2029,7 @@ class MainApp(ctk.CTk):
         holder.grid_rowconfigure(0, weight=1)
         self._settings_tabs = {}
         for _name in ("识别", "统计", "外观", "关于"):
-            _f = ctk.CTkScrollableFrame(holder, corner_radius=0, fg_color=BG)
+            _f = ctk.CTkScrollableFrame(holder, corner_radius=0, fg_color="transparent")
             _f.grid(row=0, column=0, sticky="nsew")
             _f.grid_columnconfigure(0, weight=1)
             self._settings_tabs[_name] = _f
@@ -2085,6 +2257,22 @@ class MainApp(ctk.CTk):
         self.opacity_slider.set(_op)
         self.opacity_slider.pack(side="right", padx=(10, 4))
 
+        row4 = ctk.CTkFrame(parent, fg_color="transparent")
+        row4.pack(fill="x", padx=14, pady=(2, 10))
+        ctk.CTkLabel(row4, text="背景压暗", font=(FONT, 15), text_color=TEXT).pack(side="left")
+        ctk.CTkLabel(row4, text="背景图太花、字看不清时往右拉（0%=不压暗）",
+                     font=(FONT, 12), text_color=DIM).pack(side="left", padx=(10, 0))
+        _dm = int(round(float(self.settings.get("bg_dim", 0.0) or 0.0) * 100))
+        self.dim_label = ctk.CTkLabel(row4, text=f"{_dm}%", font=(FONT, 13),
+                                      text_color=ACCENT, width=44)
+        self.dim_label.pack(side="right")
+        self.dim_slider = ctk.CTkSlider(
+            row4, from_=0, to=60, number_of_steps=12, width=150, height=16,
+            fg_color=BTN, progress_color=ACCENT, button_color=ACCENT,
+            button_hover_color=ACCENT_DARK, command=self._on_bg_dim_change)
+        self.dim_slider.set(_dm)
+        self.dim_slider.pack(side="right", padx=(10, 4))
+
     def _on_panel_opacity_change(self, value):
         """卡片透明度滑块：拖动时实时预览，停一下再写文件"""
         try:
@@ -2100,6 +2288,24 @@ class MainApp(ctk.CTk):
                 except Exception:
                     pass
             self._op_after = self.after(110, self._on_any_setting_change)
+        except Exception:
+            pass
+
+    def _on_bg_dim_change(self, value):
+        """背景压暗滑块：拖动时实时预览，停一下再写文件"""
+        try:
+            pct = int(round(float(value)))
+            self.settings["bg_dim"] = round(pct / 100.0, 3)
+            self.dim_label.configure(text=f"{pct}%")
+        except Exception:
+            pass
+        try:
+            if getattr(self, "_dim_after", None):
+                try:
+                    self.after_cancel(self._dim_after)
+                except Exception:
+                    pass
+            self._dim_after = self.after(110, self._on_any_setting_change)
         except Exception:
             pass
 
@@ -2626,7 +2832,8 @@ class MainApp(ctk.CTk):
             # 背景图 / 面板透明度 / 侧边栏模糊 变了就重贴玻璃
             _bg_sig = (str(self.settings.get("bg_image") or ""),
                        round(self._glass_alpha(), 3),
-                       bool(self.settings.get("sidebar_glass", True)))
+                       bool(self.settings.get("sidebar_glass", True)),
+                       round(float(self.settings.get("bg_dim", 0.0) or 0.0), 3))
             if getattr(self, "_bg_sig", None) != _bg_sig:
                 self._apply_background()
         except Exception:
