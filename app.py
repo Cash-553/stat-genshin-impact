@@ -703,7 +703,18 @@ class MainApp(ctk.CTk):
         corner.bind("<Button-1>", self._resize_start)
         corner.bind("<B1-Motion>", self._resize_corner)
 
-    # ---------- 自定义背景（图片铺底 + 毛玻璃侧边栏）----------
+    # ---------- 自定义背景（图片铺底 + 半透明玻璃面板）----------
+    #
+    # CustomTkinter 没有真正的透明：每个控件都会用一层纯色把自己的区域盖住
+    # （fg_color="transparent" 也只是「填父容器的颜色」）。
+    # 所以这里用「玻璃贴图」的办法：
+    #   把背景图上该控件所在的那一块裁下来，按面板透明度跟控件自身颜色混合，
+    #   再贴回控件内部 —— 贴在自己底色之上、其它子控件（文字/图标）之下。
+    # 这样除了文字和图标，其它地方都是半透明的，能看见底图。
+
+    # 图形直接画在自己画布上的控件：贴图会盖住图形，
+    # 改成把图垫在画布最底层（图片在图形下面、画布底色上面）
+    _GLASS_ON_CANVAS = ("CTkSwitch", "CTkScrollbar", "CTkSlider")
 
     def _on_resize(self, event=None):
         """窗口尺寸变化时（去抖）重新生成背景，避免频繁重绘"""
@@ -718,129 +729,453 @@ class MainApp(ctk.CTk):
                 pass
         self._resize_after = self.after(150, self._apply_background)
 
-    def _bg_clear(self):
-        """清掉上一次贴的背景层（图片对象也要一起放掉，否则会泄漏）"""
-        for w in getattr(self, "_bg_layers", []):
+    # ---- 颜色小工具 ----
+
+    @staticmethod
+    def _as_hex(color):
+        """把控件颜色统一成 '#RRGGBB'；transparent / None 返回 None"""
+        if isinstance(color, (list, tuple)):
+            color = color[-1] if color else None
+        if not isinstance(color, str):
+            return None
+        if color.lower() == "transparent":
+            return None
+        if len(color) == 7 and color.startswith("#"):
+            return color.upper()
+        try:
+            from PIL import ImageColor
+            r, g, b = ImageColor.getrgb(color)[:3]
+            return "#%02X%02X%02X" % (r, g, b)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _rgb(hexcolor):
+        h = hexcolor.lstrip("#")
+        return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+
+    def _w_fg(self, w):
+        try:
+            return self._as_hex(w.cget("fg_color"))
+        except Exception:
+            return None
+
+    def _glass_alpha(self):
+        """面板透明度：0=全透明，1=完全不透明"""
+        try:
+            return max(0.0, min(1.0, float(self.settings.get("panel_opacity", 0.5))))
+        except Exception:
+            return 0.5
+
+    # ---- 玻璃底图（整窗，带缓存）----
+
+    def _glass_base(self, tint, alpha, blur=False):
+        cache = getattr(self, "_glass_cache", None)
+        _a = round(alpha, 3)
+        # 每张整窗底图约 1.8MB，换透明度时把上一批丢掉，避免堆积
+        if cache is None or getattr(self, "_glass_cache_alpha", None) != _a:
+            cache = {}
+            self._glass_cache = cache
+            self._glass_cache_alpha = _a
+        key = (tint, bool(blur))
+        hit = cache.get(key)
+        if hit is not None:
+            return hit
+        from PIL import Image
+        base = self._bg_img
+        if blur:
+            from PIL import ImageFilter
+            base = base.filter(ImageFilter.GaussianBlur(10))
+            base = Image.blend(base, Image.new("RGB", base.size, (12, 12, 14)), 0.35)
+        if _a <= 0.001:
+            out = base
+        else:
+            out = Image.blend(base, Image.new("RGB", base.size, self._rgb(tint)), _a)
+        cache[key] = out
+        return out
+
+    # ---- 贴图 / 清理 ----
+
+    def _glass_clear(self):
+        """清掉所有玻璃层，并把改过的文字底色还原"""
+        for w, info in list(getattr(self, "_glass_placed", {}).items()):
+            lbl = info.get("lbl")
+            if lbl is not None:
+                try:
+                    lbl.destroy()
+                except Exception:
+                    pass
             try:
-                w.destroy()
+                cv = getattr(w, "_canvas", None)
+                if cv is not None and cv.winfo_exists():
+                    cv.delete("glassbg")
+                if info.get("canvas"):
+                    w.delete("glassbg")
+            except Exception:
+                pass
+        self._glass_placed = {}
+        for t, orig in list(getattr(self, "_glass_text_orig", {}).items()):
+            try:
+                if t.winfo_exists():
+                    t.configure(bg=orig)
+            except Exception:
+                pass
+        self._glass_text_orig = {}
+        for lbl in getattr(self, "_bg_layers", []):
+            try:
+                lbl.destroy()
             except Exception:
                 pass
         self._bg_layers = []
         self._bg_photos = []
 
-    def _bg_visible_containers(self):
-        """需要显示背景图的容器：内容区 + 当前已经显示的页面"""
-        out = []
-        c = getattr(self, "content", None)
-        try:
-            if c is not None and c.winfo_exists() and c.winfo_ismapped():
-                out.append(c)
-        except Exception:
-            pass
-        for f in getattr(self, "_pages", {}).values():
-            try:
-                if f is not None and f.winfo_exists() and f.winfo_ismapped():
-                    out.append(f)
-            except Exception:
-                pass
-        return out
+    def _glass_rect(self, w):
+        return (w.winfo_rootx() - self.winfo_rootx(),
+                w.winfo_rooty() - self.winfo_rooty(),
+                w.winfo_width(), w.winfo_height())
 
-    def _paint_bg_slice(self, container, img_full, blur=False, darken=0.0):
-        """把背景图上「container 所在的这一块」贴进 container 里面。
-
-        为什么要这么做：CustomTkinter 里 fg_color="transparent" 并不是真透明，
-        而是把父容器的底色填进去，所以只把图垫在窗口最底下是永远看不见的。
-        这里把对应的图片切片贴进容器内部，并抬到「容器自己的底色层」之上、
-        其它控件之下 —— 于是容器空着的地方就露出背景图，卡片和文字照常盖在上面。
-        """
-        from PIL import Image, ImageTk
-        if not container.winfo_exists():
-            return
-        cw = container.winfo_width()
-        ch = container.winfo_height()
+    @staticmethod
+    def _glass_crop(base, rect):
+        """从整图里裁出 rect 位置的那一块（越界部分填黑）"""
+        from PIL import Image
+        ox, oy, cw, ch = rect
         if cw < 2 or ch < 2:
-            return
-        # 容器相对窗口的位置，用来从整图里裁出对应的那一块
-        ox = container.winfo_rootx() - self.winfo_rootx()
-        oy = container.winfo_rooty() - self.winfo_rooty()
+            return None
         crop = Image.new("RGB", (cw, ch), (0, 0, 0))
         sx, sy = max(0, ox), max(0, oy)
-        ex = min(img_full.width, ox + cw)
-        ey = min(img_full.height, oy + ch)
+        ex, ey = min(base.width, ox + cw), min(base.height, oy + ch)
         if ex > sx and ey > sy:
-            crop.paste(img_full.crop((sx, sy, ex, ey)), (sx - ox, sy - oy))
-        if blur:
-            from PIL import ImageFilter
-            crop = crop.filter(ImageFilter.GaussianBlur(14))
-        if darken > 0:
-            crop = Image.blend(crop, Image.new("RGB", crop.size, (12, 12, 14)), darken)
+            crop.paste(base.crop((sx, sy, ex, ey)), (sx - ox, sy - oy))
+        return crop
 
+    def _glass_fix_text(self, w, base):
+        """控件内部的文字标签自带一块不透明底色，抹成该处玻璃的平均色"""
+        for attr in ("_label", "_text_label", "_entry"):
+            t = getattr(w, attr, None)
+            if t is None:
+                continue
+            try:
+                if not t.winfo_exists() or not t.winfo_ismapped():
+                    continue
+                rect = self._glass_rect(t)
+                crop = self._glass_crop(base, rect)
+                if crop is None:
+                    continue
+                from PIL import Image
+                r, g, b = crop.resize((1, 1), Image.BILINEAR).getpixel((0, 0))
+                if t not in self._glass_text_orig:
+                    self._glass_text_orig[t] = t.cget("bg")
+                t.configure(bg="#%02X%02X%02X" % (r, g, b))
+            except Exception:
+                pass
+
+    def _glass_paint(self, w, tint, alpha, blur=False):
+        """给控件贴一块玻璃（盖住它自己的底色，但在它的文字/图标下面）"""
+        from PIL import ImageTk
+        try:
+            if not w.winfo_exists() or not w.winfo_ismapped():
+                return
+        except Exception:
+            return
+        rect = self._glass_rect(w)
+        if rect[2] < 2 or rect[3] < 2:
+            return
+        key = ("L", tint, round(alpha, 3), bool(blur), rect)
+        placed = getattr(self, "_glass_placed", None)
+        if placed is None:
+            placed = {}
+            self._glass_placed = placed
+        old = placed.get(w)
+        if old is not None and old["key"] == key:
+            try:
+                if old["lbl"] is not None and old["lbl"].winfo_exists():
+                    return
+            except Exception:
+                pass
+        if old is not None:
+            try:
+                if old["lbl"] is not None:
+                    old["lbl"].destroy()
+            except Exception:
+                pass
+        crop = self._glass_crop(self._glass_base(tint, alpha, blur), rect)
+        if crop is None:
+            return
         photo = ImageTk.PhotoImage(crop)
-        self._bg_photos.append(photo)
-        lbl = tk.Label(container, image=photo, bd=0, highlightthickness=0)
+        lbl = tk.Label(w, image=photo, bd=0, highlightthickness=0)
         lbl.place(x=0, y=0, relwidth=1, relheight=1)
-        canvas = getattr(container, "_canvas", None)
+        canvas = getattr(w, "_canvas", None)
         try:
             if canvas is not None and canvas.winfo_exists():
-                # 只压过容器自己的底色画布，其它控件（按钮/卡片/文字）仍在它上面
+                # 只压过控件自己的底色层，文字/图标仍在它上面
                 lbl.lift(canvas)
             else:
                 lbl.lower()
         except Exception:
             pass
-        self._bg_layers.append(lbl)
+        placed[w] = {"lbl": lbl, "photo": photo, "key": key,
+                     "tint": tint, "alpha": alpha, "blur": blur}
+        self._glass_bind(w)
+        self._glass_fix_text(w, self._glass_base(tint, alpha, blur))
+
+    def _glass_paint_on_canvas(self, w, tint, alpha):
+        """把玻璃垫在画布最底层（用于图形画在画布上的控件，如开关）"""
+        from PIL import ImageTk
+        canvas = getattr(w, "_canvas", None)
+        if canvas is None:
+            return
+        try:
+            if not canvas.winfo_exists() or not w.winfo_ismapped():
+                return
+        except Exception:
+            return
+        rect = self._glass_rect(w)
+        if rect[2] < 2 or rect[3] < 2:
+            return
+        key = ("C", tint, round(alpha, 3), rect)
+        placed = getattr(self, "_glass_placed", None)
+        if placed is None:
+            placed = {}
+            self._glass_placed = placed
+        old = placed.get(w)
+        if old is not None and old["key"] == key:
+            return
+        crop = self._glass_crop(self._glass_base(tint, alpha), rect)
+        if crop is None:
+            return
+        photo = ImageTk.PhotoImage(crop)
+        try:
+            canvas.delete("glassbg")
+            canvas.create_image(0, 0, anchor="nw", image=photo, tags="glassbg")
+            canvas.tag_lower("glassbg")
+        except Exception:
+            return
+        placed[w] = {"lbl": None, "photo": photo, "key": key,
+                     "tint": tint, "alpha": alpha, "blur": False,
+                     "canvas": True}
+
+    def _glass_paint_viewport(self, cv, tint, alpha, blur=False):
+        """普通 tk 画布（可滚动区域的视口）：把图作为画布最底层的一项。
+
+        画布会被滚动，所以图要按「视口原点」的坐标摆，滚动时再跟着挪。
+        """
+        from PIL import ImageTk
+        try:
+            if not cv.winfo_exists() or not cv.winfo_ismapped():
+                return
+        except Exception:
+            return
+        rect = self._glass_rect(cv)
+        if rect[2] < 2 or rect[3] < 2:
+            return
+        key = ("V", tint, round(alpha, 3), bool(blur), rect)
+        placed = getattr(self, "_glass_placed", None)
+        if placed is None:
+            placed = {}
+            self._glass_placed = placed
+        old = placed.get(cv)
+        if old is not None and old["key"] == key:
+            self._glass_reposition_viewport(cv)
+            return
+        crop = self._glass_crop(self._glass_base(tint, alpha, blur), rect)
+        if crop is None:
+            return
+        photo = ImageTk.PhotoImage(crop)
+        try:
+            cv.delete("glassbg")
+            cv.create_image(cv.canvasx(0), cv.canvasy(0), anchor="nw",
+                            image=photo, tags="glassbg")
+            cv.tag_lower("glassbg")
+        except Exception:
+            return
+        placed[cv] = {"lbl": None, "photo": photo, "key": key,
+                      "tint": tint, "alpha": alpha, "blur": blur,
+                      "canvas": True, "viewport": True}
+
+    @staticmethod
+    def _glass_reposition_viewport(cv):
+        try:
+            cv.coords("glassbg", cv.canvasx(0), cv.canvasy(0))
+        except Exception:
+            pass
+
+    # ---- 布局变化时只重贴动过的控件 ----
+
+    def _glass_bind(self, w):
+        if getattr(w, "_glass_bound", False):
+            return
+        try:
+            w._glass_bound = True
+            w.bind("<Configure>", lambda e, ww=w: self._glass_dirty(ww), add="+")
+        except Exception:
+            pass
+
+    def _glass_dirty(self, w):
+        if getattr(self, "_bg_busy", False) or not getattr(self, "_bg_img", None):
+            return
+        if getattr(self, "_glass_after", None) is None:
+            dirty = getattr(self, "_glass_dirty_set", None)
+            if dirty is None:
+                dirty = set()
+                self._glass_dirty_set = dirty
+            dirty.add(w)
+            try:
+                self._glass_after = self.after(25, self._glass_flush)
+            except Exception:
+                pass
+        else:
+            dirty = getattr(self, "_glass_dirty_set", None)
+            if dirty is None:
+                dirty = set()
+                self._glass_dirty_set = dirty
+            dirty.add(w)
+
+    def _glass_flush(self):
+        """把这一轮动过的控件重贴一遍"""
+        self._glass_after = None
+        dirty = getattr(self, "_glass_dirty_set", set())
+        self._glass_dirty_set = set()
+        if getattr(self, "_bg_busy", False):
+            return
+        placed = getattr(self, "_glass_placed", {})
+        for w in list(dirty):
+            info = placed.get(w)
+            try:
+                if not w.winfo_exists():
+                    placed.pop(w, None)
+                    continue
+            except Exception:
+                placed.pop(w, None)
+                continue
+            if info is None:
+                continue
+            try:
+                if info.get("viewport"):
+                    self._glass_paint_viewport(w, info["tint"], info["alpha"], info.get("blur", False))
+                elif info.get("canvas"):
+                    self._glass_paint_on_canvas(w, info["tint"], info["alpha"])
+                else:
+                    self._glass_paint(w, info["tint"], info["alpha"], info.get("blur", False))
+            except Exception:
+                pass
+        # 可滚动区域滚过之后，视口底图要跟着挪回原位
+        for w, info in list(placed.items()):
+            if info.get("viewport"):
+                self._glass_reposition_viewport(w)
+
+    # ---- 递归给整棵控件树贴玻璃 ----
+
+    def _glass_walk(self, parent, tint, alpha, panel_alpha, blur=False, depth=0):
+        if depth > 14:
+            return
+        try:
+            children = parent.winfo_children()
+        except Exception:
+            return
+        sidebar = getattr(self, "sidebar", None)
+        for w in children:
+            cls = type(w).__name__
+            # 只处理 CustomTkinter 的控件。
+            # 它们内部的画布 / 文字标签（CTkCanvas、tkinter.Label…）不能碰 ——
+            # 往文字标签里再贴一层就会把字盖住，往画布上贴也会出问题。
+            if cls.startswith("CTk"):
+                if cls == "CTkCanvas":
+                    continue
+            elif cls in ("Canvas", "Frame", "Toplevel"):
+                # 普通 tk 容器（可滚动框架内部就是这种画布）：只往下走，不贴图，
+                # 否则里面的控件（设置页整页）都会漏掉
+                if cls == "Canvas":
+                    try:
+                        self._glass_paint_viewport(w, tint, alpha, blur)
+                    except Exception:
+                        pass
+                self._glass_walk(w, tint, alpha, panel_alpha, blur, depth + 1)
+                continue
+            else:
+                continue
+            # 侧边栏整块走「模糊」那条线
+            _blur = blur or (w is sidebar and bool(self.settings.get("sidebar_glass", True)))
+            own = self._w_fg(w)
+            if own is not None:
+                t, a = own, panel_alpha
+            else:
+                t, a = tint, alpha
+            try:
+                if cls in self._GLASS_ON_CANVAS:
+                    self._glass_paint_on_canvas(w, t, a)
+                    continue
+                self._glass_paint(w, t, a, _blur)
+            except Exception:
+                pass
+            self._glass_walk(w, t, a, panel_alpha, _blur, depth + 1)
+
+    # ---- 总入口 ----
 
     def _apply_background(self):
-        """根据设置应用背景：自定义图片铺底（可选毛玻璃侧边栏），无图用纯色"""
+        """根据设置应用背景：自定义图片 + 半透明面板；没图就是原来的纯色
+
+        已经是增量刷新：图没换、控件没动过的不会重贴，
+        否则每切一次页面都要重做一百多张贴图，卡得没法用。
+        """
         if getattr(self, "_bg_busy", False):
             return
         self._bg_busy = True
+        self._bg_sig = (str(self.settings.get("bg_image") or ""),
+                        round(self._glass_alpha(), 3),
+                        bool(self.settings.get("sidebar_glass", True)))
         try:
-            self._bg_clear()
-
             img_path = self.settings.get("bg_image")
             has_img = bool(img_path) and Path(img_path).exists()
-            glass = bool(self.settings.get("sidebar_glass", True)) and has_img
-
-            # 侧边栏：毛玻璃时露出图片（模糊压暗），否则用默认纯色
-            try:
-                self.sidebar.configure(fg_color="transparent" if glass else SIDEBAR)
-            except Exception:
-                pass
-
             if not has_img:
+                self._glass_clear()
+                self._bg_img = None
+                self._bg_key = None
+                self._glass_cache = {}
                 return
 
             from PIL import Image, ImageTk
             self.update_idletasks()
             w = max(100, self.winfo_width())
             h = max(100, self.winfo_height())
-            img = Image.open(img_path).convert("RGB")
-            # cover 缩放：铺满窗口并居中裁剪
-            scale = max(w / img.width, h / img.height)
-            img = img.resize(
-                (max(1, int(img.width * scale)), max(1, int(img.height * scale))),
-                Image.LANCZOS,
-            )
-            x = (img.width - w) // 2
-            y = (img.height - h) // 2
-            img = img.crop((x, y, x + w, y + h))
+            key = (str(img_path), w, h)
+            if getattr(self, "_bg_key", None) != key or getattr(self, "_bg_img", None) is None:
+                # 图或窗口尺寸变了：整体重来一次
+                self._glass_clear()
+                img = Image.open(img_path).convert("RGB")
+                # cover 缩放：铺满窗口并居中裁剪
+                scale = max(w / img.width, h / img.height)
+                img = img.resize(
+                    (max(1, int(img.width * scale)), max(1, int(img.height * scale))),
+                    Image.LANCZOS,
+                )
+                x = (img.width - w) // 2
+                y = (img.height - h) // 2
+                self._bg_img = img.crop((x, y, x + w, y + h))
+                self._bg_key = key
+                self._glass_cache = {}
 
-            # 1) 整窗铺一张底图
-            photo = ImageTk.PhotoImage(img)
-            self._bg_photos.append(photo)
-            lbl = tk.Label(self, image=photo, bd=0, highlightthickness=0)
-            lbl.place(x=0, y=0, relwidth=1, relheight=1)
-            lbl.lower()
-            self._bg_layers.append(lbl)
+                # 整窗铺一张原图（结构层=完全透明，直接就是原图）
+                photo = ImageTk.PhotoImage(self._bg_img)
+                self._bg_photos.append(photo)
+                lbl = tk.Label(self, image=photo, bd=0, highlightthickness=0)
+                lbl.place(x=0, y=0, relwidth=1, relheight=1)
+                lbl.lower()
+                self._bg_layers.append(lbl)
 
-            # 2) 内容区 + 已经显示的页面：各贴一块对应位置的切片
-            for c in self._bg_visible_containers():
-                self._paint_bg_slice(c, img)
-
-            # 3) 左侧栏毛玻璃：同一块图模糊 + 压暗，保证上面文字看得清
-            if glass:
-                self._paint_bg_slice(self.sidebar, img, blur=True, darken=0.55)
+            # 从窗口往下走：实色面板按「面板透明度」贴玻璃，
+            # 透明容器继承上一层的颜色（所以页面空白处还是纯原图）
+            self._glass_walk(self, self._as_hex(BG) or "#1C1C1C", 0.0,
+                             self._glass_alpha(), False, 0)
+            # 已经销毁的控件，把它的记录清掉
+            placed = getattr(self, "_glass_placed", {})
+            for _w in list(placed):
+                try:
+                    if not _w.winfo_exists():
+                        info = placed.pop(_w)
+                        if info.get("lbl") is not None:
+                            info["lbl"].destroy()
+                except Exception:
+                    pass
         except Exception as e:
             # 不要静默失败：记下来，方便排查（以前这里被吞掉，
             # 导致「背景图没效果」这种问题很难查）
@@ -901,7 +1236,7 @@ class MainApp(ctk.CTk):
         # 「重新框选」折叠区：第 2 种（点标题原地展开，里面含诊断截图）
         _acc = Accordion(rows, "🎯", "重新框选",
                          "手动指定要识别的屏幕区域；里面还有「诊断截图」（一般都不用）",
-                         self._build_reselect_body)
+                         self._build_reselect_body, on_change=self._apply_background)
         _acc.pack(fill="x", pady=(0, 6))
         return page
 
@@ -1408,7 +1743,8 @@ class MainApp(ctk.CTk):
 
         # 识别内容：第 2 种折叠区（三个开关合并进来）
         self._acc_enable = Accordion(
-            t, "🎯", "识别内容", "想统计什么就开什么（点这里展开）", self._build_enable_body)
+            t, "🎯", "识别内容", "想统计什么就开什么（点这里展开）", self._build_enable_body,
+            on_change=self._apply_background)
         self._acc_enable.pack(fill="x", pady=(0, 8))
 
         h = self._make_setting_card(t, "✖", "点右上角 ✕ 时", "关闭窗口时的行为")
@@ -1487,14 +1823,14 @@ class MainApp(ctk.CTk):
 
         # 背景图片 + 毛玻璃：第 2 种折叠区
         self._acc_bg = Accordion(
-            t, "🖼", "自定义背景图片", "选图片当窗口背景；里面还有「左侧栏毛玻璃」开关",
-            self._build_bg_body)
+            t, "🖼", "自定义背景图片", "选图片当窗口背景；可以调卡片透明度（含侧边栏和按钮）",
+            self._build_bg_body, on_change=self._apply_background)
         self._acc_bg.pack(fill="x", pady=(0, 8))
 
         # OBS：第 2 种折叠区
         self._acc_obs = Accordion(
             t, "📺", "连接 OBS 直播覆盖", "点开可以看到开关和浏览器源地址",
-            self._build_obs_body)
+            self._build_obs_body, on_change=self._apply_background)
         self._acc_obs.pack(fill="x", pady=(0, 8))
 
         # ================= 关于 =================
@@ -1571,6 +1907,40 @@ class MainApp(ctk.CTk):
         ctk.CTkSwitch(row2, text="", variable=self.glass_var, onvalue=True, offvalue=False,
                       width=54, fg_color=SWITCH_OFF, progress_color=ACCENT,
                       command=self._on_any_setting_change).pack(side="right")
+
+        row3 = ctk.CTkFrame(parent, fg_color="transparent")
+        row3.pack(fill="x", padx=14, pady=(2, 10))
+        ctk.CTkLabel(row3, text="卡片透明度", font=(FONT, 15), text_color=TEXT).pack(side="left")
+        ctk.CTkLabel(row3, text="卡片 / 侧边栏 / 按钮统一用这个（0%=全透明）",
+                     font=(FONT, 12), text_color=DIM).pack(side="left", padx=(10, 0))
+        _op = int(round(float(self.settings.get("panel_opacity", 0.5)) * 100))
+        self.opacity_label = ctk.CTkLabel(row3, text=f"{_op}%", font=(FONT, 13),
+                                          text_color=ACCENT, width=44)
+        self.opacity_label.pack(side="right")
+        self.opacity_slider = ctk.CTkSlider(
+            row3, from_=0, to=100, number_of_steps=20, width=150, height=16,
+            fg_color=BTN, progress_color=ACCENT, button_color=ACCENT,
+            button_hover_color=ACCENT_DARK, command=self._on_panel_opacity_change)
+        self.opacity_slider.set(_op)
+        self.opacity_slider.pack(side="right", padx=(10, 4))
+
+    def _on_panel_opacity_change(self, value):
+        """卡片透明度滑块：拖动时实时预览，停一下再写文件"""
+        try:
+            pct = int(round(float(value)))
+            self.settings["panel_opacity"] = round(pct / 100.0, 3)
+            self.opacity_label.configure(text=f"{pct}%")
+        except Exception:
+            pass
+        try:
+            if getattr(self, "_op_after", None):
+                try:
+                    self.after_cancel(self._op_after)
+                except Exception:
+                    pass
+            self._op_after = self.after(110, self._on_any_setting_change)
+        except Exception:
+            pass
 
     def _build_obs_body(self, parent):
         """「连接 OBS」展开后：开关 + 地址 + 复制"""
@@ -2092,6 +2462,12 @@ class MainApp(ctk.CTk):
                     pass
             if _slots_changed:
                 self._rebuild_stat_bar()
+            # 背景图 / 面板透明度 / 侧边栏模糊 变了就重贴玻璃
+            _bg_sig = (str(self.settings.get("bg_image") or ""),
+                       round(self._glass_alpha(), 3),
+                       bool(self.settings.get("sidebar_glass", True)))
+            if getattr(self, "_bg_sig", None) != _bg_sig:
+                self._apply_background()
         except Exception:
             pass
 

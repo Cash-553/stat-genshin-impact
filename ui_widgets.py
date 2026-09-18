@@ -238,7 +238,8 @@ class Accordion(ctk.CTkFrame):
     """可折叠设置区域（原地展开/收起，带过渡动画）"""
 
     def __init__(self, master, icon, title, desc, build_body,
-                 expanded=False, icon_size=20, title_size=16, desc_size=12):
+                 expanded=False, icon_size=20, title_size=16, desc_size=12,
+                 on_change=None):
         super().__init__(master, corner_radius=theme.RADIUS_CARD, fg_color=theme.CARD,
                          border_width=1, border_color=theme.BORDER)
         self.pack(fill="x", pady=(0, 8))
@@ -247,6 +248,7 @@ class Accordion(ctk.CTkFrame):
         self._expanded = False
         self._anim = None
         self._title_size = title_size
+        self._on_change = on_change
 
         head = ctk.CTkFrame(self, fg_color="transparent", cursor="hand2")
         head.pack(fill="x")
@@ -302,6 +304,8 @@ class Accordion(ctk.CTkFrame):
             except Exception:
                 pass
             self._built = True
+            # 新造出来的控件需要贴一次背景（动画过程中由 <Configure> 自己跟进）
+            self._notify_change()
         try:
             self.body.pack(fill="x")
             self.update_idletasks()
@@ -339,6 +343,14 @@ class Accordion(ctk.CTkFrame):
 
         step(1)
 
+    def _notify_change(self):
+        """展开/收起过程中通知外面（用来重贴玻璃背景）"""
+        if self._on_change:
+            try:
+                self._on_change()
+            except Exception:
+                pass
+
     def _finish(self, expanding):
         try:
             if expanding:
@@ -353,6 +365,7 @@ class Accordion(ctk.CTkFrame):
                 self._expanded = False
         except Exception:
             pass
+        self._notify_change()
 
     def collapse_now(self):
         """立刻收起（不播动画）"""

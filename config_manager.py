@@ -40,7 +40,8 @@ DEFAULT_SETTINGS = {
     "bg_color": "经典深黑",          # 背景色：预设名 或 #RRGGBB
     "accent_color": "经典蓝",        # 强调色：预设名 或 #RRGGBB
     "bg_image": "",                 # 自定义背景图片路径（空=纯色背景）
-    "sidebar_glass": True,          # 左侧栏毛玻璃效果
+    "sidebar_glass": True,          # 左侧栏是否模糊（需要先设置背景图片）
+    "panel_opacity": 0.5,           # 面板（卡片/侧边栏/按钮）透明度：0=全透明，1=不透明
     # 横向统计条（直播间小窗口）：三个格子的图标文件（icons 文件夹里，内置默认）
     "stat_bar": {
         "slot1": "_bar_slot1.png",   # 摩拉（内置）
