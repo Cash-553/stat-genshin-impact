@@ -156,6 +156,24 @@ class MainApp(ctk.CTk):
         self.bind("<Configure>", self._on_resize)
         self.after(200, self._apply_background)
 
+        # 启动后空闲时把其它页面依次预建好：
+        # 首屏不受影响（启动快），等用户点过去时页面已经建好（切页不卡）
+        self.after(250, lambda: self._prebuild_pages("home", "bar", "records", "settings"))
+
+    def _prebuild_pages(self, *keys):
+        """按顺序、间隔着预建页面，避免集中在一起卡顿"""
+        keys = list(keys)
+        if not keys:
+            return
+        k = keys.pop(0)
+        try:
+            if k != getattr(self, "_current_page", None):
+                self._ensure_page(k)
+        except Exception:
+            pass
+        if keys:
+            self.after(150, lambda: self._prebuild_pages(*keys))
+
 
     def _install_wndproc(self):
         """子类化窗口过程：拦截任务栏按钮的「还原/最小化」系统消息。
@@ -1358,12 +1376,44 @@ class MainApp(ctk.CTk):
         return DatasetCollector(self.settings)
 
     def _refresh_dev_stats(self):
+        """统计样本数量。
+
+        扫描上千个文件很慢（约 0.5 秒），所以放到后台线程算，
+        算完由主循环取回来显示，界面完全不卡。
+        """
+        if getattr(self, "_dev_stats_busy", False):
+            return
+        self._dev_stats_busy = True
+
+        def _work():
+            try:
+                s = DatasetCollector(self.settings).stats()
+            except Exception:
+                s = None
+            self._dev_stats_result = s if s else {}   # 后台线程写，主循环读
+
         try:
-            s = self._dev_collector().stats()
+            threading.Thread(target=_work, daemon=True).start()
+        except Exception:
+            self._dev_stats_busy = False
+            self._dev_stats_result = None
+
+    def _apply_dev_stats(self):
+        """把后台算好的样本统计显示出来（主线程调用）"""
+        r = getattr(self, "_dev_stats_result", None)
+        if r is None:
+            return
+        self._dev_stats_result = None
+        self._dev_stats_busy = False
+        if not r:
+            return
+        try:
             if hasattr(self, "_dev_stats_label"):
                 self._dev_stats_label.configure(
-                    text=f"GAMEPLAY：{s['gameplay']}    NON_GAMEPLAY：{s['non_gameplay']}\n"
-                         f"总样本：{s['total']}    占用：{s['size_mb']} MB / {s['max_mb']} MB"
+                    text=f"GAMEPLAY：{r.get('gameplay', 0)}    "
+                         f"NON_GAMEPLAY：{r.get('non_gameplay', 0)}\n"
+                         f"总样本：{r.get('total', 0)}    "
+                         f"占用：{r.get('size_mb', 0)} MB / {r.get('max_mb', 100)} MB"
                 )
         except Exception:
             pass
@@ -1605,6 +1655,9 @@ class MainApp(ctk.CTk):
 
             # 3. 刷新界面（内部只在数据变化时重建列表）
             self._refresh_ui()
+
+            # 4. 开发者选项：把后台算好的样本统计显示出来（不阻塞）
+            self._apply_dev_stats()
         except Exception:
             pass
         # 界面刷新频率固定 200ms（检测频率由后台线程控制）
@@ -1974,15 +2027,25 @@ class MainApp(ctk.CTk):
         if "home" not in getattr(self, "_pages", {}):
             return
         try:
-            # 今日摩拉（千分位）
-            self.mora_label.configure(text=f"{self.stats.mora:,}")
-            # 监测时间
+            # 只在数值真的变了才 configure（每次 configure 都会触发控件重绘）
+            _mora = f"{self.stats.mora:,}"
+            if getattr(self, "_ui_mora_txt", None) != _mora:
+                self._ui_mora_txt = _mora
+                self.mora_label.configure(text=_mora)
+
             total = self.stats.running_seconds
             if self.monitoring and self._monitor_start:
                 total += int(time.monotonic() - self._monitor_start)
-            self.time_label.configure(text=fmt_time(total))
-            # 狗粮
-            self.artifact_label.configure(text=f"×{self.stats.artifact}")
+            _t = fmt_time(total)
+            if getattr(self, "_ui_time_txt", None) != _t:
+                self._ui_time_txt = _t
+                self.time_label.configure(text=_t)
+
+            _art = f"×{self.stats.artifact}"
+            if getattr(self, "_ui_art_txt", None) != _art:
+                self._ui_art_txt = _art
+                self.artifact_label.configure(text=_art)
+
             # 素材列表（合并材料，只在数据变化时重建）
             merged = dict(self.stats.materials)
             for k, v in self.stats.normal_materials.items():
