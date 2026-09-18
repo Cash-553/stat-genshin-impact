@@ -90,9 +90,35 @@ class DatasetCollector:
 
     # ---------- 统计 ----------
     def stats(self):
-        g = self._count_dir(self.gameplay_dir())
-        n = self._count_dir(self.non_gameplay_dir())
-        size = self._dir_size(self.base_dir())
+        """一次遍历算完样本数 + 占用空间。
+
+        原来用 glob + rglob + 逐个 stat，1000+ 样本要 500ms（设置页会卡一下）；
+        改成单次 os.walk 遍历，快好几倍。
+        """
+        g = n = 0
+        size = 0
+        try:
+            base = os.path.normcase(str(self.base_dir()))
+            gp = os.path.normcase(str(self.gameplay_dir()))
+            ng = os.path.normcase(str(self.non_gameplay_dir()))
+        except Exception:
+            return {"gameplay": 0, "non_gameplay": 0, "total": 0,
+                    "size_mb": 0.0, "max_mb": MAX_SIZE_MB}
+        try:
+            for root, _dirs, files in os.walk(base):
+                rk = os.path.normcase(root)
+                for fn in files:
+                    try:
+                        size += os.path.getsize(os.path.join(root, fn))
+                    except Exception:
+                        pass
+                    if fn.lower().endswith((".jpg", ".jpeg", ".png")):
+                        if rk == gp:
+                            g += 1
+                        elif rk == ng:
+                            n += 1
+        except Exception:
+            pass
         return {
             "gameplay": g,
             "non_gameplay": n,
@@ -100,20 +126,6 @@ class DatasetCollector:
             "size_mb": _bytes_to_mb(size),
             "max_mb": MAX_SIZE_MB,
         }
-
-    @staticmethod
-    def _count_dir(d):
-        try:
-            return len([f for f in d.glob("*.jpg") if f.is_file()])
-        except Exception:
-            return 0
-
-    @staticmethod
-    def _dir_size(d):
-        try:
-            return sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
-        except Exception:
-            return 0
 
     # ---------- 采集 ----------
     def _get_frame(self):

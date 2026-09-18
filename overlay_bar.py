@@ -139,21 +139,36 @@ class StatBar(ctk.CTkToplevel):
             "slot2": str(materials),
             "slot3": str(st.get("artifact", 0)),
         }
+        if not hasattr(self, "_icon_cache"):
+            self._icon_cache = {}
+            self._icon_cache_key = {}
         for icon_lbl, count_lbl, key, title in self._slots:
-            count_lbl.configure(text=values.get(key, "0"))
+            # 数量变化才改文字（减少无谓重绘）
+            txt = values.get(key, "0")
+            try:
+                if count_lbl.cget("text") != txt:
+                    count_lbl.configure(text=txt)
+            except Exception:
+                pass
+            # 图标只在文件变化时才重新加载/解码
+            # （原来每 500ms 都把 3 张图片读盘 + 解码一次，白耗性能）
             p = self._slot_icon_file(key)
             if p is None:
                 p = _ensure_placeholder(key, title)
-            if p:
-                try:
-                    img = Image.open(p).convert("RGBA")
-                    img = img.resize((36, 36), Image.LANCZOS)
-                    icon_lbl.configure(
-                        image=ctk.CTkImage(light_image=img, dark_image=img, size=(36, 36)),
-                        text="",
-                    )
-                except Exception:
-                    pass
+            if not p:
+                continue
+            ph = str(p)
+            if self._icon_cache_key.get(key) == ph:
+                continue
+            try:
+                img = Image.open(ph).convert("RGBA")
+                img = img.resize((36, 36), Image.LANCZOS)
+                cimg = ctk.CTkImage(light_image=img, dark_image=img, size=(36, 36))
+                icon_lbl.configure(image=cimg, text="")
+                self._icon_cache[key] = cimg          # 保持引用，防止被回收
+                self._icon_cache_key[key] = ph
+            except Exception:
+                pass
 
     def _loop(self):
         try:
