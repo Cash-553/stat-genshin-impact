@@ -77,20 +77,71 @@ def fmt_time(seconds):
 
 
 # ================= 全局热键 =================
-# 名称 -> (修饰键, 虚拟键码)；None 表示不启用
-# 修饰键：MOD_ALT=0x0001, MOD_CONTROL=0x0002；MOD_NOREPEAT=0x4000 由代码加上
-HOTKEY_CHOICES = ["关闭", "F8", "F9", "F10", "F11", "F12", "Ctrl+Alt+S"]
-HOTKEY_MAP = {
-    "关闭": None,
-    "F8": (0x0000, 0x77),
-    "F9": (0x0000, 0x78),
-    "F10": (0x0000, 0x79),
-    "F11": (0x0000, 0x7A),
-    "F12": (0x0000, 0x7B),
-    "Ctrl+Alt+S": (0x0002 | 0x0001, 0x53),
-}
+# 设置里存的是 "Ctrl+Alt+S" / "F9" / "关闭" 这样的字符串，完全自定义
 HOTKEY_ID = 0xA501
 WM_HOTKEY = 0x0312
+
+
+def _keysym_to_vk(ks):
+    """Tk 的 keysym（F9 / S / SPACE…）-> Windows 虚拟键码"""
+    ks = (ks or "").upper()
+    if len(ks) == 1 and ks.isalnum():
+        return ord(ks)
+    if ks.startswith("F") and ks[1:].isdigit():
+        n = int(ks[1:])
+        if 1 <= n <= 24:
+            return 0x70 + n - 1
+    return {
+        "SPACE": 0x20, "TAB": 0x09, "RETURN": 0x0D, "BACKSPACE": 0x08,
+        "INSERT": 0x2D, "DELETE": 0x2E, "HOME": 0x24, "END": 0x23,
+        "PRIOR": 0x21, "NEXT": 0x22, "UP": 0x26, "DOWN": 0x28,
+        "LEFT": 0x25, "RIGHT": 0x27, "MINUS": 0xBD, "EQUAL": 0xBB,
+        "BRACKETLEFT": 0xDB, "BRACKETRIGHT": 0xDD, "BACKSLASH": 0xDC,
+        "SEMICOLON": 0xBA, "APOSTROPHE": 0xDE, "COMMA": 0xBC,
+        "PERIOD": 0xBE, "SLASH": 0xBF, "GRAVE": 0xC0,
+    }.get(ks)
+
+
+def _hotkey_name(mods, key):
+    """(修饰键, 键名) -> 保存用的字符串"""
+    parts = []
+    if mods & 0x0002:
+        parts.append("Ctrl")
+    if mods & 0x0001:
+        parts.append("Alt")
+    if mods & 0x0004:
+        parts.append("Shift")
+    if mods & 0x0008:
+        parts.append("Win")
+    parts.append(str(key).upper())
+    return "+".join(parts)
+
+
+def _parse_hotkey(s):
+    """字符串 -> (mods, vk)；无法解析返回 None"""
+    s = str(s or "").strip()
+    if not s or s in ("关闭", "无", "None") or s.startswith("这个键"):
+        return None
+    mods = 0
+    key = None
+    for part in s.split("+"):
+        p = part.strip().upper()
+        if p in ("CTRL", "CONTROL"):
+            mods |= 0x0002
+        elif p == "ALT":
+            mods |= 0x0001
+        elif p == "SHIFT":
+            mods |= 0x0004
+        elif p in ("WIN", "SUPER"):
+            mods |= 0x0008
+        elif p:
+            key = p
+    if not key:
+        return None
+    vk = _keysym_to_vk(key)
+    if vk is None:
+        return None
+    return mods, vk
 
 
 class MainApp(ctk.CTk):
@@ -307,7 +358,7 @@ class MainApp(ctk.CTk):
                 except Exception:
                     pass
                 self._hotkey_vk = None
-            spec = HOTKEY_MAP.get(self.settings.get("hotkey", "关闭"))
+            spec = _parse_hotkey(self.settings.get("hotkey", "关闭"))
             if not spec:
                 return
             mods, vk = spec
@@ -752,9 +803,10 @@ class MainApp(ctk.CTk):
             "开始", self.on_start_stop, accent=True)
         self.start_card.pack(fill="x", pady=(0, 6))
 
+        # 「清空」卡片：下拉菜单选清空内容 + 右边按钮执行
+        self._make_clear_card(rows)
+
         _items = [
-            ("🧹", "清空今日", "只清空今日统计当前的数据（收益记录不受影响）", "清空", self.on_clear_today),
-            ("⏱", "清空时间", "只清空今日统计当前的数据（收益记录不受影响）", "清空", self.on_clear_runtime),
             ("🎯", "重新框选", "手动指定要识别的屏幕区域（一般不用，自动识别即可）", "框选", self.on_reselect),
             ("📷", "诊断截图", "和自动框选配合使用，用来诊断截图内容（一般不用）", "截图", self.on_debug_screenshot),
         ]
@@ -762,6 +814,55 @@ class MainApp(ctk.CTk):
             _card = self._make_row_card(rows, _icon, _title, _desc, _btext, _cmd)[0]
             _card.pack(fill="x", pady=(0, 6))
         return page
+
+    def _make_clear_card(self, parent):
+        """清空卡片：下拉菜单选「清空数据 / 清空时间 / 都清空」，右边按钮执行"""
+        card = ctk.CTkFrame(parent, corner_radius=RADIUS_CARD, fg_color=CARD,
+                            border_width=1, border_color=theme.BORDER)
+        ctk.CTkButton(
+            card, text="清空", font=(FONT, 15), width=84, height=34,
+            corner_radius=RADIUS_BTN, fg_color=DANGER, hover_color=DANGER_HOVER,
+            text_color="#FFFFFF", command=self._on_clear_selected,
+        ).pack(side="right", padx=(10, 14), pady=9)
+        self.clear_choice = ctk.StringVar(value="清空今日数据")
+        ctk.CTkOptionMenu(
+            card, values=["清空今日数据", "清空监测时间", "清空数据和时间"], variable=self.clear_choice,
+            font=(FONT, 14), dropdown_font=(FONT, 14), width=190,
+            fg_color=BTN, button_color=BTN_HOVER, button_hover_color=BTN_HOVER, text_color=TEXT,
+        ).pack(side="right", padx=(8, 0), pady=9)
+        ic = ctk.CTkFrame(card, width=42, height=42, corner_radius=12, fg_color=CARD_INNER)
+        ic.pack(side="left", padx=(14, 12), pady=9)
+        ic.pack_propagate(False)
+        ctk.CTkLabel(ic, text="🧹", font=(FONT, 20), text_color=ACCENT).place(
+            relx=0.5, rely=0.5, anchor="center")
+        mid = ctk.CTkFrame(card, fg_color="transparent")
+        mid.pack(side="left", fill="both", expand=True, pady=9)
+        ctk.CTkLabel(mid, text="清空", font=(FONT, 16, "bold"), text_color=TEXT, anchor="w").pack(anchor="w")
+        ctk.CTkLabel(mid, text="选好要清空的内容，再点右边按钮（收益记录不受影响）",
+                     font=(FONT, 12), text_color=DIM, anchor="w").pack(anchor="w", pady=(2, 0))
+        card.pack(fill="x", pady=(0, 6))
+        return card
+
+    def _on_clear_selected(self):
+        """按下拉菜单的选择执行清空"""
+        choice = self.clear_choice.get() if hasattr(self, "clear_choice") else "清空今日数据"
+        if choice == "清空监测时间":
+            self.on_clear_runtime()
+        elif choice == "清空数据和时间":
+            self.on_clear_all()
+        else:
+            self.on_clear_today()
+
+    def on_clear_all(self):
+        """清空今日数据 + 监测时间（收益记录不动）"""
+        if not messagebox.askyesno("确认", "确定清空今天的收益数据和监测时间吗？\n（收益记录不受影响）"):
+            return
+        self.stats.clear_today()
+        self.stats.clear_running_seconds()
+        if self.monitoring:
+            self._monitor_start = time.monotonic()
+        self._refresh_ui()
+        messagebox.showinfo("已清空", "今日数据和监测时间已清空")
 
     def _make_row_card(self, parent, icon, title, desc, btn_text, command, accent=False):
         """横向长条卡片：[图标小卡片] [标题 + 说明] ......... [按钮]
@@ -1126,11 +1227,11 @@ class MainApp(ctk.CTk):
         ctk.CTkLabel(page, text="设置", font=(FONT, 23, "bold"), text_color=ACCENT).grid(
             row=0, column=0, sticky="w", pady=(0, 10))
 
-        # ---- 标签栏：设置项很多，分组显示，尽量不用滚动 ----
+        # ---- 标签栏 ----
         self.settings_tab_var = ctk.StringVar(value="识别")
         ctk.CTkSegmentedButton(
             page, values=["识别", "统计", "外观", "关于"], variable=self.settings_tab_var,
-            font=(FONT, 15), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
+            font=(FONT, 14), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
             text_color=TEXT, text_color_disabled=DIM, command=self._on_settings_tab,
         ).grid(row=1, column=0, sticky="ew", pady=(0, 10))
 
@@ -1145,243 +1246,184 @@ class MainApp(ctk.CTk):
             _f.grid_columnconfigure(0, weight=1)
             self._settings_tabs[_name] = _f
 
-        # 当前标签的滚动容器（下面各分区依次往里放卡片）
-        scroll = self._settings_tabs["识别"]
+        # ================= 识别 =================
+        t = self._settings_tabs["识别"]
 
-        r = 0
-
-        # ---- 1. 检测设置 ----
-        card1 = self._make_card(scroll)
-        card1.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
-        ctk.CTkLabel(card1, text="⚙️ 检测设置", font=(FONT, 16, "bold"), text_color=ACCENT).pack(padx=20, pady=(12, 6))
-
-        self._setting_row(card1, "检测间隔（毫秒）", "每多少毫秒检查一次画面（默认 50，可填 10~5000）")
-        self.tick_entry = ctk.CTkEntry(
-            card1, font=(FONT, 16), height=32, fg_color=CARD_INNER,
-            text_color=TEXT, border_color=BTN_HOVER,
-        )
+        h = self._make_setting_card(t, "⏱", "检测间隔", "每多少毫秒检查一次画面（10~5000，默认 50）")
+        self.tick_entry = ctk.CTkEntry(h, font=(FONT, 14), height=34, width=110,
+                                       fg_color=CARD_INNER, text_color=TEXT, border_color=BTN_HOVER)
         self.tick_entry.insert(0, str(int(self.settings.get("tick_interval", 50))))
-        self.tick_entry.pack(padx=20, pady=(0, 10), fill="x")
+        self.tick_entry.pack()
 
-        self._setting_row(card1, "画面变化灵敏度", "越灵敏，掉落提示一出现就越快识别（太灵敏会耗电）")
+        h = self._make_setting_card(t, "🎚", "画面变化灵敏度", "越灵敏识别越快，太灵敏会耗电")
         self.change_var = ctk.StringVar(value=str(self.settings.get("change_level", "中")))
         ctk.CTkSegmentedButton(
-            card1, values=["高", "中", "低"], variable=self.change_var,
-            font=(FONT, 15), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
+            h, values=["高", "中", "低"], variable=self.change_var, width=180,
+            font=(FONT, 14), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
             text_color=TEXT, text_color_disabled=DIM,
-        ).pack(padx=20, pady=(0, 12))
+        ).pack()
 
-        # ---- 2. 识别设置 ----
-        card2 = self._make_card(scroll)
-        card2.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
-        ctk.CTkLabel(card2, text="🔍 识别设置", font=(FONT, 16, "bold"), text_color=ACCENT).pack(padx=20, pady=(12, 6))
-
-        self._setting_row(card2, "防重复窗口（秒）", "同一提示消失多久后再出现才算新掉落（默认 1.5 秒）")
+        h = self._make_setting_card(t, "🔁", "防重复窗口", "同一提示消失多久后再出现才算新掉落（秒）")
         self.event_var = ctk.StringVar(value=str(self.settings.get("event_end_window", 1.5)))
         ctk.CTkSegmentedButton(
-            card2, values=["1.0", "1.5", "2.5"], variable=self.event_var,
-            font=(FONT, 15), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
+            h, values=["1.0", "1.5", "2.5"], variable=self.event_var, width=180,
+            font=(FONT, 14), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
             text_color=TEXT, text_color_disabled=DIM,
-        ).pack(padx=20, pady=(0, 10))
+        ).pack()
 
-        self._setting_row(card2, "文字识别频率", "越快响应越及时，越慢越省电（推荐标准）")
+        h = self._make_setting_card(t, "🔍", "文字识别频率", "越快响应越及时，越慢越省电")
         self.ocr_var = ctk.StringVar(
-            value={150: "快", 250: "标准", 500: "慢"}.get(int(self.settings.get("ocr_interval", 250)), "标准")
-        )
+            value={150: "快", 250: "标准", 500: "慢"}.get(int(self.settings.get("ocr_interval", 250)), "标准"))
         ctk.CTkSegmentedButton(
-            card2, values=["快", "标准", "慢"], variable=self.ocr_var,
-            font=(FONT, 15), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
+            h, values=["快", "标准", "慢"], variable=self.ocr_var, width=180,
+            font=(FONT, 14), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
             text_color=TEXT, text_color_disabled=DIM,
-        ).pack(padx=20, pady=(0, 10))
+        ).pack()
 
-        self._setting_row(card2, "自动登记新材料", "遇到材料库里没有的名字时，自动加进材料库（推荐开启）")
+        h = self._make_setting_card(t, "➕", "自动登记新材料", "遇到材料库里没有的名字时自动加进材料库")
         self.auto_reg_var = ctk.BooleanVar(value=bool(self.settings.get("auto_register_material", True)))
-        ctk.CTkSwitch(
-            card2, text="开启", variable=self.auto_reg_var, onvalue=True, offvalue=False,
-            font=(FONT, 15), fg_color=ACCENT, progress_color=ACCENT_DARK,
-            text_color=TEXT,
-        ).pack(anchor="w", padx=20, pady=(0, 12))
+        ctk.CTkSwitch(h, text="", variable=self.auto_reg_var, onvalue=True, offvalue=False,
+                      width=54, fg_color=ACCENT, progress_color=ACCENT_DARK).pack()
 
-        # ---- 3. 识别内容（切到「统计」标签）----
-        scroll = self._settings_tabs["统计"]; r = 0
-        card3 = self._make_card(scroll)
-        card3.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
-        ctk.CTkLabel(card3, text="🎯 识别内容（想统计什么就开什么）", font=(FONT, 16, "bold"), text_color=ACCENT).pack(padx=20, pady=(12, 6))
+        # ================= 统计 =================
+        t = self._settings_tabs["统计"]
 
+        h = self._make_setting_card(t, "💰", "识别摩拉", "统计掉落提示里的摩拉")
         self.enable_mora_var = ctk.BooleanVar(value=bool(self.settings.get("enable_mora", True)))
-        ctk.CTkSwitch(
-            card3, text="💰 识别摩拉", variable=self.enable_mora_var, onvalue=True, offvalue=False,
-            font=(FONT, 16), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
-        ).pack(anchor="w", padx=20, pady=(4, 2))
+        ctk.CTkSwitch(h, text="", variable=self.enable_mora_var, onvalue=True, offvalue=False,
+                      width=54, fg_color=ACCENT, progress_color=ACCENT_DARK).pack()
+
+        h = self._make_setting_card(t, "⚔", "识别怪物素材", "统计怪物掉落的各种素材")
         self.enable_mat_var = ctk.BooleanVar(value=bool(self.settings.get("enable_material", True)))
-        ctk.CTkSwitch(
-            card3, text="⚔ 识别怪物素材", variable=self.enable_mat_var, onvalue=True, offvalue=False,
-            font=(FONT, 16), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
-        ).pack(anchor="w", padx=20, pady=2)
+        ctk.CTkSwitch(h, text="", variable=self.enable_mat_var, onvalue=True, offvalue=False,
+                      width=54, fg_color=ACCENT, progress_color=ACCENT_DARK).pack()
+
+        h = self._make_setting_card(t, "💠", "识别圣遗物（狗粮）", "统计捡到的圣遗物数量")
         self.enable_art_var = ctk.BooleanVar(value=bool(self.settings.get("enable_artifact", True)))
-        ctk.CTkSwitch(
-            card3, text="💠 识别圣遗物（狗粮）", variable=self.enable_art_var, onvalue=True, offvalue=False,
-            font=(FONT, 16), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
-        ).pack(anchor="w", padx=20, pady=(2, 12))
+        ctk.CTkSwitch(h, text="", variable=self.enable_art_var, onvalue=True, offvalue=False,
+                      width=54, fg_color=ACCENT, progress_color=ACCENT_DARK).pack()
 
-        # ---- 4. 运行设置 ----
-        card4 = self._make_card(scroll)
-        card4.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
-        ctk.CTkLabel(card4, text="🖥 运行设置", font=(FONT, 16, "bold"), text_color=ACCENT).pack(padx=20, pady=(12, 6))
-
-        self._setting_row(card4, "点右上角 ✕ 时", "每次询问=弹窗选择；最小化到托盘=监测继续；直接退出=关闭程序")
-        _cb = {"ask": "每次询问", "tray": "最小化到托盘", "exit": "直接退出"}.get(self.settings.get("close_behavior", "ask"), "每次询问")
+        h = self._make_setting_card(t, "✖", "点右上角 ✕ 时", "每次询问 / 最小化到托盘（监测继续）/ 直接退出")
+        _cb = {"ask": "每次询问", "tray": "最小化到托盘", "exit": "直接退出"}.get(
+            self.settings.get("close_behavior", "ask"), "每次询问")
         self.close_btn_var = ctk.StringVar(value=_cb)
         ctk.CTkSegmentedButton(
-            card4, values=["每次询问", "最小化到托盘", "直接退出"], variable=self.close_btn_var,
-            font=(FONT, 15), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
+            h, values=["每次询问", "最小化到托盘", "直接退出"], variable=self.close_btn_var, width=330,
+            font=(FONT, 13), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
             text_color=TEXT, text_color_disabled=DIM,
-        ).pack(padx=20, pady=(0, 12))
+        ).pack()
 
-        self._setting_row(card4, "只在原神前台时识别", "切到其他应用就暂停识别，回到原神自动继续（推荐开启，避免误识别别的窗口）")
+        h = self._make_setting_card(t, "🎯", "只在原神前台时识别", "切到别的应用就暂停，回到原神自动继续")
         self.only_foreground_var = ctk.BooleanVar(value=bool(self.settings.get("only_foreground", True)))
-        ctk.CTkSwitch(
-            card4, text="开启", variable=self.only_foreground_var, onvalue=True, offvalue=False,
-            font=(FONT, 15), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
-        ).pack(anchor="w", padx=20, pady=(0, 12))
+        ctk.CTkSwitch(h, text="", variable=self.only_foreground_var, onvalue=True, offvalue=False,
+                      width=54, fg_color=ACCENT, progress_color=ACCENT_DARK).pack()
 
-        self._setting_row(card4, "换日时间", "几点算新的一天。挂机挂过零点的话，设成凌晨 4 点就不会中途归零")
-        _cur_ro = int(self.settings.get("rollover_hour", 0)) if str(self.settings.get("rollover_hour", 0)).lstrip("-").isdigit() else 0
-        _ro_label = {0: "0 点", 2: "凌晨 2 点", 4: "凌晨 4 点", 6: "凌晨 6 点"}
-        self.rollover_var = ctk.StringVar(value=_ro_label.get(_cur_ro, "0 点"))
-        ctk.CTkSegmentedButton(
-            card4, values=list(_ro_label.values()), variable=self.rollover_var,
-            font=(FONT, 13), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
-            text_color=TEXT, text_color_disabled=DIM,
-        ).pack(padx=20, pady=(0, 12))
+        # ---- 换日时间（完全自定义：0~23 点任意）----
+        h = self._make_setting_card(t, "🌙", "换日时间", "几点算新的一天。挂机挂过零点的话，往后挪几小时就不会中途归零")
+        try:
+            _ro = int(self.settings.get("rollover_hour", 0)) % 24
+        except Exception:
+            _ro = 0
+        self.rollover_label = ctk.CTkLabel(h, text=self._rollover_text(_ro),
+                                           font=(FONT, 15, "bold"), text_color=ACCENT, width=90)
+        self.rollover_label.pack(side="right", padx=(10, 0))
+        self.rollover_slider = ctk.CTkSlider(h, from_=0, to=23, number_of_steps=23, width=190,
+                                             command=self._on_rollover_change)
+        self.rollover_slider.set(_ro)
+        self.rollover_slider.pack(side="left")
+        self.rollover_var = ctk.StringVar(value=str(_ro))
 
-        self._setting_row(card4, "全局热键（开始/停止监测）", "按一下就能开始或停止监测，打游戏时不用切回窗口")
+        # ---- 全局热键（完全自定义：按一下键就设定）----
+        h = self._make_setting_card(t, "⌨", "全局热键（开始/停止监测）", "点右边按钮，然后按下想用的键（Esc 取消）")
+        self.hotkey_btn = ctk.CTkButton(
+            h, text=str(self.settings.get("hotkey", "关闭")), font=(FONT, 14),
+            width=170, height=34, corner_radius=RADIUS_BTN, fg_color=BTN, hover_color=BTN_HOVER,
+            command=self._start_hotkey_capture,
+        )
+        self.hotkey_btn.pack()
         self.hotkey_var = ctk.StringVar(value=str(self.settings.get("hotkey", "关闭")))
-        ctk.CTkSegmentedButton(
-            card4, values=HOTKEY_CHOICES, variable=self.hotkey_var,
-            font=(FONT, 13), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
-            text_color=TEXT, text_color_disabled=DIM,
-        ).pack(padx=20, pady=(0, 12))
 
-        # ---- 6. 外观（切到「外观」标签）----
-        scroll = self._settings_tabs["外观"]; r = 0
-        card6 = self._make_card(scroll)
-        card6.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
-        ctk.CTkLabel(card6, text="🎨 外观（改后重启程序生效）", font=(FONT, 16, "bold"), text_color=ACCENT).pack(padx=20, pady=(12, 6))
+        # ================= 外观 =================
+        t = self._settings_tabs["外观"]
 
-        self._setting_row(card6, "背景颜色", "窗口背景色（可以选任意颜色）")
+        h = self._make_setting_card(t, "🎨", "背景颜色", "窗口背景色（可以选任意颜色）", wide=True)
         cur_bg = self.settings.get("bg_color", "经典深黑")
         if cur_bg not in theme.BG_PRESETS:
             self._custom_bg_hex = cur_bg
         self.bg_var = ctk.StringVar(value=cur_bg if cur_bg in theme.BG_PRESETS else "自定义…")
         ctk.CTkSegmentedButton(
-            card6, values=list(theme.BG_PRESETS.keys()) + ["自定义…"], variable=self.bg_var,
+            h, values=list(theme.BG_PRESETS.keys()) + ["自定义…"], variable=self.bg_var,
             font=(FONT, 13), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
             text_color=TEXT, text_color_disabled=DIM, command=self._on_pick_bg_color,
-        ).pack(padx=20, pady=(0, 10))
+        ).pack(fill="x")
 
-        self._setting_row(card6, "强调色", "按钮、选中项、数字高亮的颜色")
+        h = self._make_setting_card(t, "🌈", "强调色", "按钮、选中项、数字高亮的颜色", wide=True)
         cur_ac = self.settings.get("accent_color", "经典蓝")
         if cur_ac not in theme.ACCENT_PRESETS:
             self._custom_accent_hex = cur_ac
         self.accent_var = ctk.StringVar(value=cur_ac if cur_ac in theme.ACCENT_PRESETS else "自定义…")
         ctk.CTkSegmentedButton(
-            card6, values=list(theme.ACCENT_PRESETS.keys()) + ["自定义…"], variable=self.accent_var,
+            h, values=list(theme.ACCENT_PRESETS.keys()) + ["自定义…"], variable=self.accent_var,
             font=(FONT, 13), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
             text_color=TEXT, text_color_disabled=DIM, command=self._on_pick_accent_color,
-        ).pack(padx=20, pady=(0, 10))
+        ).pack(fill="x")
 
-        self._setting_row(card6, "自定义背景图片", "选一张图片当窗口背景（不选=纯色背景）")
-        bg_row = ctk.CTkFrame(card6, fg_color="transparent")
-        bg_row.pack(fill="x", padx=20, pady=(0, 4))
+        h = self._make_setting_card(t, "🖼", "自定义背景图片", "选一张图片当窗口背景（不选=纯色背景）", wide=True)
         ctk.CTkButton(
-            bg_row, text="🖼 选择图片…", font=(FONT, 15), height=32,
+            h, text="🖼 选择图片…", font=(FONT, 14), height=32, width=130,
             fg_color=BTN, hover_color=BTN_HOVER, command=self._choose_bg_image,
-        ).pack(side="left", padx=(0, 6))
+        ).pack(side="left", padx=(0, 8))
         ctk.CTkButton(
-            bg_row, text="✖ 清除背景", font=(FONT, 15), height=32,
+            h, text="✖ 清除背景", font=(FONT, 14), height=32, width=130,
             fg_color=DANGER, hover_color=DANGER_HOVER, command=self._clear_bg_image,
-        ).pack(side="left")
+        ).pack(side="left", padx=(0, 12))
         _cur_bg_file = Path(self.settings.get("bg_image") or "").name if self.settings.get("bg_image") else ""
         self._bg_img_label = ctk.CTkLabel(
-            card6,
-            text=f"当前：{_cur_bg_file}" if _cur_bg_file else "未设置（纯色背景）",
-            font=(FONT, 13), text_color=DIM,
-        )
-        self._bg_img_label.pack(anchor="w", padx=20, pady=(0, 8))
+            h, text=f"当前：{_cur_bg_file}" if _cur_bg_file else "未设置（纯色背景）",
+            font=(FONT, 13), text_color=DIM)
+        self._bg_img_label.pack(side="left")
 
-        self._setting_row(card6, "左侧栏毛玻璃效果", "需要先设置背景图片（模糊+压暗，模拟磨砂质感）")
+        h = self._make_setting_card(t, "✨", "左侧栏毛玻璃效果", "需要先设置背景图片（模糊+压暗，模拟磨砂质感）")
         self.glass_var = ctk.BooleanVar(value=bool(self.settings.get("sidebar_glass", True)))
-        ctk.CTkSwitch(
-            card6, text="开启", variable=self.glass_var, onvalue=True, offvalue=False,
-            font=(FONT, 15), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
-        ).pack(anchor="w", padx=20, pady=(0, 12))
+        ctk.CTkSwitch(h, text="", variable=self.glass_var, onvalue=True, offvalue=False,
+                      width=54, fg_color=ACCENT, progress_color=ACCENT_DARK).pack()
 
-        # ---- 6.5 OBS 浏览器源 ----
-        card_obs = self._make_card(scroll)
-        card_obs.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
-        ctk.CTkLabel(card_obs, text="📺 连接 OBS 直播覆盖", font=(FONT, 16, "bold"), text_color=ACCENT).pack(padx=20, pady=(12, 4))
-        ctk.CTkLabel(
-            card_obs, text="开启后，StatGI 会提供一个本地网页地址。\n"
-                           "在 OBS 里添加「浏览器源」，粘贴这个地址，\n"
-                           "即可在直播画面上显示收益统计（弹幕区 + 2×2 收益 + 备注区）。",
-            font=(FONT, 13), text_color=DIM, justify="left",
-        ).pack(anchor="w", padx=20, pady=(0, 8))
+        h = self._make_setting_card(t, "📺", "连接 OBS 直播覆盖", "在 OBS 添加「浏览器源」粘贴下面的地址即可上屏", wide=True)
         self.obs_var = ctk.BooleanVar(value=bool(self.settings.get("obs_browser_source", False)))
-        ctk.CTkSwitch(
-            card_obs, text="开启 OBS 浏览器源", variable=self.obs_var, onvalue=True, offvalue=False,
-            font=(FONT, 15), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
-            command=self._toggle_obs_source,
-        ).pack(anchor="w", padx=20, pady=(0, 6))
-        # 地址行
-        obs_row = ctk.CTkFrame(card_obs, fg_color="transparent")
-        obs_row.pack(fill="x", padx=20, pady=(0, 4))
+        _obs_row = ctk.CTkFrame(h, fg_color="transparent")
+        _obs_row.pack(fill="x")
+        ctk.CTkSwitch(_obs_row, text="开启", variable=self.obs_var, onvalue=True, offvalue=False,
+                      font=(FONT, 14), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
+                      command=self._toggle_obs_source).pack(side="left")
         api_port = int(self.settings.get("api_port", 8765))
-        self._obs_addr_label = ctk.CTkLabel(
-            obs_row, text=f"地址：http://127.0.0.1:{api_port}/overlay",
-            font=(FONT, 13), text_color=TEXT,
-        )
-        self._obs_addr_label.pack(side="left")
-        ctk.CTkButton(
-            obs_row, text="复制", font=(FONT, 13), width=52, height=26,
-            corner_radius=8, fg_color=BTN, hover_color=BTN_HOVER, command=self._copy_obs_addr,
-        ).pack(side="right")
-        ctk.CTkLabel(
-            card_obs, text="备注：透明背景，可直接叠在游戏画面上。",
-            font=(FONT, 12), text_color=DIM,
-        ).pack(anchor="w", padx=20, pady=(0, 12))
+        self._obs_addr_label = ctk.CTkLabel(_obs_row, text=f"http://127.0.0.1:{api_port}/overlay",
+                                            font=(FONT, 13), text_color=TEXT)
+        self._obs_addr_label.pack(side="left", padx=(16, 8))
+        ctk.CTkButton(_obs_row, text="复制", font=(FONT, 13), width=56, height=28,
+                      corner_radius=8, fg_color=BTN, hover_color=BTN_HOVER,
+                      command=self._copy_obs_addr).pack(side="left")
 
-        # ---- 7. 关于 / 更新（切到「关于」标签）----
-        scroll = self._settings_tabs["关于"]; r = 0
-        card5 = self._make_card(scroll)
-        card5.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
-        ctk.CTkLabel(card5, text="ℹ️ 关于 / 更新", font=(FONT, 16, "bold"), text_color=ACCENT).pack(padx=20, pady=(12, 4))
-        ctk.CTkLabel(
-            card5, text="StatGI V0.7（测试版）\n"
-                     "· 识别只靠文字（OCR），不读内存、不控制游戏\n"
-                     "· 防重复统计：同一个掉落提示只统计一次\n"
-                     "· 数据保存在程序旁边的 data 文件夹",
-            font=(FONT, 15), text_color=DIM, justify="left",
-        ).pack(padx=20, pady=(0, 8))
-        upd_row = ctk.CTkFrame(card5, fg_color="transparent")
-        upd_row.pack(fill="x", padx=20, pady=(0, 4))
+        # ================= 关于 =================
+        t = self._settings_tabs["关于"]
+
+        h = self._make_setting_card(t, "ℹ️", "StatGI V0.7（测试版）",
+                                    "识别只靠文字（OCR），不读内存、不控制游戏\n"
+                                    "防重复统计：同一个掉落提示只统计一次\n"
+                                    "数据保存在程序旁边的 data 文件夹", wide=True)
+        _upd = ctk.CTkFrame(h, fg_color="transparent")
+        _upd.pack(fill="x")
         ctk.CTkButton(
-            upd_row, text="🔍 检测更新", font=(FONT, 16), height=34,
+            _upd, text="🔍 检测更新", font=(FONT, 14), height=34, width=130,
             corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_DARK, text_color="#FFFFFF",
             command=self.on_check_update,
         ).pack(side="left")
-        self.update_status_label = ctk.CTkLabel(
-            upd_row, text="", font=(FONT, 13), text_color=DIM,
-        )
+        self.update_status_label = ctk.CTkLabel(_upd, text="", font=(FONT, 13), text_color=DIM)
         self.update_status_label.pack(side="left", padx=10)
-        ctk.CTkLabel(
-            card5, text="检测更新会访问 GitHub Releases，需要联网。",
-            font=(FONT, 12), text_color=DIM,
-        ).pack(anchor="w", padx=20, pady=(0, 12))
+        ctk.CTkLabel(h, text="检测更新会访问 GitHub Releases，需要联网。",
+                     font=(FONT, 12), text_color=DIM).pack(anchor="w", pady=(6, 0))
 
-        # ---- 8. 开发者选项（仅开发者模式显示，默认隐藏）----
         if self.settings.get("developer_mode", False):
-            self._build_dev_card(scroll, r); r += 1
+            self._build_dev_card(t, 0)
 
         # 保存按钮（固定在底部）
         ctk.CTkButton(
@@ -1390,9 +1432,114 @@ class MainApp(ctk.CTk):
             text_color="#FFFFFF", command=self.on_save_settings,
         ).grid(row=3, column=0, sticky="ew", pady=(10, 0))
 
-        # 默认显示第一个标签
         self._on_settings_tab("识别")
         return page
+
+    @staticmethod
+    def _rollover_text(h):
+        h = int(h) % 24
+        if h == 0:
+            return "0 点"
+        if h < 6:
+            return f"凌晨 {h} 点"
+        if h < 12:
+            return f"上午 {h} 点"
+        return f"{h} 点"
+
+    def _on_rollover_change(self, value):
+        try:
+            h = int(round(float(value))) % 24
+            self.rollover_var.set(str(h))
+            self.rollover_label.configure(text=self._rollover_text(h))
+        except Exception:
+            pass
+
+    # ---------- 全局热键：按键捕获 ----------
+
+    def _start_hotkey_capture(self):
+        """点按钮后，等待用户按下一个键组合"""
+        if getattr(self, "_capturing_hotkey", False):
+            return
+        self._capturing_hotkey = True
+        try:
+            self.hotkey_btn.configure(text="请按下按键…（Esc 取消）")
+            self.bind_all("<KeyPress>", self._on_hotkey_key, add="+")
+        except Exception:
+            self._capturing_hotkey = False
+
+    def _refresh_hotkey_btn(self):
+        try:
+            self.hotkey_btn.configure(text=str(self.settings.get("hotkey", "关闭")))
+        except Exception:
+            pass
+
+    def _on_hotkey_key(self, event):
+        if not getattr(self, "_capturing_hotkey", False):
+            return
+        self._capturing_hotkey = False
+        try:
+            self.unbind_all("<KeyPress>")
+        except Exception:
+            pass
+        ks = (event.keysym or "").upper()
+        if ks in ("ESCAPE",):
+            self._refresh_hotkey_btn()
+            return
+        vk = _keysym_to_vk(ks)
+        if vk is None:
+            try:
+                self.hotkey_btn.configure(text="这个键不支持，请重试")
+            except Exception:
+                pass
+            self.after(1200, self._refresh_hotkey_btn)
+            return
+        st = int(getattr(event, "state", 0) or 0)
+        mods = 0
+        if st & 0x0004:
+            mods |= 0x0002            # Ctrl
+        if st & (0x0008 | 0x00020000):
+            mods |= 0x0001            # Alt
+        if st & 0x0001:
+            mods |= 0x0004            # Shift
+        name = _hotkey_name(mods, ks)
+        self.settings["hotkey"] = name
+        try:
+            self.hotkey_var.set(name)
+            self.hotkey_btn.configure(text=name)
+        except Exception:
+            pass
+        try:
+            self._apply_hotkey()
+            config_manager.save_settings(self.settings)
+        except Exception:
+            pass
+
+    def _make_setting_card(self, parent, icon, title, desc, wide=False):
+        """设置项卡片：和启动页同款横向长条
+
+        [图标小卡] [标题 + 说明] …… [右侧控件区]
+        返回右侧（或下方）的控件容器，调用方把控件 pack 进去。
+        """
+        card = ctk.CTkFrame(parent, corner_radius=RADIUS_CARD, fg_color=CARD,
+                            border_width=1, border_color=theme.BORDER)
+        card.pack(fill="x", pady=(0, 8))
+        holder = ctk.CTkFrame(card, fg_color="transparent")
+        ic = ctk.CTkFrame(card, width=42, height=42, corner_radius=12, fg_color=CARD_INNER)
+        mid = ctk.CTkFrame(card, fg_color="transparent")
+        if wide:
+            holder.pack(fill="x", padx=14, pady=(0, 10))
+        else:
+            holder.pack(side="right", padx=(10, 14), pady=9)
+        ic.pack(side="left", padx=(14, 12), pady=9)
+        ic.pack_propagate(False)
+        ctk.CTkLabel(ic, text=icon, font=(FONT, 20), text_color=ACCENT).place(
+            relx=0.5, rely=0.5, anchor="center")
+        mid.pack(side="left", fill="both", expand=True, pady=9)
+        ctk.CTkLabel(mid, text=title, font=(FONT, 16, "bold"), text_color=TEXT,
+                     anchor="w").pack(anchor="w")
+        ctk.CTkLabel(mid, text=desc, font=(FONT, 12), text_color=DIM, anchor="w",
+                     justify="left", wraplength=300).pack(anchor="w", pady=(2, 0))
+        return holder
 
     def _on_settings_tab(self, name):
         """切换设置页标签：同一格里只显示当前标签的滚动容器"""
@@ -1690,8 +1837,11 @@ class MainApp(ctk.CTk):
         self.settings["obs_browser_source"] = bool(self.obs_var.get())
 
         # 换日时间
-        _ro_back = {"0 点": 0, "凌晨 2 点": 2, "凌晨 4 点": 4, "凌晨 6 点": 6}
-        _new_ro = _ro_back.get(self.rollover_var.get(), 0) if hasattr(self, "rollover_var") else 0
+        # 换日时间（滑块 0~23 点，完全自定义）
+        try:
+            _new_ro = int(self.rollover_var.get()) % 24 if hasattr(self, "rollover_var") else 0
+        except Exception:
+            _new_ro = 0
         _ro_changed = int(self.settings.get("rollover_hour", 0) or 0) != _new_ro
         self.settings["rollover_hour"] = _new_ro
 
