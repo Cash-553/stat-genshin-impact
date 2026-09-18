@@ -59,12 +59,25 @@ class FloatingDropdown(ctk.CTkFrame):
                                    text_color=theme.DIM, width=20)
         self._arrow.pack(side="right", padx=(0, 8))
 
+        # 整块区域都能点（不只是文字上）。
+        # CustomTkinter 的控件真正接收鼠标的是它内部那层画布 / 文字标签，
+        # 所以这三层都要绑上，否则点到空白处没反应。
         for w in (self, self._lbl, self._arrow):
+            self._bind_click(w)
+        self._sync()
+
+    def _bind_click(self, w):
+        for t in (w, getattr(w, "_canvas", None),
+                  getattr(w, "_label", None), getattr(w, "_text_label", None)):
+            if t is None:
+                continue
             try:
-                w.bind("<Button-1>", self._on_click)
+                t.bind("<Button-1>", self._on_click, add="+")
+                if not getattr(t, "_dd_cursor", False):
+                    t.configure(cursor="hand2")
+                    t._dd_cursor = True
             except Exception:
                 pass
-        self._sync()
 
     # ---------- 工具 ----------
 
