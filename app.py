@@ -244,6 +244,10 @@ class MainApp(ctk.CTk):
         注意：<Map> 事件会被频繁触发（启动时控件逐个映射，可能上百次），
         而这个函数每次都要创建 COM 对象（很贵）。所以这里做去重：
         0.6 秒内重复触发直接跳过，避免白白卡启动。
+
+        另外还要给窗口补上 WS_MINIMIZEBOX | WS_SYSMENU：
+        无边框窗口是 WS_POPUP，默认没有这两位，系统就不知道它能最小化，
+        表现为「点任务栏图标没反应」。补上后任务栏点击可正常最小化/还原。
         """
         _now = time.time()
         if _now - getattr(self, "_taskbar_last", 0.0) < 0.6:
@@ -260,8 +264,18 @@ class MainApp(ctk.CTk):
             u.SetWindowLongW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_long]
             u.SetWindowLongW.restype = ctypes.c_long
             GWL_EXSTYLE = -20
+            GWL_STYLE = -16
             WS_EX_TOOLWINDOW = 0x00000080
             WS_EX_APPWINDOW = 0x00040000
+            # 无边框窗口是 WS_POPUP，默认没有「可最小化/系统菜单」样式，
+            # 结果点任务栏图标时系统不知道该最小化它（点了没反应）。
+            # 补上这两位后，任务栏点击就能正常 最小化 / 还原。
+            WS_MINIMIZEBOX = 0x00020000
+            WS_SYSMENU = 0x00080000
+            _st = u.GetWindowLongW(ctypes.c_void_p(hwnd), GWL_STYLE)
+            _new_st = _st | WS_MINIMIZEBOX | WS_SYSMENU
+            if _new_st != _st:
+                u.SetWindowLongW(ctypes.c_void_p(hwnd), GWL_STYLE, _new_st)
             style = u.GetWindowLongW(ctypes.c_void_p(hwnd), GWL_EXSTYLE)
             new_style = (style & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW
             if new_style != style:
