@@ -176,90 +176,22 @@ class MainApp(ctk.CTk):
 
 
     def _install_wndproc(self):
-        """子类化窗口过程：拦截任务栏按钮的「还原/最小化」系统消息。
+        """不再子类化窗口过程（保留空实现，兼容旧调用）。
 
-        无边框窗口没有标准标题栏，任务栏按钮点击后系统发的
-        SC_RESTORE / SC_MINIMIZE 消息 Tk 不会处理，导致窗口呼不出来。
-        这里拦截后转成我们自己 show_main / 最小化到托盘。
-        需要窗口句柄创建好之后调用；已安装过就跳过（幂等）。
+        历史原因：以前无边框窗口是用 withdraw() 把窗口「藏起来」的，
+        藏起来的窗口任务栏按钮叫不回来，所以必须拦截
+        SC_MINIMIZE / SC_RESTORE 自己处理。
+
+        现在改成系统原生最小化（窗口仍然存活，只是最小化了），
+        Windows 本来就能正确处理任务栏按钮的 最小化/还原，
+        再拦截反而出问题：
+          - 点任务栏还原时，如果窗口是被系统/任务栏最小化的，
+            _minimized 标志是 False，消息被 return 0 吞掉，
+            窗口就永远卡在最小化状态出不来了；
+          - 点任务栏最小化也可能被吞掉。
+        所以这里直接不拦截，全部交给 Windows 原生处理。
         """
-        if getattr(self, "_orig_wndproc", 0):
-            return  # 已经装过
-        try:
-            import ctypes
-            user32 = ctypes.windll.user32
-            # 64位系统：参数必须显式声明类型，否则指针会被截断成32位导致失败
-            user32.SetWindowLongPtrW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
-            user32.SetWindowLongPtrW.restype = ctypes.c_void_p
-            user32.CallWindowProcW.argtypes = [
-                ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_longlong,
-            ]
-            user32.CallWindowProcW.restype = ctypes.c_longlong
-            WM_SYSCOMMAND = 0x0112
-            WM_ACTIVATE = 0x0006
-            WA_ACTIVE = 1
-            SC_RESTORE = 0xF120
-            SC_MINIMIZE = 0xF020
-            GWLP_WNDPROC = -4
-
-            hwnd = int(self.winfo_id())
-            if hwnd == 0:
-                return
-
-            WNDPROC = ctypes.WINFUNCTYPE(
-                ctypes.c_longlong,   # LRESULT
-                ctypes.c_void_p,     # HWND
-                ctypes.c_uint,       # UINT
-                ctypes.c_size_t,     # WPARAM
-                ctypes.c_longlong,   # LPARAM
-            )
-
-            def _proc(hwnd_, msg, wparam, lparam):
-                # 重要：ctypes 窗口回调绝不能抛异常！
-                # 一旦异常，进程会直接 fail-fast 闪退（0xc0000409）。
-                # 所以这里所有操作都要 try 包住，异常时只转发给原过程。
-                try:
-                    if msg == WM_SYSCOMMAND:
-                        cmd = wparam & 0xFFF0
-                        if cmd == SC_RESTORE:
-                            # 点击任务栏按钮还原 → 只在确实最小化过时才呼出
-                            if getattr(self, "_minimized", False):
-                                try:
-                                    self.after(0, self.show_main)
-                                except Exception:
-                                    pass
-                            return 0
-                        if cmd == SC_MINIMIZE:
-                            try:
-                                self.after(0, self._minimize_to_tray)
-                            except Exception:
-                                pass
-                            return 0
-                    if msg == WM_ACTIVATE and (wparam & 0xFFFF) == WA_ACTIVE:
-                        # 窗口被激活：只在"最小化（屏幕外）"状态下才恢复位置。
-                        # 注意：不能无条件呼出！否则 激活→呼出→抢焦点→再激活 会死循环，
-                        # 导致界面卡死（未响应）并最终 fail-fast 闪退。
-                        if getattr(self, "_minimized", False):
-                            try:
-                                self.after(0, self.show_main)
-                            except Exception:
-                                pass
-                except Exception:
-                    pass
-                # 其它消息交给原窗口过程（Tk 正常处理）
-                try:
-                    return user32.CallWindowProcW(self._orig_wndproc, hwnd_, msg, wparam, lparam)
-                except Exception:
-                    return 0
-
-            cb = WNDPROC(_proc)
-            self._wndproc_cb = cb  # 必须保持引用，防止被回收导致崩溃
-            old = user32.SetWindowLongPtrW(hwnd, GWLP_WNDPROC, ctypes.cast(cb, ctypes.c_void_p))
-            if not old:
-                return
-            self._orig_wndproc = old
-        except Exception:
-            pass
+        return
 
     def _uninstall_wndproc(self):
         """退出前恢复原窗口过程，防止窗口销毁后回调悬空导致闪退"""
