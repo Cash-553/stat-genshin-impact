@@ -788,7 +788,8 @@ class MainApp(ctk.CTk):
 
     def _build_page_launch(self):
         page = ctk.CTkFrame(self.content, fg_color="transparent")
-        page.grid(row=0, column=0, sticky="nsew", padx=22, pady=18)
+        # 注意：这里不 grid()，交给 _show_page 统一控制
+        # （否则启动时后台预建页面会「闪一下」再消失）
         page.grid_columnconfigure(0, weight=1)
 
         ctk.CTkLabel(page, text="启动", font=(FONT, 23, "bold"), text_color=ACCENT).grid(
@@ -963,7 +964,8 @@ class MainApp(ctk.CTk):
 
     def _build_page_home(self):
         page = ctk.CTkFrame(self.content, fg_color="transparent")
-        page.grid(row=0, column=0, sticky="nsew", padx=22, pady=18)
+        # 注意：这里不 grid()，交给 _show_page 统一控制
+        # （否则启动时后台预建页面会「闪一下」再消失）
         page.grid_columnconfigure(0, weight=1)
 
         # 上排三个卡片：摩拉 / 狗粮 / 监测时间
@@ -1043,7 +1045,8 @@ class MainApp(ctk.CTk):
 
     def _build_page_bar(self):
         page = ctk.CTkFrame(self.content, fg_color="transparent")
-        page.grid(row=0, column=0, sticky="nsew", padx=22, pady=18)
+        # 注意：这里不 grid()，交给 _show_page 统一控制
+        # （否则启动时后台预建页面会「闪一下」再消失）
         page.grid_columnconfigure(0, weight=1)
 
         ctk.CTkLabel(page, text="收益统计条", font=(FONT, 23, "bold"), text_color=ACCENT).grid(
@@ -1144,7 +1147,8 @@ class MainApp(ctk.CTk):
 
     def _build_page_records(self):
         page = ctk.CTkFrame(self.content, fg_color="transparent")
-        page.grid(row=0, column=0, sticky="nsew", padx=22, pady=18)
+        # 注意：这里不 grid()，交给 _show_page 统一控制
+        # （否则启动时后台预建页面会「闪一下」再消失）
         page.grid_columnconfigure(0, weight=1)
         page.grid_rowconfigure(1, weight=1)
 
@@ -1269,7 +1273,8 @@ class MainApp(ctk.CTk):
 
     def _build_page_settings(self):
         page = ctk.CTkFrame(self.content, fg_color="transparent")
-        page.grid(row=0, column=0, sticky="nsew", padx=22, pady=18)
+        # 注意：这里不 grid()，交给 _show_page 统一控制
+        # （否则启动时后台预建页面会「闪一下」再消失）
         page.grid_columnconfigure(0, weight=1)
         page.grid_rowconfigure(2, weight=1)
 
@@ -1396,6 +1401,8 @@ class MainApp(ctk.CTk):
         if cur_bg not in theme.BG_PRESETS:
             self._custom_bg_hex = cur_bg
         self.bg_var = ctk.StringVar(value=cur_bg if cur_bg in theme.BG_PRESETS else "自定义…")
+        # 记住上一次选的预设（取消取色时用来回退）
+        self._last_bg_sel = cur_bg if cur_bg in theme.BG_PRESETS else "经典深黑"
         self.bg_dd = FloatingDropdown(
             h, list(theme.BG_PRESETS.keys()) + ["自定义…"], variable=self.bg_var,
             command=self._on_pick_bg_color, font_size=14)
@@ -1406,6 +1413,7 @@ class MainApp(ctk.CTk):
         if cur_ac not in theme.ACCENT_PRESETS:
             self._custom_accent_hex = cur_ac
         self.accent_var = ctk.StringVar(value=cur_ac if cur_ac in theme.ACCENT_PRESETS else "自定义…")
+        self._last_accent_sel = cur_ac if cur_ac in theme.ACCENT_PRESETS else "经典蓝"
         self.accent_dd = FloatingDropdown(
             h, list(theme.ACCENT_PRESETS.keys()) + ["自定义…"], variable=self.accent_var,
             command=self._on_pick_accent_color, font_size=14)
@@ -1444,9 +1452,6 @@ class MainApp(ctk.CTk):
 
         if self.settings.get("developer_mode", False):
             self._build_dev_card(t, 0)
-
-        ctk.CTkLabel(page, text="✅ 所有设置都是【改完立即生效】，不需要点保存",
-                     font=(FONT, 13), text_color=DIM).grid(row=3, column=0, sticky="ew", pady=(8, 0))
 
         self._on_settings_tab("识别")
         return page
@@ -1828,25 +1833,43 @@ class MainApp(ctk.CTk):
     # ---------- 外观设置 ----------
 
     def _on_pick_bg_color(self, value):
-        """点「自定义…」时打开颜色选择器"""
+        """背景颜色：选预设直接生效；选「自定义…」打开取色器（取消则回到之前选的）"""
         if value != "自定义…":
+            self._last_bg_sel = value
+            self._on_any_setting_change()
             return
-        prev = self.bg_var.get()
+        back = getattr(self, "_last_bg_sel", "经典深黑")
         c = colorchooser.askcolor(title="选择背景颜色", color=BG)[1]
         if c:
             self._custom_bg_hex = c
+            self._on_any_setting_change()
         else:
-            self.bg_var.set(prev)
+            # 关掉取色窗口没确认 -> 调回之前的选项
+            try:
+                self.bg_var.set(back)
+                self.bg_dd.set(back)
+            except Exception:
+                pass
+            self._on_any_setting_change()
 
     def _on_pick_accent_color(self, value):
+        """强调色：选预设直接生效；选「自定义…」打开取色器（取消则回到之前选的）"""
         if value != "自定义…":
+            self._last_accent_sel = value
+            self._on_any_setting_change()
             return
-        prev = self.accent_var.get()
+        back = getattr(self, "_last_accent_sel", "经典蓝")
         c = colorchooser.askcolor(title="选择强调色", color=ACCENT)[1]
         if c:
             self._custom_accent_hex = c
+            self._on_any_setting_change()
         else:
-            self.accent_var.set(prev)
+            try:
+                self.accent_var.set(back)
+                self.accent_dd.set(back)
+            except Exception:
+                pass
+            self._on_any_setting_change()
 
     def _toggle_obs_source(self):
         """开启/关闭 OBS 浏览器源（本地服务已在启动时开启，这里主要是反馈）"""
@@ -1882,9 +1905,16 @@ class MainApp(ctk.CTk):
             messagebox.showerror("失败", "这个文件不是有效的图片，请重新选择。")
             return
         self.settings["bg_image"] = p
-        self._bg_img_label.configure(text=f"当前：{Path(p).name}")
+        try:
+            self._bg_img_label.configure(text=f"当前：{Path(p).name}")
+        except Exception:
+            pass
         self._apply_background()  # 立即预览
-        messagebox.showinfo("已选择", "背景已预览。点「保存设置」后，下次启动程序正式生效。")
+        # 立即保存（现在没有「保存设置」按钮了）
+        try:
+            config_manager.save_settings(self.settings)
+        except Exception:
+            pass
 
     def _clear_bg_image(self):
         """清除背景图片，恢复纯色"""
@@ -1894,6 +1924,10 @@ class MainApp(ctk.CTk):
         except Exception:
             pass
         self._apply_background()
+        try:
+            config_manager.save_settings(self.settings)
+        except Exception:
+            pass
 
     def _collect_settings(self):
         """把设置界面上的控件值读进 self.settings（不保存、不应用）"""
@@ -2031,6 +2065,19 @@ class MainApp(ctk.CTk):
 
     # ================= 页面切换 =================
 
+    @staticmethod
+    def _grid_page(frame, show):
+        """显示 / 隐藏一个页面（页面自己不再 grid，统一在这里控制）"""
+        try:
+            if frame is None:
+                return
+            if show:
+                frame.grid(row=0, column=0, sticky="nsew", padx=22, pady=18)
+            else:
+                frame.grid_remove()
+        except Exception:
+            pass
+
     def _ensure_page(self, key):
         """按需构建页面（懒加载）：第一次切到某页才建它"""
         if key in getattr(self, "_pages", {}):
@@ -2041,25 +2088,16 @@ class MainApp(ctk.CTk):
         except Exception:
             frame = None
         self._pages[key] = frame
-        # 页面构建时是直接 grid() 显示自己的；后台预建时如果不立刻藏起来，
-        # 最后建的那页会盖在最上面（表现为：导航停在「启动」，内容却是「设置」）
-        if frame is not None and key != getattr(self, "_current_page", None):
-            try:
-                frame.grid_remove()
-            except Exception:
-                pass
+        # 只有「当前页」才显示；后台预建出来的其它页完全不 grid，
+        # 这样启动时就不会闪一下设置界面了
+        self._grid_page(frame, key == getattr(self, "_current_page", None))
         return frame
 
     def _show_page(self, key):
         self._current_page = key
         self._ensure_page(key)
         for k, f in getattr(self, "_pages", {}).items():
-            if f is None:
-                continue
-            if k == key:
-                f.grid()
-            else:
-                f.grid_remove()
+            self._grid_page(f, k == key)
         for k, btn in self.nav_btns.items():
             if k == key:
                 btn.configure(fg_color=NAV_ON, text_color=ACCENT, font=(FONT, 16, "bold"))
