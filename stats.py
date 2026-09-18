@@ -13,7 +13,7 @@
 """
 import json
 import time
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 import paths
 
@@ -26,13 +26,19 @@ HISTORY_FILE = DATA_DIR / "history.json"
 class DailyStats:
     """今日收益数据"""
 
-    def __init__(self, base_dir=None):
+    def __init__(self, base_dir=None, rollover_hour=0):
         if base_dir is not None:
             self.data_dir = Path(base_dir)
         else:
             self.data_dir = DATA_DIR
         self.today_file = self.data_dir / "today.json"
         self.history_file = self.data_dir / "history.json"
+        # 换日时间：0=自然日（0点换日）；4=凌晨4点才换日
+        # （挂机经常挂过零点，设成 4 点就不会一过 0 点数据突然归零）
+        try:
+            self.rollover_hour = int(rollover_hour) % 24
+        except Exception:
+            self.rollover_hour = 0
 
         self.date = ""
         self.mora = 0
@@ -42,10 +48,43 @@ class DailyStats:
         self.running_seconds = 0
         self._load()
 
+    # ---------- 换日 ----------
+
+    def _day_key(self):
+        """按「换日时间」算出当前该算哪一天"""
+        now = datetime.now()
+        if now.hour < self.rollover_hour:
+            return (now.date() - timedelta(days=1)).isoformat()
+        return now.date().isoformat()
+
+    def check_day(self):
+        """跨过换日时间就自动归档并开新的一天。
+
+        原来只在启动时检查日期，挂过零点也不会换日；
+        现在由主循环定期调用，到点自动换。
+        返回 True 表示刚刚换过日。
+        """
+        today = self._day_key()
+        if today == self.date:
+            return False
+        try:
+            if self.date:
+                self._archive(self.to_dict())
+        except Exception:
+            pass
+        self.date = today
+        self.mora = 0
+        self.materials = {}
+        self.normal_materials = {}
+        self.artifact = 0
+        self.running_seconds = 0
+        self.save()
+        return True
+
     # ---------- 加载 / 保存 ----------
 
     def _load(self):
-        today = date.today().isoformat()
+        today = self._day_key()
         if self.today_file.exists():
             try:
                 data = json.loads(self.today_file.read_text(encoding="utf-8"))

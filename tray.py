@@ -55,7 +55,12 @@ class Tray:
         menu = pystray.Menu(
             # default=True：双击托盘图标也能呼出主窗口（单击会弹出菜单）
             pystray.MenuItem("显示主窗口", lambda: self.q.put("show"), default=True),
-            pystray.MenuItem("退出程序", lambda: self.q.put("exit")),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("▶ 开始监测", lambda: self.q.put("start")),
+            pystray.MenuItem("⏸ 停止监测", lambda: self.q.put("stop")),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("📂 打开数据文件夹", lambda: self.q.put("open_data")),
+            pystray.MenuItem("❌ 退出程序", lambda: self.q.put("exit")),
         )
         self.icon = pystray.Icon(
             "genshin_income_tracker",

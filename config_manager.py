@@ -48,7 +48,12 @@ DEFAULT_SETTINGS = {
         "slot3": "_bar_slot3.png",   # 狗粮（内置）
         "always_on_top": True,       # 是否置顶
         "opacity": 1.0,              # 统计条透明度（0.2~1.0，1.0=不透明）
+        "show_slot1": True,          # 是否显示「摩拉」格
+        "show_slot2": True,          # 是否显示「材料」格
+        "show_slot3": True,          # 是否显示「狗粮」格
     },
+    "rollover_hour": 0,              # 换日时间（0=自然日；4=凌晨4点换日）
+    "hotkey": "关闭",                # 全局热键（开始/停止监测）
 }
 
 
