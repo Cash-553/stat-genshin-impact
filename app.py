@@ -290,7 +290,15 @@ class MainApp(ctk.CTk):
         需要在窗口真正显示（Map）后再调用才有效，所以：
         - 启动后延时调用
         - 绑定 <Map> 事件：窗口每次显示（含从托盘恢复）都重新确保
+
+        注意：<Map> 事件会被频繁触发（启动时控件逐个映射，可能上百次），
+        而这个函数每次都要创建 COM 对象（很贵）。所以这里做去重：
+        0.6 秒内重复触发直接跳过，避免白白卡启动。
         """
+        _now = time.time()
+        if _now - getattr(self, "_taskbar_last", 0.0) < 0.6:
+            return
+        self._taskbar_last = _now
         try:
             import ctypes
             hwnd = self._hwnd_top()
@@ -495,7 +503,7 @@ class MainApp(ctk.CTk):
             btn.pack(fill="x", padx=10, pady=2)
             self.nav_btns[key] = btn
 
-        ctk.CTkLabel(self.sidebar, text="V0.6", font=(FONT, 12), text_color=DIM).pack(side="bottom", pady=12)
+        ctk.CTkLabel(self.sidebar, text="V0.7", font=(FONT, 12), text_color=DIM).pack(side="bottom", pady=12)
 
         # 右侧内容区（透明）
         self.content = ctk.CTkFrame(body, corner_radius=0, fg_color="transparent")
@@ -503,11 +511,17 @@ class MainApp(ctk.CTk):
         self.content.grid_columnconfigure(0, weight=1)
         self.content.grid_rowconfigure(0, weight=1)
 
-        self._build_page_launch()
-        self._build_page_home()
-        self._build_page_bar()
-        self._build_page_records()
-        self._build_page_settings()
+        # ---- 页面懒加载：启动时只建「启动」页，切到哪页才建哪页 ----
+        # （全部一次性建要 1.7 秒以上，懒加载后首屏秒开）
+        self._pages = {}
+        self._page_builders = {
+            "launch": self._build_page_launch,
+            "home": self._build_page_home,
+            "bar": self._build_page_bar,
+            "records": self._build_page_records,
+            "settings": self._build_page_settings,
+        }
+        self._ensure_page("launch")
 
         # ---- 无边框窗口的边缘调整大小条 ----
         right_strip = ctk.CTkFrame(self, width=6, cursor="sb_h_double_arrow", fg_color=BG)
@@ -625,7 +639,7 @@ class MainApp(ctk.CTk):
         deco.pack(side="right", padx=(8, 12), pady=9)
         deco.pack_propagate(False)
         ctk.CTkLabel(deco, text="🍃", font=(FONT, 23)).pack(pady=(6, 0))
-        ctk.CTkLabel(deco, text="StatGI V0.6", font=(FONT, 11, "bold"), text_color=ACCENT).pack()
+        ctk.CTkLabel(deco, text="StatGI V0.7", font=(FONT, 11, "bold"), text_color=ACCENT).pack()
 
         hl = ctk.CTkFrame(header, fg_color="transparent")
         hl.pack(side="left", fill="both", expand=True, padx=16, pady=8)
@@ -659,6 +673,7 @@ class MainApp(ctk.CTk):
         for _icon, _title, _desc, _btext, _cmd in _items:
             _card = self._make_row_card(rows, _icon, _title, _desc, _btext, _cmd)[0]
             _card.pack(fill="x", pady=(0, 6))
+        return page
 
     def _make_row_card(self, parent, icon, title, desc, btn_text, command, accent=False):
         """横向长条卡片：[图标小卡片] [标题 + 说明] ......... [按钮]
@@ -767,6 +782,7 @@ class MainApp(ctk.CTk):
         self.detail_total_label.pack(anchor="w", padx=6, pady=(6, 0))
         self.detail_scroll2 = self.detail_scroll   # 兼容旧引用
         self._detail_shown = False
+        return page
 
     # ---- 材料明细 展开/收起（原「素材明细」页已合并进「今日统计」）----
 
@@ -837,6 +853,7 @@ class MainApp(ctk.CTk):
         self.bar_opacity_slider.set(_cur_op)
         self.bar_opacity_slider.pack(side="left", fill="x", expand=True)
         self.bar_opacity_label.configure(text=f"{int(round(_cur_op * 100))}%")
+        return page
 
     def _on_bar_opacity_change(self, value):
         """统计条透明度滑块：立即预览 + 延迟保存（避免拖动时频繁写文件）"""
@@ -891,6 +908,7 @@ class MainApp(ctk.CTk):
         self._rec_open = set()
         self._rec_widgets = {}
         self._rebuild_records()
+        return page
 
     @staticmethod
     def _fmt_dur(sec):
@@ -1215,7 +1233,7 @@ class MainApp(ctk.CTk):
         card5.grid(row=r, column=0, sticky="ew", pady=(0, 10)); r += 1
         ctk.CTkLabel(card5, text="ℹ️ 关于 / 更新", font=(FONT, 16, "bold"), text_color=ACCENT).pack(padx=20, pady=(12, 4))
         ctk.CTkLabel(
-            card5, text="StatGI V0.6（测试版）\n"
+            card5, text="StatGI V0.7（测试版）\n"
                      "· 识别只靠文字（OCR），不读内存、不控制游戏\n"
                      "· 防重复统计：同一个掉落提示只统计一次\n"
                      "· 数据保存在程序旁边的 data 文件夹",
@@ -1250,6 +1268,7 @@ class MainApp(ctk.CTk):
 
         # 默认显示第一个标签
         self._on_settings_tab("识别")
+        return page
 
     def _on_settings_tab(self, name):
         """切换设置页标签：同一格里只显示当前标签的滚动容器"""
@@ -1519,14 +1538,28 @@ class MainApp(ctk.CTk):
 
     # ================= 页面切换 =================
 
+    def _ensure_page(self, key):
+        """按需构建页面（懒加载）：第一次切到某页才建它"""
+        if key in getattr(self, "_pages", {}):
+            return self._pages[key]
+        frame = None
+        try:
+            frame = self._page_builders[key]()
+        except Exception:
+            frame = None
+        self._pages[key] = frame
+        return frame
+
     def _show_page(self, key):
         self._current_page = key
-        pages = {"launch": 0, "home": 1, "bar": 2, "records": 3, "settings": 4}
-        for i, child in enumerate(self.content.winfo_children()):
-            if i != pages[key]:
-                child.grid_remove()
+        self._ensure_page(key)
+        for k, f in getattr(self, "_pages", {}).items():
+            if f is None:
+                continue
+            if k == key:
+                f.grid()
             else:
-                child.grid()
+                f.grid_remove()
         for k, btn in self.nav_btns.items():
             if k == key:
                 btn.configure(fg_color=NAV_ON, text_color=ACCENT, font=(FONT, 16, "bold"))
@@ -1538,6 +1571,11 @@ class MainApp(ctk.CTk):
                 self._rebuild_records()
             except Exception:
                 pass
+        # 刚建好的页面补一次数据刷新
+        try:
+            self._refresh_ui()
+        except Exception:
+            pass
 
     # ================= 主循环 =================
 
@@ -1770,7 +1808,7 @@ class MainApp(ctk.CTk):
                 with urllib.request.urlopen(req, timeout=8) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
                 latest = str(data.get("tag_name", "")).lstrip("v")
-                current = "0.6"
+                current = "0.7"
                 if latest and latest != current:
                     url = data.get("html_url", "https://github.com/Cash-553/StatGI/releases")
                     self.after(0, lambda: self._update_found(latest, current, url))
@@ -1932,6 +1970,9 @@ class MainApp(ctk.CTk):
             pass
 
     def _refresh_ui(self):
+        # 「今日统计」页还没建（懒加载）时跳过，建好后 _show_page 会再刷一次
+        if "home" not in getattr(self, "_pages", {}):
+            return
         try:
             # 今日摩拉（千分位）
             self.mora_label.configure(text=f"{self.stats.mora:,}")
