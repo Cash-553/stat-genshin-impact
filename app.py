@@ -27,6 +27,7 @@ from tkinter import messagebox, filedialog, colorchooser
 
 import config_manager
 import sessions
+from ui_widgets import FloatingDropdown, Accordion
 import materials_db
 import paths
 import region_selector
@@ -825,20 +826,37 @@ class MainApp(ctk.CTk):
             "开始", self.on_start_stop, accent=True)
         self.start_card.pack(fill="x", pady=(0, 6))
 
-        # 「清空」卡片：下拉菜单选清空内容 + 右边按钮执行
+        # 「清空」卡片：第 1 种浮动下拉选清空内容 + 右边按钮执行
         self._make_clear_card(rows)
 
-        _items = [
-            ("🎯", "重新框选", "手动指定要识别的屏幕区域（一般不用，自动识别即可）", "框选", self.on_reselect),
-            ("📷", "诊断截图", "和自动框选配合使用，用来诊断截图内容（一般不用）", "截图", self.on_debug_screenshot),
-        ]
-        for _icon, _title, _desc, _btext, _cmd in _items:
-            _card = self._make_row_card(rows, _icon, _title, _desc, _btext, _cmd)[0]
-            _card.pack(fill="x", pady=(0, 6))
+        # 「重新框选」折叠区：第 2 种（点标题原地展开，里面含诊断截图）
+        _acc = Accordion(rows, "🎯", "重新框选",
+                         "手动指定要识别的屏幕区域；里面还有「诊断截图」（一般都不用）",
+                         self._build_reselect_body)
+        _acc.pack(fill="x", pady=(0, 6))
         return page
 
+    def _build_reselect_body(self, parent):
+        """「重新框选」展开后的内容：重新框选 + 诊断截图"""
+        row = ctk.CTkFrame(parent, fg_color="transparent")
+        row.pack(fill="x", padx=14, pady=(0, 8))
+        ctk.CTkButton(
+            row, text="🎯 重新框选", font=(FONT, 15), height=36, corner_radius=RADIUS_BTN,
+            fg_color=BTN, hover_color=BTN_HOVER, command=self.on_reselect,
+        ).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(
+            row, text="📷 诊断截图", font=(FONT, 15), height=36, corner_radius=RADIUS_BTN,
+            fg_color=BTN, hover_color=BTN_HOVER, command=self.on_debug_screenshot,
+        ).pack(side="left")
+        ctk.CTkLabel(
+            parent,
+            text="· 重新框选：手动圈出识别区域（平时不用，程序会自动找游戏窗口）\n"
+                 "· 诊断截图：用来查看识别区域里到底有什么文字（一般不用）",
+            font=(FONT, 12), text_color=DIM, justify="left",
+        ).pack(anchor="w", padx=14, pady=(0, 12))
+
     def _make_clear_card(self, parent):
-        """清空卡片：下拉菜单选「清空数据 / 清空时间 / 都清空」，右边按钮执行"""
+        """清空卡片：第 1 种浮动下拉选「清空数据 / 清空时间 / 都清空」，右边按钮执行"""
         card = ctk.CTkFrame(parent, corner_radius=RADIUS_CARD, fg_color=CARD,
                             border_width=1, border_color=theme.BORDER)
         ctk.CTkButton(
@@ -846,12 +864,15 @@ class MainApp(ctk.CTk):
             corner_radius=RADIUS_BTN, fg_color=DANGER, hover_color=DANGER_HOVER,
             text_color="#FFFFFF", command=self._on_clear_selected,
         ).pack(side="right", padx=(10, 14), pady=9)
-        self.clear_choice = ctk.StringVar(value="清空今日数据")
-        ctk.CTkOptionMenu(
-            card, values=["清空今日数据", "清空监测时间", "清空数据和时间"], variable=self.clear_choice,
-            font=(FONT, 14), dropdown_font=(FONT, 14), width=190,
-            fg_color=BTN, button_color=BTN_HOVER, button_hover_color=BTN_HOVER, text_color=TEXT,
-        ).pack(side="right", padx=(8, 0), pady=9)
+
+        self.clear_dd = FloatingDropdown(
+            card, values=["清空今日数据", "清空监测时间", "清空数据和时间"],
+            height=34, font_size=14)
+        self.clear_dd.configure(width=190)
+        self.clear_dd.set("清空今日数据")
+        self.clear_dd.pack(side="right", padx=(8, 0), pady=9)
+        self.clear_choice = self.clear_dd._var      # 兼容旧引用
+
         ic = ctk.CTkFrame(card, width=42, height=42, corner_radius=12, fg_color=CARD_INNER)
         ic.pack(side="left", padx=(14, 12), pady=9)
         ic.pack_propagate(False)
@@ -866,8 +887,11 @@ class MainApp(ctk.CTk):
         return card
 
     def _on_clear_selected(self):
-        """按下拉菜单的选择执行清空"""
-        choice = self.clear_choice.get() if hasattr(self, "clear_choice") else "清空今日数据"
+        """按浮动下拉的选择执行清空"""
+        try:
+            choice = self.clear_dd.get()
+        except Exception:
+            choice = "清空今日数据"
         if choice == "清空监测时间":
             self.on_clear_runtime()
         elif choice == "清空数据和时间":
@@ -1282,28 +1306,23 @@ class MainApp(ctk.CTk):
 
         h = self._make_setting_card(t, "🎚", "画面变化灵敏度", "越灵敏识别越快，太灵敏会耗电")
         self.change_var = ctk.StringVar(value=str(self.settings.get("change_level", "中")))
-        ctk.CTkSegmentedButton(
-            h, values=["高", "中", "低"], variable=self.change_var,
-            font=(FONT, 14), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
-            text_color=TEXT, text_color_disabled=DIM, command=self._on_any_setting_change,
-        ).pack(fill="x")
+        self.change_dd = FloatingDropdown(h, ["高", "中", "低"], variable=self.change_var,
+                                          command=self._on_any_setting_change, font_size=14)
+        self.change_dd.pack(fill="x")
 
-        h = self._make_setting_card(t, "🔁", "防重复窗口", "同一提示消失多久后再出现才算新掉落（秒）")
-        self.event_var = ctk.StringVar(value=str(self.settings.get("event_end_window", 1.5)))
-        ctk.CTkSegmentedButton(
-            h, values=["1.0", "1.5", "2.5"], variable=self.event_var,
-            font=(FONT, 14), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
-            text_color=TEXT, text_color_disabled=DIM, command=self._on_any_setting_change,
-        ).pack(fill="x")
+        h = self._make_setting_card(t, "🔁", "防重复窗口", "同一提示消失多久后再出现才算新掉落")
+        _ev = str(self.settings.get("event_end_window", 1.5)).replace("秒", "").strip()
+        self.event_var = ctk.StringVar(value=f"{_ev} 秒")
+        self.event_dd = FloatingDropdown(h, ["1.0 秒", "1.5 秒", "2.5 秒"], variable=self.event_var,
+                                         command=self._on_any_setting_change, font_size=14)
+        self.event_dd.pack(fill="x")
 
         h = self._make_setting_card(t, "🔍", "文字识别频率", "越快响应越及时，越慢越省电")
         self.ocr_var = ctk.StringVar(
             value={150: "快", 250: "标准", 500: "慢"}.get(int(self.settings.get("ocr_interval", 250)), "标准"))
-        ctk.CTkSegmentedButton(
-            h, values=["快", "标准", "慢"], variable=self.ocr_var,
-            font=(FONT, 14), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
-            text_color=TEXT, text_color_disabled=DIM, command=self._on_any_setting_change,
-        ).pack(fill="x")
+        self.ocr_dd = FloatingDropdown(h, ["快", "标准", "慢"], variable=self.ocr_var,
+                                       command=self._on_any_setting_change, font_size=14)
+        self.ocr_dd.pack(fill="x")
 
         h = self._make_setting_card(t, "➕", "自动登记新材料", "遇到材料库里没有的名字时自动加进材料库")
         self.auto_reg_var = ctk.BooleanVar(value=bool(self.settings.get("auto_register_material", True)))
@@ -1314,33 +1333,19 @@ class MainApp(ctk.CTk):
         # ================= 统计 =================
         t = self._settings_tabs["统计"]
 
-        h = self._make_setting_card(t, "💰", "识别摩拉", "统计掉落提示里的摩拉")
-        self.enable_mora_var = ctk.BooleanVar(value=bool(self.settings.get("enable_mora", True)))
-        ctk.CTkSwitch(h, text="", variable=self.enable_mora_var, onvalue=True, offvalue=False,
-                      width=54, fg_color=ACCENT, progress_color=ACCENT_DARK,
-                      command=self._on_any_setting_change).pack(side="right")
+        # 识别内容：第 2 种折叠区（三个开关合并进来）
+        self._acc_enable = Accordion(
+            t, "🎯", "识别内容", "想统计什么就开什么（点这里展开）", self._build_enable_body)
+        self._acc_enable.pack(fill="x", pady=(0, 8))
 
-        h = self._make_setting_card(t, "⚔", "识别怪物素材", "统计怪物掉落的各种素材")
-        self.enable_mat_var = ctk.BooleanVar(value=bool(self.settings.get("enable_material", True)))
-        ctk.CTkSwitch(h, text="", variable=self.enable_mat_var, onvalue=True, offvalue=False,
-                      width=54, fg_color=ACCENT, progress_color=ACCENT_DARK,
-                      command=self._on_any_setting_change).pack(side="right")
-
-        h = self._make_setting_card(t, "💠", "识别圣遗物（狗粮）", "统计捡到的圣遗物数量")
-        self.enable_art_var = ctk.BooleanVar(value=bool(self.settings.get("enable_artifact", True)))
-        ctk.CTkSwitch(h, text="", variable=self.enable_art_var, onvalue=True, offvalue=False,
-                      width=54, fg_color=ACCENT, progress_color=ACCENT_DARK,
-                      command=self._on_any_setting_change).pack(side="right")
-
-        h = self._make_setting_card(t, "✖", "点右上角 ✕ 时", "每次询问 / 最小化到托盘（监测继续）/ 直接退出")
+        h = self._make_setting_card(t, "✖", "点右上角 ✕ 时", "关闭窗口时的行为")
         _cb = {"ask": "每次询问", "tray": "最小化到托盘", "exit": "直接退出"}.get(
             self.settings.get("close_behavior", "ask"), "每次询问")
         self.close_btn_var = ctk.StringVar(value=_cb)
-        ctk.CTkSegmentedButton(
-            h, values=["每次询问", "最小化到托盘", "直接退出"], variable=self.close_btn_var,
-            font=(FONT, 13), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
-            text_color=TEXT, text_color_disabled=DIM, command=self._on_any_setting_change,
-        ).pack(fill="x")
+        self.close_dd = FloatingDropdown(
+            h, ["每次询问", "最小化到托盘", "直接退出"], variable=self.close_btn_var,
+            command=self._on_any_setting_change, font_size=14)
+        self.close_dd.pack(fill="x")
 
         h = self._make_setting_card(t, "🎯", "只在原神前台时识别", "切到别的应用就暂停，回到原神自动继续")
         self.only_foreground_var = ctk.BooleanVar(value=bool(self.settings.get("only_foreground", True)))
@@ -1348,19 +1353,30 @@ class MainApp(ctk.CTk):
                       width=54, fg_color=ACCENT, progress_color=ACCENT_DARK,
                       command=self._on_any_setting_change).pack(side="right")
 
-        # ---- 换日时间（0~23 点任意，改完立即生效）----
-        h = self._make_setting_card(t, "🌙", "换日时间", "几点算新的一天。挂机挂过零点的话，往后挪几小时就不会中途归零")
-        self.rollover_label = ctk.CTkLabel(h, text=self._rollover_text(int(self.settings.get("rollover_hour", 0) or 0)),
-                                           font=(FONT, 14, "bold"), text_color=ACCENT, width=80)
-        self.rollover_label.pack(side="right", padx=(8, 0))
-        _ro = int(self.settings.get("rollover_hour", 0) or 0) % 24
-        self.rollover_slider = ctk.CTkSlider(h, from_=0, to=23, number_of_steps=23,
-                                             command=self._on_rollover_change)
-        self.rollover_slider.set(_ro)
-        self.rollover_slider.pack(side="left", fill="x", expand=True)
+        # 换日时间：输入框（自己填 0~23）
+        h = self._make_setting_card(t, "🌙", "换日时间", "填 0~23。挂机挂过零点的话，往后填几小时就不会中途归零")
+        try:
+            _ro = int(self.settings.get("rollover_hour", 0)) % 24
+        except Exception:
+            _ro = 0
+        self.rollover_entry = ctk.CTkEntry(h, font=(FONT, 14), height=34, width=90,
+                                           fg_color=CARD_INNER, text_color=TEXT, border_color=BTN_HOVER)
+        self.rollover_entry.insert(0, str(_ro))
+        self.rollover_entry.pack(side="left", fill="x", expand=True)
+        ctk.CTkLabel(h, text="点", font=(FONT, 14), text_color=DIM).pack(side="left", padx=(8, 0))
         self.rollover_var = ctk.StringVar(value=str(_ro))
 
-        # ---- 全局热键（按一下就设定）----
+        def _ro_edit(_e=None):
+            try:
+                self.rollover_var.set(self.rollover_entry.get().strip())
+            except Exception:
+                pass
+            self._on_tick_change()
+
+        self.rollover_entry.bind("<KeyRelease>", _ro_edit)
+        self.rollover_entry.bind("<FocusOut>", self._on_any_setting_change)
+
+        # 全局热键（按一下就设定）
         h = self._make_setting_card(t, "⌨", "全局热键（开始/停止监测）", "点按钮后按下想用的键（Esc 取消）")
         self.hotkey_btn = ctk.CTkButton(
             h, text=str(self.settings.get("hotkey", "关闭")), font=(FONT, 14),
@@ -1373,63 +1389,37 @@ class MainApp(ctk.CTk):
         # ================= 外观 =================
         t = self._settings_tabs["外观"]
 
-        h = self._make_setting_card(t, "🎨", "背景颜色", "窗口背景色（可以选任意颜色）", wide=True)
+        h = self._make_setting_card(t, "🎨", "背景颜色", "窗口背景色")
         cur_bg = self.settings.get("bg_color", "经典深黑")
         if cur_bg not in theme.BG_PRESETS:
             self._custom_bg_hex = cur_bg
         self.bg_var = ctk.StringVar(value=cur_bg if cur_bg in theme.BG_PRESETS else "自定义…")
-        ctk.CTkSegmentedButton(
-            h, values=list(theme.BG_PRESETS.keys()) + ["自定义…"], variable=self.bg_var,
-            font=(FONT, 13), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
-            text_color=TEXT, text_color_disabled=DIM, command=self._on_pick_bg_color,
-        ).pack(fill="x")
+        self.bg_dd = FloatingDropdown(
+            h, list(theme.BG_PRESETS.keys()) + ["自定义…"], variable=self.bg_var,
+            command=self._on_pick_bg_color, font_size=14)
+        self.bg_dd.pack(fill="x")
 
-        h = self._make_setting_card(t, "🌈", "强调色", "按钮、选中项、数字高亮的颜色", wide=True)
+        h = self._make_setting_card(t, "🌈", "强调色", "按钮、选中项、数字高亮的颜色")
         cur_ac = self.settings.get("accent_color", "经典蓝")
         if cur_ac not in theme.ACCENT_PRESETS:
             self._custom_accent_hex = cur_ac
         self.accent_var = ctk.StringVar(value=cur_ac if cur_ac in theme.ACCENT_PRESETS else "自定义…")
-        ctk.CTkSegmentedButton(
-            h, values=list(theme.ACCENT_PRESETS.keys()) + ["自定义…"], variable=self.accent_var,
-            font=(FONT, 13), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
-            text_color=TEXT, text_color_disabled=DIM, command=self._on_pick_accent_color,
-        ).pack(fill="x")
+        self.accent_dd = FloatingDropdown(
+            h, list(theme.ACCENT_PRESETS.keys()) + ["自定义…"], variable=self.accent_var,
+            command=self._on_pick_accent_color, font_size=14)
+        self.accent_dd.pack(fill="x")
 
-        h = self._make_setting_card(t, "🖼", "自定义背景图片", "选一张图片当窗口背景（不选=纯色背景）", wide=True)
-        ctk.CTkButton(
-            h, text="🖼 选择图片…", font=(FONT, 14), height=32, width=130,
-            fg_color=BTN, hover_color=BTN_HOVER, command=self._choose_bg_image,
-        ).pack(side="left", padx=(0, 8))
-        ctk.CTkButton(
-            h, text="✖ 清除背景", font=(FONT, 14), height=32, width=130,
-            fg_color=DANGER, hover_color=DANGER_HOVER, command=self._clear_bg_image,
-        ).pack(side="left", padx=(0, 12))
-        _cur_bg_file = Path(self.settings.get("bg_image") or "").name if self.settings.get("bg_image") else ""
-        self._bg_img_label = ctk.CTkLabel(
-            h, text=f"当前：{_cur_bg_file}" if _cur_bg_file else "未设置（纯色背景）",
-            font=(FONT, 13), text_color=DIM)
-        self._bg_img_label.pack(side="left")
+        # 背景图片 + 毛玻璃：第 2 种折叠区
+        self._acc_bg = Accordion(
+            t, "🖼", "自定义背景图片", "选图片当窗口背景；里面还有「左侧栏毛玻璃」开关",
+            self._build_bg_body)
+        self._acc_bg.pack(fill="x", pady=(0, 8))
 
-        h = self._make_setting_card(t, "✨", "左侧栏毛玻璃效果", "需要先设置背景图片（模糊+压暗，模拟磨砂质感）")
-        self.glass_var = ctk.BooleanVar(value=bool(self.settings.get("sidebar_glass", True)))
-        ctk.CTkSwitch(h, text="", variable=self.glass_var, onvalue=True, offvalue=False,
-                      width=54, fg_color=ACCENT, progress_color=ACCENT_DARK,
-                      command=self._on_any_setting_change).pack(side="right")
-
-        h = self._make_setting_card(t, "📺", "连接 OBS 直播覆盖", "在 OBS 添加「浏览器源」粘贴下面的地址即可上屏", wide=True)
-        self.obs_var = ctk.BooleanVar(value=bool(self.settings.get("obs_browser_source", False)))
-        _obs_row = ctk.CTkFrame(h, fg_color="transparent")
-        _obs_row.pack(fill="x")
-        ctk.CTkSwitch(_obs_row, text="开启", variable=self.obs_var, onvalue=True, offvalue=False,
-                      font=(FONT, 14), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
-                      command=self._toggle_obs_source).pack(side="left")
-        api_port = int(self.settings.get("api_port", 8765))
-        self._obs_addr_label = ctk.CTkLabel(_obs_row, text=f"http://127.0.0.1:{api_port}/overlay",
-                                            font=(FONT, 13), text_color=TEXT)
-        self._obs_addr_label.pack(side="left", padx=(16, 8))
-        ctk.CTkButton(_obs_row, text="复制", font=(FONT, 13), width=56, height=28,
-                      corner_radius=8, fg_color=BTN, hover_color=BTN_HOVER,
-                      command=self._copy_obs_addr).pack(side="left")
+        # OBS：第 2 种折叠区
+        self._acc_obs = Accordion(
+            t, "📺", "连接 OBS 直播覆盖", "点开可以看到开关和浏览器源地址",
+            self._build_obs_body)
+        self._acc_obs.pack(fill="x", pady=(0, 8))
 
         # ================= 关于 =================
         t = self._settings_tabs["关于"]
@@ -1453,12 +1443,80 @@ class MainApp(ctk.CTk):
         if self.settings.get("developer_mode", False):
             self._build_dev_card(t, 0)
 
-        # 设置改动都是「立即生效」，所以不需要保存按钮，这里只提示一下
         ctk.CTkLabel(page, text="✅ 所有设置都是【改完立即生效】，不需要点保存",
                      font=(FONT, 13), text_color=DIM).grid(row=3, column=0, sticky="ew", pady=(8, 0))
 
         self._on_settings_tab("识别")
         return page
+
+    # ---------- 折叠区域的内部内容 ----------
+
+    def _build_enable_body(self, parent):
+        """「识别内容」展开后：摩拉 / 怪物素材 / 圣遗物 三个开关"""
+        self.enable_mora_var = ctk.BooleanVar(value=bool(self.settings.get("enable_mora", True)))
+        self.enable_mat_var = ctk.BooleanVar(value=bool(self.settings.get("enable_material", True)))
+        self.enable_art_var = ctk.BooleanVar(value=bool(self.settings.get("enable_artifact", True)))
+        for var, text, tip in (
+            (self.enable_mora_var, "💰 识别摩拉", "统计掉落提示里的摩拉"),
+            (self.enable_mat_var, "⚔ 识别怪物素材", "统计怪物掉落的各种素材"),
+            (self.enable_art_var, "💠 识别圣遗物（狗粮）", "统计捡到的圣遗物数量"),
+        ):
+            row = ctk.CTkFrame(parent, fg_color="transparent")
+            row.pack(fill="x", padx=14, pady=3)
+            ctk.CTkLabel(row, text=text, font=(FONT, 15), text_color=TEXT, anchor="w").pack(side="left")
+            ctk.CTkLabel(row, text=tip, font=(FONT, 12), text_color=DIM, anchor="w").pack(
+                side="left", padx=(10, 0))
+            ctk.CTkSwitch(row, text="", variable=var, onvalue=True, offvalue=False,
+                          width=54, fg_color=ACCENT, progress_color=ACCENT_DARK,
+                          command=self._on_any_setting_change).pack(side="right")
+        ctk.CTkFrame(parent, height=8, fg_color="transparent").pack()
+
+    def _build_bg_body(self, parent):
+        """「自定义背景图片」展开后：选图片 + 清除 + 毛玻璃开关"""
+        row = ctk.CTkFrame(parent, fg_color="transparent")
+        row.pack(fill="x", padx=14, pady=(0, 6))
+        ctk.CTkButton(
+            row, text="🖼 选择图片…", font=(FONT, 14), height=32, width=130,
+            fg_color=BTN, hover_color=BTN_HOVER, command=self._choose_bg_image,
+        ).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(
+            row, text="✖ 清除背景", font=(FONT, 14), height=32, width=130,
+            fg_color=DANGER, hover_color=DANGER_HOVER, command=self._clear_bg_image,
+        ).pack(side="left", padx=(0, 12))
+        _cur_bg_file = Path(self.settings.get("bg_image") or "").name if self.settings.get("bg_image") else ""
+        self._bg_img_label = ctk.CTkLabel(
+            row, text=f"当前：{_cur_bg_file}" if _cur_bg_file else "未设置（纯色背景）",
+            font=(FONT, 13), text_color=DIM)
+        self._bg_img_label.pack(side="left")
+
+        row2 = ctk.CTkFrame(parent, fg_color="transparent")
+        row2.pack(fill="x", padx=14, pady=(2, 10))
+        ctk.CTkLabel(row2, text="左侧栏毛玻璃效果", font=(FONT, 15), text_color=TEXT).pack(side="left")
+        ctk.CTkLabel(row2, text="需要先设置背景图片（模糊+压暗，模拟磨砂质感）",
+                     font=(FONT, 12), text_color=DIM).pack(side="left", padx=(10, 0))
+        self.glass_var = ctk.BooleanVar(value=bool(self.settings.get("sidebar_glass", True)))
+        ctk.CTkSwitch(row2, text="", variable=self.glass_var, onvalue=True, offvalue=False,
+                      width=54, fg_color=ACCENT, progress_color=ACCENT_DARK,
+                      command=self._on_any_setting_change).pack(side="right")
+
+    def _build_obs_body(self, parent):
+        """「连接 OBS」展开后：开关 + 地址 + 复制"""
+        ctk.CTkLabel(parent, text="在 OBS 里添加「浏览器源」，粘贴下面的地址即可在直播画面上显示收益。",
+                     font=(FONT, 12), text_color=DIM, justify="left").pack(anchor="w", padx=14, pady=(0, 6))
+        row = ctk.CTkFrame(parent, fg_color="transparent")
+        row.pack(fill="x", padx=14, pady=(0, 10))
+        self.obs_var = ctk.BooleanVar(value=bool(self.settings.get("obs_browser_source", False)))
+        ctk.CTkSwitch(row, text="开启", variable=self.obs_var, onvalue=True, offvalue=False,
+                      font=(FONT, 14), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
+                      command=self._toggle_obs_source).pack(side="left")
+        api_port = int(self.settings.get("api_port", 8765))
+        self._obs_addr_label = ctk.CTkLabel(row, text=f"http://127.0.0.1:{api_port}/overlay",
+                                            font=(FONT, 13), text_color=TEXT)
+        self._obs_addr_label.pack(side="left", padx=(16, 8))
+        ctk.CTkButton(row, text="复制", font=(FONT, 13), width=56, height=28,
+                      corner_radius=8, fg_color=BTN, hover_color=BTN_HOVER,
+                      command=self._copy_obs_addr).pack(side="left")
+
 
     @staticmethod
     def _rollover_text(h):
@@ -1845,7 +1903,8 @@ class MainApp(ctk.CTk):
         if hasattr(self, "change_var"):
             self.settings["change_threshold"] = change_map.get(self.change_var.get(), 4.0)
         try:
-            self.settings["event_end_window"] = float(self.event_var.get())
+            self.settings["event_end_window"] = float(
+                str(self.event_var.get()).replace("秒", "").strip())
         except Exception:
             pass
         ocr_map = {"快": 150, "标准": 250, "慢": 500}
