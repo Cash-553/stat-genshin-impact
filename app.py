@@ -1232,6 +1232,40 @@ class MainApp(ctk.CTk):
         except Exception:
             pass
 
+    def _glass_fix_scrollregion(self, cv, frame):
+        """把可滚动区域的范围重新设成「内容」的大小。
+
+        坑：我们在滚动视口上贴了一张和视口一样大的玻璃图（画布上的一项），
+        而 CustomTkinter 是用 bbox("all")（画布上所有项的并集）当滚动范围的，
+        于是滚动范围被这张图撑成了「视口大小」——
+        内容只比视口高一点点时就刚好相等，结果是「内容明明超出去却滚不动」。
+        这里把滚动范围改回按「内容」算。
+        """
+        try:
+            item = getattr(frame, "_create_window_id", None)
+            bb = cv.bbox(item) if item else None
+            if not bb:
+                return
+            cv.configure(scrollregion=bb)
+        except Exception:
+            pass
+
+    def _glass_bind_scrollregion(self, frame):
+        """给可滚动区域挂上「重算滚动范围」的回调（在 CustomTkinter 之后执行）"""
+        if getattr(frame, "_glass_sr_bound", False):
+            return
+        try:
+            cv = getattr(frame, "_parent_canvas", None)
+            if cv is None:
+                return
+            frame._glass_sr_bound = True
+            frame.bind("<Configure>",
+                       lambda e, f=frame, c=cv: self._glass_fix_scrollregion(c, f), add="+")
+            cv.bind("<Configure>",
+                    lambda e, f=frame, c=cv: self._glass_fix_scrollregion(c, f), add="+")
+        except Exception:
+            pass
+
     def _glass_paint_viewport(self, cv, tint, alpha, blur=False):
         """普通 tk 画布（可滚动区域的视口）：把图作为画布最底层的一项。
 
@@ -1270,12 +1304,17 @@ class MainApp(ctk.CTk):
                       "tint": tint, "alpha": alpha, "blur": blur,
                       "canvas": True, "viewport": True, "kind": "viewport"}
 
-    @staticmethod
-    def _glass_reposition_viewport(cv):
+    def _glass_reposition_viewport(self, cv):
         try:
             cv.coords("glassbg", cv.canvasx(0), cv.canvasy(0))
         except Exception:
             pass
+        # 贴的这张图会被 CustomTkinter 算进滚动范围（bbox("all")），
+        # 滚动时它跟着挪，滚动范围就会被越撑越大，表现就是滚不动/乱滚。
+        # 所以每次挪完都把滚动范围重新按「内容」设一遍。
+        f = getattr(cv, "_glass_frame", None)
+        if f is not None:
+            self._glass_fix_scrollregion(cv, f)
 
     # ---- 布局变化时只重贴动过的控件 ----
 
@@ -1408,6 +1447,16 @@ class MainApp(ctk.CTk):
                 continue
             # 侧边栏整块走「模糊」那条线
             _blur = blur or (w is sidebar and bool(self.settings.get("sidebar_glass", True)))
+            if cls == "CTkScrollableFrame":
+                # 可滚动区域：滚动范围要按「内容」算，不能被我们贴的视口图撑大
+                self._glass_bind_scrollregion(w)
+                cv2 = getattr(w, "_parent_canvas", None)
+                if cv2 is not None:
+                    try:
+                        cv2._glass_frame = w
+                    except Exception:
+                        pass
+                    self._glass_fix_scrollregion(cv2, w)
             if cls in self._GLASS_ON_CANVAS:
                 # 开关 / 滑块：它们的 fg_color 是【轨道色】不是面板底色，
                 # 所以底色用继承下来的那层，轨道色在函数里单独处理
