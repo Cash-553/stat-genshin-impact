@@ -229,6 +229,9 @@ class MainApp(ctk.CTk):
         self.bind("<Configure>", self._on_resize)
         self.after(200, self._apply_background)
 
+        # 启动后把窗口显示到最前面
+        self.after(350, self._bring_to_front)
+
         # 启动后空闲时把其它页面依次预建好：
         # 首屏不受影响（启动快），等用户点过去时页面已经建好（切页不卡）
         self.after(250, lambda: self._prebuild_pages("home", "bar", "records", "settings"))
@@ -247,6 +250,25 @@ class MainApp(ctk.CTk):
         if keys:
             self.after(150, lambda: self._prebuild_pages(*keys))
 
+
+    def _bring_to_front(self):
+        """启动后把窗口显示到所有窗口最前面（否则可能被别的窗口挡住）"""
+        try:
+            self.deiconify()
+            self.lift()
+            self.attributes("-topmost", True)
+            self.update_idletasks()
+            self.focus_force()
+            # 短暂置顶后再取消，避免一直压着别的窗口
+            self.after(500, lambda: self._set_not_topmost())
+        except Exception:
+            pass
+
+    def _set_not_topmost(self):
+        try:
+            self.attributes("-topmost", False)
+        except Exception:
+            pass
 
     def _install_wndproc(self):
         """不再子类化窗口过程（保留空实现，兼容旧调用）。
@@ -1048,7 +1070,7 @@ class MainApp(ctk.CTk):
         slot_card.grid(row=3, column=0, sticky="ew", pady=(10, 0))
         ctk.CTkLabel(slot_card, text="📶 显示哪几个格子", font=(FONT, 17, "bold"),
                      text_color=ACCENT).pack(anchor="w", padx=20, pady=(14, 2))
-        ctk.CTkLabel(slot_card, text="不想显示的直接关掉即可（改完点下面的「保存设置」生效）。",
+        ctk.CTkLabel(slot_card, text="不想显示的直接关掉即可（改完立即生效）。",
                      font=(FONT, 15), text_color=DIM).pack(anchor="w", padx=20, pady=(0, 8))
         _bar = self.settings.get("stat_bar") or {}
         self._slot_vars = {}
@@ -1057,6 +1079,7 @@ class MainApp(ctk.CTk):
             ctk.CTkSwitch(
                 slot_card, text=_name, variable=_v, onvalue=True, offvalue=False,
                 font=(FONT, 16), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
+                command=self._on_any_setting_change,
             ).pack(anchor="w", padx=20, pady=(2, 2))
             self._slot_vars[_key] = _v
         ctk.CTkFrame(slot_card, height=10, fg_color="transparent").pack()
@@ -1250,40 +1273,43 @@ class MainApp(ctk.CTk):
         t = self._settings_tabs["识别"]
 
         h = self._make_setting_card(t, "⏱", "检测间隔", "每多少毫秒检查一次画面（10~5000，默认 50）")
-        self.tick_entry = ctk.CTkEntry(h, font=(FONT, 14), height=34, width=110,
+        self.tick_entry = ctk.CTkEntry(h, font=(FONT, 14), height=34,
                                        fg_color=CARD_INNER, text_color=TEXT, border_color=BTN_HOVER)
         self.tick_entry.insert(0, str(int(self.settings.get("tick_interval", 50))))
-        self.tick_entry.pack()
+        self.tick_entry.pack(fill="x")
+        self.tick_entry.bind("<KeyRelease>", self._on_tick_change)
+        self.tick_entry.bind("<FocusOut>", self._on_any_setting_change)
 
         h = self._make_setting_card(t, "🎚", "画面变化灵敏度", "越灵敏识别越快，太灵敏会耗电")
         self.change_var = ctk.StringVar(value=str(self.settings.get("change_level", "中")))
         ctk.CTkSegmentedButton(
-            h, values=["高", "中", "低"], variable=self.change_var, width=180,
+            h, values=["高", "中", "低"], variable=self.change_var,
             font=(FONT, 14), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
-            text_color=TEXT, text_color_disabled=DIM,
-        ).pack()
+            text_color=TEXT, text_color_disabled=DIM, command=self._on_any_setting_change,
+        ).pack(fill="x")
 
         h = self._make_setting_card(t, "🔁", "防重复窗口", "同一提示消失多久后再出现才算新掉落（秒）")
         self.event_var = ctk.StringVar(value=str(self.settings.get("event_end_window", 1.5)))
         ctk.CTkSegmentedButton(
-            h, values=["1.0", "1.5", "2.5"], variable=self.event_var, width=180,
+            h, values=["1.0", "1.5", "2.5"], variable=self.event_var,
             font=(FONT, 14), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
-            text_color=TEXT, text_color_disabled=DIM,
-        ).pack()
+            text_color=TEXT, text_color_disabled=DIM, command=self._on_any_setting_change,
+        ).pack(fill="x")
 
         h = self._make_setting_card(t, "🔍", "文字识别频率", "越快响应越及时，越慢越省电")
         self.ocr_var = ctk.StringVar(
             value={150: "快", 250: "标准", 500: "慢"}.get(int(self.settings.get("ocr_interval", 250)), "标准"))
         ctk.CTkSegmentedButton(
-            h, values=["快", "标准", "慢"], variable=self.ocr_var, width=180,
+            h, values=["快", "标准", "慢"], variable=self.ocr_var,
             font=(FONT, 14), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
-            text_color=TEXT, text_color_disabled=DIM,
-        ).pack()
+            text_color=TEXT, text_color_disabled=DIM, command=self._on_any_setting_change,
+        ).pack(fill="x")
 
         h = self._make_setting_card(t, "➕", "自动登记新材料", "遇到材料库里没有的名字时自动加进材料库")
         self.auto_reg_var = ctk.BooleanVar(value=bool(self.settings.get("auto_register_material", True)))
         ctk.CTkSwitch(h, text="", variable=self.auto_reg_var, onvalue=True, offvalue=False,
-                      width=54, fg_color=ACCENT, progress_color=ACCENT_DARK).pack()
+                      width=54, fg_color=ACCENT, progress_color=ACCENT_DARK,
+                      command=self._on_any_setting_change).pack(side="right")
 
         # ================= 统计 =================
         t = self._settings_tabs["统计"]
@@ -1291,56 +1317,57 @@ class MainApp(ctk.CTk):
         h = self._make_setting_card(t, "💰", "识别摩拉", "统计掉落提示里的摩拉")
         self.enable_mora_var = ctk.BooleanVar(value=bool(self.settings.get("enable_mora", True)))
         ctk.CTkSwitch(h, text="", variable=self.enable_mora_var, onvalue=True, offvalue=False,
-                      width=54, fg_color=ACCENT, progress_color=ACCENT_DARK).pack()
+                      width=54, fg_color=ACCENT, progress_color=ACCENT_DARK,
+                      command=self._on_any_setting_change).pack(side="right")
 
         h = self._make_setting_card(t, "⚔", "识别怪物素材", "统计怪物掉落的各种素材")
         self.enable_mat_var = ctk.BooleanVar(value=bool(self.settings.get("enable_material", True)))
         ctk.CTkSwitch(h, text="", variable=self.enable_mat_var, onvalue=True, offvalue=False,
-                      width=54, fg_color=ACCENT, progress_color=ACCENT_DARK).pack()
+                      width=54, fg_color=ACCENT, progress_color=ACCENT_DARK,
+                      command=self._on_any_setting_change).pack(side="right")
 
         h = self._make_setting_card(t, "💠", "识别圣遗物（狗粮）", "统计捡到的圣遗物数量")
         self.enable_art_var = ctk.BooleanVar(value=bool(self.settings.get("enable_artifact", True)))
         ctk.CTkSwitch(h, text="", variable=self.enable_art_var, onvalue=True, offvalue=False,
-                      width=54, fg_color=ACCENT, progress_color=ACCENT_DARK).pack()
+                      width=54, fg_color=ACCENT, progress_color=ACCENT_DARK,
+                      command=self._on_any_setting_change).pack(side="right")
 
         h = self._make_setting_card(t, "✖", "点右上角 ✕ 时", "每次询问 / 最小化到托盘（监测继续）/ 直接退出")
         _cb = {"ask": "每次询问", "tray": "最小化到托盘", "exit": "直接退出"}.get(
             self.settings.get("close_behavior", "ask"), "每次询问")
         self.close_btn_var = ctk.StringVar(value=_cb)
         ctk.CTkSegmentedButton(
-            h, values=["每次询问", "最小化到托盘", "直接退出"], variable=self.close_btn_var, width=330,
+            h, values=["每次询问", "最小化到托盘", "直接退出"], variable=self.close_btn_var,
             font=(FONT, 13), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
-            text_color=TEXT, text_color_disabled=DIM,
-        ).pack()
+            text_color=TEXT, text_color_disabled=DIM, command=self._on_any_setting_change,
+        ).pack(fill="x")
 
         h = self._make_setting_card(t, "🎯", "只在原神前台时识别", "切到别的应用就暂停，回到原神自动继续")
         self.only_foreground_var = ctk.BooleanVar(value=bool(self.settings.get("only_foreground", True)))
         ctk.CTkSwitch(h, text="", variable=self.only_foreground_var, onvalue=True, offvalue=False,
-                      width=54, fg_color=ACCENT, progress_color=ACCENT_DARK).pack()
+                      width=54, fg_color=ACCENT, progress_color=ACCENT_DARK,
+                      command=self._on_any_setting_change).pack(side="right")
 
-        # ---- 换日时间（完全自定义：0~23 点任意）----
+        # ---- 换日时间（0~23 点任意，改完立即生效）----
         h = self._make_setting_card(t, "🌙", "换日时间", "几点算新的一天。挂机挂过零点的话，往后挪几小时就不会中途归零")
-        try:
-            _ro = int(self.settings.get("rollover_hour", 0)) % 24
-        except Exception:
-            _ro = 0
-        self.rollover_label = ctk.CTkLabel(h, text=self._rollover_text(_ro),
-                                           font=(FONT, 15, "bold"), text_color=ACCENT, width=90)
-        self.rollover_label.pack(side="right", padx=(10, 0))
-        self.rollover_slider = ctk.CTkSlider(h, from_=0, to=23, number_of_steps=23, width=190,
+        self.rollover_label = ctk.CTkLabel(h, text=self._rollover_text(int(self.settings.get("rollover_hour", 0) or 0)),
+                                           font=(FONT, 14, "bold"), text_color=ACCENT, width=80)
+        self.rollover_label.pack(side="right", padx=(8, 0))
+        _ro = int(self.settings.get("rollover_hour", 0) or 0) % 24
+        self.rollover_slider = ctk.CTkSlider(h, from_=0, to=23, number_of_steps=23,
                                              command=self._on_rollover_change)
         self.rollover_slider.set(_ro)
-        self.rollover_slider.pack(side="left")
+        self.rollover_slider.pack(side="left", fill="x", expand=True)
         self.rollover_var = ctk.StringVar(value=str(_ro))
 
-        # ---- 全局热键（完全自定义：按一下键就设定）----
-        h = self._make_setting_card(t, "⌨", "全局热键（开始/停止监测）", "点右边按钮，然后按下想用的键（Esc 取消）")
+        # ---- 全局热键（按一下就设定）----
+        h = self._make_setting_card(t, "⌨", "全局热键（开始/停止监测）", "点按钮后按下想用的键（Esc 取消）")
         self.hotkey_btn = ctk.CTkButton(
             h, text=str(self.settings.get("hotkey", "关闭")), font=(FONT, 14),
-            width=170, height=34, corner_radius=RADIUS_BTN, fg_color=BTN, hover_color=BTN_HOVER,
+            height=34, corner_radius=RADIUS_BTN, fg_color=BTN, hover_color=BTN_HOVER,
             command=self._start_hotkey_capture,
         )
-        self.hotkey_btn.pack()
+        self.hotkey_btn.pack(fill="x")
         self.hotkey_var = ctk.StringVar(value=str(self.settings.get("hotkey", "关闭")))
 
         # ================= 外观 =================
@@ -1386,7 +1413,8 @@ class MainApp(ctk.CTk):
         h = self._make_setting_card(t, "✨", "左侧栏毛玻璃效果", "需要先设置背景图片（模糊+压暗，模拟磨砂质感）")
         self.glass_var = ctk.BooleanVar(value=bool(self.settings.get("sidebar_glass", True)))
         ctk.CTkSwitch(h, text="", variable=self.glass_var, onvalue=True, offvalue=False,
-                      width=54, fg_color=ACCENT, progress_color=ACCENT_DARK).pack()
+                      width=54, fg_color=ACCENT, progress_color=ACCENT_DARK,
+                      command=self._on_any_setting_change).pack(side="right")
 
         h = self._make_setting_card(t, "📺", "连接 OBS 直播覆盖", "在 OBS 添加「浏览器源」粘贴下面的地址即可上屏", wide=True)
         self.obs_var = ctk.BooleanVar(value=bool(self.settings.get("obs_browser_source", False)))
@@ -1425,12 +1453,9 @@ class MainApp(ctk.CTk):
         if self.settings.get("developer_mode", False):
             self._build_dev_card(t, 0)
 
-        # 保存按钮（固定在底部）
-        ctk.CTkButton(
-            page, text="💾 保存设置", font=(FONT, 17),
-            height=42, corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_DARK,
-            text_color="#FFFFFF", command=self.on_save_settings,
-        ).grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        # 设置改动都是「立即生效」，所以不需要保存按钮，这里只提示一下
+        ctk.CTkLabel(page, text="✅ 所有设置都是【改完立即生效】，不需要点保存",
+                     font=(FONT, 13), text_color=DIM).grid(row=3, column=0, sticky="ew", pady=(8, 0))
 
         self._on_settings_tab("识别")
         return page
@@ -1451,6 +1476,16 @@ class MainApp(ctk.CTk):
             h = int(round(float(value))) % 24
             self.rollover_var.set(str(h))
             self.rollover_label.configure(text=self._rollover_text(h))
+        except Exception:
+            pass
+        # 拖动过程中不频繁写文件，停 0.4 秒后再保存生效
+        try:
+            if getattr(self, "_ro_after", None):
+                try:
+                    self.after_cancel(self._ro_after)
+                except Exception:
+                    pass
+            self._ro_after = self.after(400, self._on_any_setting_change)
         except Exception:
             pass
 
@@ -1529,6 +1564,9 @@ class MainApp(ctk.CTk):
         if wide:
             holder.pack(fill="x", padx=14, pady=(0, 10))
         else:
+            # 固定宽度 + 不许子控件撑大：这样每张卡片右边的控件都能对齐
+            holder.configure(width=300, height=44)
+            holder.pack_propagate(False)
             holder.pack(side="right", padx=(10, 14), pady=9)
         ic.pack(side="left", padx=(14, 12), pady=9)
         ic.pack_propagate(False)
@@ -1796,59 +1834,59 @@ class MainApp(ctk.CTk):
             pass
         self._apply_background()
 
-    def on_save_settings(self):
-        """保存并应用设置"""
+    def _collect_settings(self):
+        """把设置界面上的控件值读进 self.settings（不保存、不应用）"""
         try:
             val = int(self.tick_entry.get().strip())
             self.settings["tick_interval"] = max(10, min(5000, val))
         except Exception:
             pass
         change_map = {"高": 2.0, "中": 4.0, "低": 8.0}
-        self.settings["change_threshold"] = change_map.get(self.change_var.get(), 4.0)
+        if hasattr(self, "change_var"):
+            self.settings["change_threshold"] = change_map.get(self.change_var.get(), 4.0)
         try:
             self.settings["event_end_window"] = float(self.event_var.get())
         except Exception:
             pass
         ocr_map = {"快": 150, "标准": 250, "慢": 500}
-        self.settings["ocr_interval"] = ocr_map.get(self.ocr_var.get(), 250)
-        self.settings["auto_register_material"] = bool(self.auto_reg_var.get())
-        self.settings["enable_mora"] = bool(self.enable_mora_var.get())
-        self.settings["enable_material"] = bool(self.enable_mat_var.get())
-        self.settings["enable_artifact"] = bool(self.enable_art_var.get())
-        self.settings["only_foreground"] = bool(self.only_foreground_var.get()) if hasattr(self, "only_foreground_var") else self.settings.get("only_foreground", True)
+        if hasattr(self, "ocr_var"):
+            self.settings["ocr_interval"] = ocr_map.get(self.ocr_var.get(), 250)
+        if hasattr(self, "auto_reg_var"):
+            self.settings["auto_register_material"] = bool(self.auto_reg_var.get())
+        if hasattr(self, "enable_mora_var"):
+            self.settings["enable_mora"] = bool(self.enable_mora_var.get())
+        if hasattr(self, "enable_mat_var"):
+            self.settings["enable_material"] = bool(self.enable_mat_var.get())
+        if hasattr(self, "enable_art_var"):
+            self.settings["enable_artifact"] = bool(self.enable_art_var.get())
+        if hasattr(self, "only_foreground_var"):
+            self.settings["only_foreground"] = bool(self.only_foreground_var.get())
         if hasattr(self, "dataset_enabled_var"):
             self.settings["dataset_enabled"] = bool(self.dataset_enabled_var.get())
-        self.settings["close_behavior"] = {"每次询问": "ask", "最小化到托盘": "tray", "直接退出": "exit"}.get(
-            self.close_btn_var.get(), "ask"
-        )
+        if hasattr(self, "close_btn_var"):
+            self.settings["close_behavior"] = {
+                "每次询问": "ask", "最小化到托盘": "tray", "直接退出": "exit",
+            }.get(self.close_btn_var.get(), "ask")
         # 外观
-        bg_sel = self.bg_var.get()
-        if bg_sel == "自定义…":
-            self.settings["bg_color"] = getattr(self, "_custom_bg_hex", None) or BG
-        else:
-            self.settings["bg_color"] = bg_sel
-        ac_sel = self.accent_var.get()
-        if ac_sel == "自定义…":
-            self.settings["accent_color"] = getattr(self, "_custom_accent_hex", None) or ACCENT
-        else:
-            self.settings["accent_color"] = ac_sel
-        self.settings["bg_image"] = self.settings.get("bg_image", "")
-        self.settings["sidebar_glass"] = bool(self.glass_var.get())
-        self.settings["obs_browser_source"] = bool(self.obs_var.get())
-
+        if hasattr(self, "bg_var"):
+            _bs = self.bg_var.get()
+            self.settings["bg_color"] = (getattr(self, "_custom_bg_hex", None) or BG) if _bs == "自定义…" else _bs
+        if hasattr(self, "accent_var"):
+            _as = self.accent_var.get()
+            self.settings["accent_color"] = (getattr(self, "_custom_accent_hex", None) or ACCENT) if _as == "自定义…" else _as
+        if hasattr(self, "glass_var"):
+            self.settings["sidebar_glass"] = bool(self.glass_var.get())
+        if hasattr(self, "obs_var"):
+            self.settings["obs_browser_source"] = bool(self.obs_var.get())
         # 换日时间
-        # 换日时间（滑块 0~23 点，完全自定义）
+        _ro_changed = False
         try:
-            _new_ro = int(self.rollover_var.get()) % 24 if hasattr(self, "rollover_var") else 0
+            if hasattr(self, "rollover_var"):
+                _new_ro = int(self.rollover_var.get()) % 24
+                _ro_changed = int(self.settings.get("rollover_hour", 0) or 0) != _new_ro
+                self.settings["rollover_hour"] = _new_ro
         except Exception:
-            _new_ro = 0
-        _ro_changed = int(self.settings.get("rollover_hour", 0) or 0) != _new_ro
-        self.settings["rollover_hour"] = _new_ro
-
-        # 全局热键
-        if hasattr(self, "hotkey_var"):
-            self.settings["hotkey"] = self.hotkey_var.get()
-
+            pass
         # 统计条显示哪几个格子
         _bar = dict(self.settings.get("stat_bar") or {})
         _slots_changed = False
@@ -1858,39 +1896,70 @@ class MainApp(ctk.CTk):
                 _slots_changed = True
             _bar["show_" + _key] = _newv
         self.settings["stat_bar"] = _bar
+        return _ro_changed, _slots_changed
 
-        config_manager.save_settings(self.settings)
-
-        # 热键立即生效
+    def _apply_live_settings(self):
+        """把设置同步到正在运行的检测器（立即生效）"""
         try:
-            self._apply_hotkey()
+            if self.detector:
+                self.detector.settings = self.settings
+                self.detector.change_threshold = float(self.settings.get("change_threshold", 4.0))
+                self.detector.tracker.end_window = float(self.settings.get("event_end_window", 1.5))
+                self.detector.ocr_interval = float(self.settings.get("ocr_interval", 250)) / 1000.0
         except Exception:
             pass
-        # 换日时间：立即按新设置重算当前属于哪一天
-        if _ro_changed:
-            try:
-                self.stats.rollover_hour = _new_ro
-                self.stats.check_day()
-                self._prev_list_sig = None
-                self._refresh_ui()
-            except Exception:
-                pass
-        # 统计条格子变化：重开统计条让它生效
-        if _slots_changed:
-            try:
-                if self.stat_bar is not None and self.stat_bar.winfo_exists():
-                    self.on_stat_bar_toggle()
-                    self.on_stat_bar_toggle()
-            except Exception:
-                pass
 
-        # 应用到正在运行的检测器
-        if self.detector:
-            self.detector.settings = self.settings  # 识别开关、自动登记等直接读 settings
-            self.detector.change_threshold = float(self.settings.get("change_threshold", 4.0))
-            self.detector.tracker.end_window = float(self.settings.get("event_end_window", 1.5))
-            self.detector.ocr_interval = float(self.settings.get("ocr_interval", 250)) / 1000.0
-        messagebox.showinfo("已保存", "设置已保存并生效。\n（背景色 / 强调色等外观设置，会在下次启动程序时显示）")
+    def _on_any_setting_change(self, *_a):
+        """任何设置一改：立刻写进 settings、立刻保存、立刻生效（不需要点保存按钮）"""
+        try:
+            _ro_changed, _slots_changed = self._collect_settings()
+            config_manager.save_settings(self.settings)
+            self._apply_live_settings()
+            try:
+                self._apply_hotkey()
+            except Exception:
+                pass
+            if _ro_changed:
+                try:
+                    self.stats.rollover_hour = int(self.settings.get("rollover_hour", 0) or 0)
+                    if self.stats.check_day():
+                        self._prev_list_sig = None
+                        self._refresh_ui()
+                        self._rebuild_records()
+                except Exception:
+                    pass
+            if _slots_changed:
+                self._rebuild_stat_bar()
+        except Exception:
+            pass
+
+    def _rebuild_stat_bar(self):
+        """统计条开着时，重开一次让「显示哪几个格子」立即生效"""
+        try:
+            if self.stat_bar is not None and self.stat_bar.winfo_exists():
+                self.on_stat_bar_toggle()
+                self.on_stat_bar_toggle()
+        except Exception:
+            pass
+
+    def _on_tick_change(self, _e=None):
+        """检测间隔输入框：边打字边保存（防抖 0.5 秒）"""
+        try:
+            if getattr(self, "_tick_after", None):
+                try:
+                    self.after_cancel(self._tick_after)
+                except Exception:
+                    pass
+            self._tick_after = self.after(500, self._on_any_setting_change)
+        except Exception:
+            pass
+
+    def on_save_settings(self):
+        """兼容旧逻辑：手动保存一次（现在设置本来就是即时生效的）"""
+        try:
+            self._on_any_setting_change()
+        except Exception:
+            pass
 
     # ---- 通用卡片 ----
 
