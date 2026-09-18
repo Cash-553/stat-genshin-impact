@@ -705,8 +705,12 @@ class MainApp(ctk.CTk):
 
     # ---------- 自定义背景（图片铺底 + 毛玻璃侧边栏）----------
 
-    def _on_resize(self, event):
+    def _on_resize(self, event=None):
         """窗口尺寸变化时（去抖）重新生成背景，避免频繁重绘"""
+        # <Configure> 绑在窗口上时，子控件的尺寸变化也会冒泡到这里，
+        # 只处理窗口本身的变化（否则一切换页面就重算一遍背景，很卡）
+        if event is not None and getattr(event, "widget", None) is not self:
+            return
         if getattr(self, "_resize_after", None):
             try:
                 self.after_cancel(self._resize_after)
@@ -714,32 +718,104 @@ class MainApp(ctk.CTk):
                 pass
         self._resize_after = self.after(150, self._apply_background)
 
-    def _apply_background(self):
-        """根据设置应用背景：自定义图片铺底（可选毛玻璃侧边栏），无图用纯色"""
+    def _bg_clear(self):
+        """清掉上一次贴的背景层（图片对象也要一起放掉，否则会泄漏）"""
         for w in getattr(self, "_bg_layers", []):
             try:
                 w.destroy()
             except Exception:
                 pass
         self._bg_layers = []
+        self._bg_photos = []
 
-        img_path = self.settings.get("bg_image")
-        has_img = bool(img_path) and Path(img_path).exists()
-        glass = bool(self.settings.get("sidebar_glass", True)) and has_img
-
-        # 侧边栏：毛玻璃时透明（由图片层模拟磨砂），否则默认色
+    def _bg_visible_containers(self):
+        """需要显示背景图的容器：内容区 + 当前已经显示的页面"""
+        out = []
+        c = getattr(self, "content", None)
         try:
-            self.sidebar.configure(fg_color="transparent" if glass else SIDEBAR)
+            if c is not None and c.winfo_exists() and c.winfo_ismapped():
+                out.append(c)
         except Exception:
             pass
+        for f in getattr(self, "_pages", {}).values():
+            try:
+                if f is not None and f.winfo_exists() and f.winfo_ismapped():
+                    out.append(f)
+            except Exception:
+                pass
+        return out
 
-        if not has_img:
+    def _paint_bg_slice(self, container, img_full, blur=False, darken=0.0):
+        """把背景图上「container 所在的这一块」贴进 container 里面。
+
+        为什么要这么做：CustomTkinter 里 fg_color="transparent" 并不是真透明，
+        而是把父容器的底色填进去，所以只把图垫在窗口最底下是永远看不见的。
+        这里把对应的图片切片贴进容器内部，并抬到「容器自己的底色层」之上、
+        其它控件之下 —— 于是容器空着的地方就露出背景图，卡片和文字照常盖在上面。
+        """
+        from PIL import Image, ImageTk
+        if not container.winfo_exists():
             return
+        cw = container.winfo_width()
+        ch = container.winfo_height()
+        if cw < 2 or ch < 2:
+            return
+        # 容器相对窗口的位置，用来从整图里裁出对应的那一块
+        ox = container.winfo_rootx() - self.winfo_rootx()
+        oy = container.winfo_rooty() - self.winfo_rooty()
+        crop = Image.new("RGB", (cw, ch), (0, 0, 0))
+        sx, sy = max(0, ox), max(0, oy)
+        ex = min(img_full.width, ox + cw)
+        ey = min(img_full.height, oy + ch)
+        if ex > sx and ey > sy:
+            crop.paste(img_full.crop((sx, sy, ex, ey)), (sx - ox, sy - oy))
+        if blur:
+            from PIL import ImageFilter
+            crop = crop.filter(ImageFilter.GaussianBlur(14))
+        if darken > 0:
+            crop = Image.blend(crop, Image.new("RGB", crop.size, (12, 12, 14)), darken)
+
+        photo = ImageTk.PhotoImage(crop)
+        self._bg_photos.append(photo)
+        lbl = tk.Label(container, image=photo, bd=0, highlightthickness=0)
+        lbl.place(x=0, y=0, relwidth=1, relheight=1)
+        canvas = getattr(container, "_canvas", None)
         try:
+            if canvas is not None and canvas.winfo_exists():
+                # 只压过容器自己的底色画布，其它控件（按钮/卡片/文字）仍在它上面
+                lbl.lift(canvas)
+            else:
+                lbl.lower()
+        except Exception:
+            pass
+        self._bg_layers.append(lbl)
+
+    def _apply_background(self):
+        """根据设置应用背景：自定义图片铺底（可选毛玻璃侧边栏），无图用纯色"""
+        if getattr(self, "_bg_busy", False):
+            return
+        self._bg_busy = True
+        try:
+            self._bg_clear()
+
+            img_path = self.settings.get("bg_image")
+            has_img = bool(img_path) and Path(img_path).exists()
+            glass = bool(self.settings.get("sidebar_glass", True)) and has_img
+
+            # 侧边栏：毛玻璃时露出图片（模糊压暗），否则用默认纯色
+            try:
+                self.sidebar.configure(fg_color="transparent" if glass else SIDEBAR)
+            except Exception:
+                pass
+
+            if not has_img:
+                return
+
             from PIL import Image, ImageTk
-            img = Image.open(img_path).convert("RGB")
+            self.update_idletasks()
             w = max(100, self.winfo_width())
             h = max(100, self.winfo_height())
+            img = Image.open(img_path).convert("RGB")
             # cover 缩放：铺满窗口并居中裁剪
             scale = max(w / img.width, h / img.height)
             img = img.resize(
@@ -750,39 +826,29 @@ class MainApp(ctk.CTk):
             y = (img.height - h) // 2
             img = img.crop((x, y, x + w, y + h))
 
-            # 背景层（垫在所有控件下面）
+            # 1) 整窗铺一张底图
             photo = ImageTk.PhotoImage(img)
-            self._bg_photo = photo
+            self._bg_photos.append(photo)
             lbl = tk.Label(self, image=photo, bd=0, highlightthickness=0)
             lbl.place(x=0, y=0, relwidth=1, relheight=1)
             lbl.lower()
             self._bg_layers.append(lbl)
 
-            # 毛玻璃侧边栏：背景图模糊 + 压暗，模拟磨砂效果
-            if glass:
-                self._apply_sidebar_glass(img)
-        except Exception:
-            pass
+            # 2) 内容区 + 已经显示的页面：各贴一块对应位置的切片
+            for c in self._bg_visible_containers():
+                self._paint_bg_slice(c, img)
 
-    def _apply_sidebar_glass(self, bg_img):
-        """左侧栏毛玻璃：取背景图左半部分，模糊+压暗后铺在侧边栏底部"""
-        try:
-            from PIL import Image, ImageTk, ImageFilter
-            sw = 180
-            sh = max(100, self.winfo_height())
-            crop = bg_img.crop((0, 0, min(sw, bg_img.width), min(sh, bg_img.height)))
-            crop = crop.resize((sw, sh), Image.LANCZOS)
-            crop = crop.filter(ImageFilter.GaussianBlur(14))
-            overlay = Image.new("RGB", crop.size, (12, 12, 14))
-            crop = Image.blend(crop, overlay, 0.55)  # 压暗，保证文字可读
-            photo = ImageTk.PhotoImage(crop)
-            self._sb_photo = photo
-            lbl = tk.Label(self.sidebar, image=photo, bd=0, highlightthickness=0)
-            lbl.place(x=0, y=0, relwidth=1, relheight=1)
-            lbl.lower()
-            self._bg_layers.append(lbl)
-        except Exception:
-            pass
+            # 3) 左侧栏毛玻璃：同一块图模糊 + 压暗，保证上面文字看得清
+            if glass:
+                self._paint_bg_slice(self.sidebar, img, blur=True, darken=0.55)
+        except Exception as e:
+            # 不要静默失败：记下来，方便排查（以前这里被吞掉，
+            # 导致「背景图没效果」这种问题很难查）
+            import traceback
+            self._bg_error = traceback.format_exc()
+            print("[背景图] 应用失败:", e)
+        finally:
+            self._bg_busy = False
 
     # ---- 页面：启动（默认首页）----
 
@@ -2098,6 +2164,9 @@ class MainApp(ctk.CTk):
         self._ensure_page(key)
         for k, f in getattr(self, "_pages", {}).items():
             self._grid_page(f, k == key)
+        # 页面刚显示出来才有真实尺寸，这时候补贴一次背景图切片
+        if self.settings.get("bg_image"):
+            self._apply_background()
         for k, btn in self.nav_btns.items():
             if k == key:
                 btn.configure(fg_color=NAV_ON, text_color=ACCENT, font=(FONT, 16, "bold"))
