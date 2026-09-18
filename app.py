@@ -76,6 +76,23 @@ def fmt_time(seconds):
     return f"{h:02d}:{m:02d}:{s:02d}"
 
 
+# ================= 全局热键 =================
+# 名称 -> (修饰键, 虚拟键码)；None 表示不启用
+# 修饰键：MOD_ALT=0x0001, MOD_CONTROL=0x0002；MOD_NOREPEAT=0x4000 由代码加上
+HOTKEY_CHOICES = ["关闭", "F8", "F9", "F10", "F11", "F12", "Ctrl+Alt+S"]
+HOTKEY_MAP = {
+    "关闭": None,
+    "F8": (0x0000, 0x77),
+    "F9": (0x0000, 0x78),
+    "F10": (0x0000, 0x79),
+    "F11": (0x0000, 0x7A),
+    "F12": (0x0000, 0x7B),
+    "Ctrl+Alt+S": (0x0002 | 0x0001, 0x53),
+}
+HOTKEY_ID = 0xA501
+WM_HOTKEY = 0x0312
+
+
 class MainApp(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -112,8 +129,8 @@ class MainApp(ctk.CTk):
         self._set_window_icon()
         self._enable_taskbar()
         # 窗口每次显示（含从托盘恢复）都重新确保任务栏按钮；启动后再补几次，防时机问题
-        self.bind("<Map>", lambda e: (self.after(100, self._enable_taskbar), self.after(100, self._install_wndproc)))
-        self.after(300, lambda: (self._enable_taskbar(), self._install_wndproc()))
+        self.bind("<Map>", lambda e: self.after(100, self._setup_window_extras))
+        self.after(300, self._setup_window_extras)
         self.after(1200, self._enable_taskbar)
         self._drag_x = 0
         self._drag_y = 0
@@ -126,7 +143,12 @@ class MainApp(ctk.CTk):
         self._detect_err_streak = 0
 
         self.settings = config_manager.load_settings()
-        self.stats = DailyStats()
+        # 换日时间（0=自然日；4=凌晨4点换日，挂过零点不会突然归零）
+        try:
+            _ro = int(self.settings.get("rollover_hour", 0))
+        except Exception:
+            _ro = 0
+        self.stats = DailyStats(rollover_hour=_ro)
         self.detector = None          # 开始监测时才创建
         self.monitoring = False
         self.stat_bar = None          # 横向统计条窗口
@@ -205,6 +227,108 @@ class MainApp(ctk.CTk):
                 self._orig_wndproc = 0
         except Exception:
             pass
+
+    # ---------- 全局热键 ----------
+
+    def _install_hotkey_proc(self):
+        """子类化窗口过程，只处理 WM_HOTKEY。
+
+        注意：这里【不拦截】任何其它消息，全部原样转发给 Tk，
+        所以不会影响任务栏最小化/还原等系统行为。
+        """
+        if getattr(self, "_hk_proc_done", False):
+            return
+        try:
+            import ctypes
+            u = ctypes.windll.user32
+            u.SetWindowLongPtrW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
+            u.SetWindowLongPtrW.restype = ctypes.c_void_p
+            u.CallWindowProcW.argtypes = [
+                ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_longlong,
+            ]
+            u.CallWindowProcW.restype = ctypes.c_longlong
+            hwnd = int(self.winfo_id())
+            if not hwnd:
+                return
+            WNDPROC = ctypes.WINFUNCTYPE(
+                ctypes.c_longlong, ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_longlong,
+            )
+
+            def _proc(h, msg, wparam, lparam):
+                # ctypes 回调里绝对不能抛异常（会 fail-fast 闪退）
+                try:
+                    if msg == WM_HOTKEY:
+                        try:
+                            self.after(0, self._on_hotkey)
+                        except Exception:
+                            pass
+                        return 0
+                except Exception:
+                    pass
+                try:
+                    return u.CallWindowProcW(self._hk_orig, h, msg, wparam, lparam)
+                except Exception:
+                    return 0
+
+            cb = WNDPROC(_proc)
+            self._hk_cb = cb          # 保持引用，防回收
+            old = u.SetWindowLongPtrW(hwnd, -4, ctypes.cast(cb, ctypes.c_void_p))
+            if not old:
+                return
+            self._hk_orig = old
+            self._hk_proc_done = True
+        except Exception:
+            pass
+
+    def _uninstall_hotkey_proc(self):
+        try:
+            if getattr(self, "_hk_orig", 0):
+                import ctypes
+                u = ctypes.windll.user32
+                u.SetWindowLongPtrW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
+                u.SetWindowLongPtrW.restype = ctypes.c_void_p
+                u.SetWindowLongPtrW(int(self.winfo_id()), -4, self._hk_orig)
+                self._hk_orig = 0
+                self._hk_proc_done = False
+        except Exception:
+            pass
+
+    def _apply_hotkey(self):
+        """按设置注册/注销全局热键"""
+        try:
+            import ctypes
+            u = ctypes.windll.user32
+            hwnd = int(self.winfo_id())
+            if not hwnd:
+                return
+            if getattr(self, "_hotkey_vk", None):
+                try:
+                    u.UnregisterHotKey(ctypes.c_void_p(hwnd), HOTKEY_ID)
+                except Exception:
+                    pass
+                self._hotkey_vk = None
+            spec = HOTKEY_MAP.get(self.settings.get("hotkey", "关闭"))
+            if not spec:
+                return
+            mods, vk = spec
+            ok = u.RegisterHotKey(ctypes.c_void_p(hwnd), HOTKEY_ID, mods | 0x4000, vk)
+            if ok:
+                self._hotkey_vk = vk
+        except Exception:
+            pass
+
+    def _on_hotkey(self):
+        """按下全局热键：开始 / 停止监测"""
+        try:
+            self.on_start_stop()
+        except Exception:
+            pass
+
+    def _setup_window_extras(self):
+        """窗口显示后要做的几件事（任务栏样式 + 热键）"""
+        self._enable_taskbar()
+        self._install_hotkey_proc()
+        self._apply_hotkey()
 
     def _hwnd_top(self):
         """返回【真正的顶层窗口】句柄。
@@ -817,6 +941,24 @@ class MainApp(ctk.CTk):
         self.bar_opacity_slider.set(_cur_op)
         self.bar_opacity_slider.pack(side="left", fill="x", expand=True)
         self.bar_opacity_label.configure(text=f"{int(round(_cur_op * 100))}%")
+
+        # ---- 子选项：显示哪几个格子 ----
+        slot_card = self._make_card(page)
+        slot_card.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        ctk.CTkLabel(slot_card, text="📶 显示哪几个格子", font=(FONT, 17, "bold"),
+                     text_color=ACCENT).pack(anchor="w", padx=20, pady=(14, 2))
+        ctk.CTkLabel(slot_card, text="不想显示的直接关掉即可（改完点下面的「保存设置」生效）。",
+                     font=(FONT, 15), text_color=DIM).pack(anchor="w", padx=20, pady=(0, 8))
+        _bar = self.settings.get("stat_bar") or {}
+        self._slot_vars = {}
+        for _key, _name in (("slot1", "💰 摩拉"), ("slot2", "⚔ 材料"), ("slot3", "💠 狗粮")):
+            _v = ctk.BooleanVar(value=bool(_bar.get("show_" + _key, True)))
+            ctk.CTkSwitch(
+                slot_card, text=_name, variable=_v, onvalue=True, offvalue=False,
+                font=(FONT, 16), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
+            ).pack(anchor="w", padx=20, pady=(2, 2))
+            self._slot_vars[_key] = _v
+        ctk.CTkFrame(slot_card, height=10, fg_color="transparent").pack()
         return page
 
     def _on_bar_opacity_change(self, value):
@@ -1102,6 +1244,24 @@ class MainApp(ctk.CTk):
             card4, text="开启", variable=self.only_foreground_var, onvalue=True, offvalue=False,
             font=(FONT, 15), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
         ).pack(anchor="w", padx=20, pady=(0, 12))
+
+        self._setting_row(card4, "换日时间", "几点算新的一天。挂机挂过零点的话，设成凌晨 4 点就不会中途归零")
+        _cur_ro = int(self.settings.get("rollover_hour", 0)) if str(self.settings.get("rollover_hour", 0)).lstrip("-").isdigit() else 0
+        _ro_label = {0: "0 点", 2: "凌晨 2 点", 4: "凌晨 4 点", 6: "凌晨 6 点"}
+        self.rollover_var = ctk.StringVar(value=_ro_label.get(_cur_ro, "0 点"))
+        ctk.CTkSegmentedButton(
+            card4, values=list(_ro_label.values()), variable=self.rollover_var,
+            font=(FONT, 13), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
+            text_color=TEXT, text_color_disabled=DIM,
+        ).pack(padx=20, pady=(0, 12))
+
+        self._setting_row(card4, "全局热键（开始/停止监测）", "按一下就能开始或停止监测，打游戏时不用切回窗口")
+        self.hotkey_var = ctk.StringVar(value=str(self.settings.get("hotkey", "关闭")))
+        ctk.CTkSegmentedButton(
+            card4, values=HOTKEY_CHOICES, variable=self.hotkey_var,
+            font=(FONT, 13), fg_color=BTN, selected_color=ACCENT, selected_hover_color=ACCENT_DARK,
+            text_color=TEXT, text_color_disabled=DIM,
+        ).pack(padx=20, pady=(0, 12))
 
         # ---- 6. 外观（切到「外观」标签）----
         scroll = self._settings_tabs["外观"]; r = 0
@@ -1394,6 +1554,17 @@ class MainApp(ctk.CTk):
         except Exception as e:
             messagebox.showerror("失败", f"采集失败：{e}")
 
+    def _open_data_dir(self):
+        """打开程序旁边的 data 文件夹（托盘菜单用）"""
+        import os
+        try:
+            from paths import app_dir
+            d = app_dir() / "data"
+            d.mkdir(parents=True, exist_ok=True)
+            os.startfile(str(d))
+        except Exception:
+            pass
+
     def _on_open_dataset(self):
         import os
         try:
@@ -1517,7 +1688,52 @@ class MainApp(ctk.CTk):
         self.settings["bg_image"] = self.settings.get("bg_image", "")
         self.settings["sidebar_glass"] = bool(self.glass_var.get())
         self.settings["obs_browser_source"] = bool(self.obs_var.get())
+
+        # 换日时间
+        _ro_back = {"0 点": 0, "凌晨 2 点": 2, "凌晨 4 点": 4, "凌晨 6 点": 6}
+        _new_ro = _ro_back.get(self.rollover_var.get(), 0) if hasattr(self, "rollover_var") else 0
+        _ro_changed = int(self.settings.get("rollover_hour", 0) or 0) != _new_ro
+        self.settings["rollover_hour"] = _new_ro
+
+        # 全局热键
+        if hasattr(self, "hotkey_var"):
+            self.settings["hotkey"] = self.hotkey_var.get()
+
+        # 统计条显示哪几个格子
+        _bar = dict(self.settings.get("stat_bar") or {})
+        _slots_changed = False
+        for _key, _var in getattr(self, "_slot_vars", {}).items():
+            _newv = bool(_var.get())
+            if bool(_bar.get("show_" + _key, True)) != _newv:
+                _slots_changed = True
+            _bar["show_" + _key] = _newv
+        self.settings["stat_bar"] = _bar
+
         config_manager.save_settings(self.settings)
+
+        # 热键立即生效
+        try:
+            self._apply_hotkey()
+        except Exception:
+            pass
+        # 换日时间：立即按新设置重算当前属于哪一天
+        if _ro_changed:
+            try:
+                self.stats.rollover_hour = _new_ro
+                self.stats.check_day()
+                self._prev_list_sig = None
+                self._refresh_ui()
+            except Exception:
+                pass
+        # 统计条格子变化：重开统计条让它生效
+        if _slots_changed:
+            try:
+                if self.stat_bar is not None and self.stat_bar.winfo_exists():
+                    self.on_stat_bar_toggle()
+                    self.on_stat_bar_toggle()
+            except Exception:
+                pass
+
         # 应用到正在运行的检测器
         if self.detector:
             self.detector.settings = self.settings  # 识别开关、自动登记等直接读 settings
@@ -1603,6 +1819,14 @@ class MainApp(ctk.CTk):
             for action in self.tray.poll():
                 if action == "show":
                     self.show_main()
+                elif action == "start":
+                    if not self.monitoring:
+                        self.start_monitor()
+                elif action == "stop":
+                    if self.monitoring:
+                        self.stop_monitor()
+                elif action == "open_data":
+                    self._open_data_dir()
                 elif action == "exit":
                     self.on_exit()
 
@@ -1611,6 +1835,16 @@ class MainApp(ctk.CTk):
 
             # 4. 开发者选项：把后台算好的样本统计显示出来（不阻塞）
             self._apply_dev_stats()
+
+            # 5. 跨过「换日时间」就自动换日（挂过零点也不会一直算同一天）
+            try:
+                if self.stats.check_day():
+                    self._prev_list_sig = None
+                    self._refresh_ui()
+                    if "records" in getattr(self, "_pages", {}):
+                        self._rebuild_records()
+            except Exception:
+                pass
         except Exception:
             pass
         # 界面刷新频率固定 200ms（检测频率由后台线程控制）
@@ -2241,6 +2475,10 @@ class MainApp(ctk.CTk):
 
     def on_exit(self):
         # 先恢复原窗口过程（防止销毁过程中回调悬空导致闪退）
+        try:
+            self._uninstall_hotkey_proc()
+        except Exception:
+            pass
         try:
             self._uninstall_wndproc()
         except Exception:

@@ -87,9 +87,12 @@ class StatBar(ctk.CTkToplevel):
     # ---------- 界面 ----------
 
     def _build(self):
-        # 三格：摩拉 / 材料 / 狗粮
+        # 三格：摩拉 / 材料 / 狗粮（可以在设置里关掉某几格）
         specs = [("slot1", "摩拉"), ("slot2", "材料"), ("slot3", "狗粮")]
+        s = self.settings_provider() or {}
         for key, title in specs:
+            if not bool(s.get("show_" + key, True)):
+                continue          # 这一格被关掉了
             cell = ctk.CTkFrame(self, fg_color=CARD, corner_radius=RADIUS_CARD, width=126, height=112,
                                border_width=1, border_color=BORDER)
             cell.pack(side="left", padx=5, pady=8)
