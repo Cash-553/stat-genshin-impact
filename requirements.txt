@@ -1,9 +1,27 @@
+# StatGI 运行依赖
+# 说明：下面写的是开发时实测通过的版本（>= 表示不低于该版本）
+#
+# 安装：pip install -r requirements.txt
+
+# 屏幕捕捉
 mss>=10.0
+
+# 图像处理
 pillow>=10.0
 numpy>=1.24
 opencv-python-headless>=4.8
-rapidocr-onnxruntime>=1.3
-customtkinter>=5.2
+
+# 文字识别（离线中文 OCR，不需要 GPU）
+rapidocr-onnxruntime>=1.2.3
+onnxruntime>=1.16          # rapidocr / AI 主界面判断用
+
+# 界面
+customtkinter>=6.0         # 半透明玻璃背景用到了 6.0 的内部结构
+packaging>=23.0            # customtkinter 的依赖，打包时容易被漏掉，这里显式写上
+
+# 托盘 / 直播接口
 pystray>=0.19
 flask>=3.0
+
+# 打包成 exe（只有自己打包时才需要）
 pyinstaller>=6.0
