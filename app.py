@@ -1530,6 +1530,13 @@ class MainApp(ctk.CTk):
         except Exception:
             frame = None
         self._pages[key] = frame
+        # 页面构建时是直接 grid() 显示自己的；后台预建时如果不立刻藏起来，
+        # 最后建的那页会盖在最上面（表现为：导航停在「启动」，内容却是「设置」）
+        if frame is not None and key != getattr(self, "_current_page", None):
+            try:
+                frame.grid_remove()
+            except Exception:
+                pass
         return frame
 
     def _show_page(self, key):
