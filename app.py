@@ -55,6 +55,8 @@ ACCENT = theme.ACCENT
 ACCENT_DARK = theme.ACCENT_DARK
 TEXT = theme.TEXT
 DIM = theme.DIM
+# 开关「关闭」时的轨道颜色（灰色，这样一眼能看出开/关）
+SWITCH_OFF = "#5A5A5A"
 GOOD = theme.GOOD
 BAD = theme.BAD
 NAV_ON = theme.NAV_ON
@@ -867,8 +869,8 @@ class MainApp(ctk.CTk):
 
         self.clear_dd = FloatingDropdown(
             card, values=["清空今日数据", "清空监测时间", "清空数据和时间"],
-            height=34, font_size=14)
-        self.clear_dd.configure(width=190)
+            height=34, font_size=14, min_width=110)
+        self.clear_dd.configure(width=176)
         self.clear_dd.set("清空今日数据")
         self.clear_dd.pack(side="right", padx=(8, 0), pady=9)
         self.clear_choice = self.clear_dd._var      # 兼容旧引用
@@ -1102,7 +1104,7 @@ class MainApp(ctk.CTk):
             _v = ctk.BooleanVar(value=bool(_bar.get("show_" + _key, True)))
             ctk.CTkSwitch(
                 slot_card, text=_name, variable=_v, onvalue=True, offvalue=False,
-                font=(FONT, 16), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
+                font=(FONT, 16), fg_color=SWITCH_OFF, progress_color=ACCENT, text_color=TEXT,
                 command=self._on_any_setting_change,
             ).pack(anchor="w", padx=20, pady=(2, 2))
             self._slot_vars[_key] = _v
@@ -1297,10 +1299,10 @@ class MainApp(ctk.CTk):
         t = self._settings_tabs["识别"]
 
         h = self._make_setting_card(t, "⏱", "检测间隔", "每多少毫秒检查一次画面（10~5000，默认 50）")
-        self.tick_entry = ctk.CTkEntry(h, font=(FONT, 14), height=34,
+        self.tick_entry = ctk.CTkEntry(h, font=(FONT, 14), height=34, width=104,
                                        fg_color=CARD_INNER, text_color=TEXT, border_color=BTN_HOVER)
         self.tick_entry.insert(0, str(int(self.settings.get("tick_interval", 50))))
-        self.tick_entry.pack(fill="x")
+        self.tick_entry.pack(side="right")
         self.tick_entry.bind("<KeyRelease>", self._on_tick_change)
         self.tick_entry.bind("<FocusOut>", self._on_any_setting_change)
 
@@ -1327,7 +1329,7 @@ class MainApp(ctk.CTk):
         h = self._make_setting_card(t, "➕", "自动登记新材料", "遇到材料库里没有的名字时自动加进材料库")
         self.auto_reg_var = ctk.BooleanVar(value=bool(self.settings.get("auto_register_material", True)))
         ctk.CTkSwitch(h, text="", variable=self.auto_reg_var, onvalue=True, offvalue=False,
-                      width=54, fg_color=ACCENT, progress_color=ACCENT_DARK,
+                      width=54, fg_color=SWITCH_OFF, progress_color=ACCENT,
                       command=self._on_any_setting_change).pack(side="right")
 
         # ================= 统计 =================
@@ -1350,7 +1352,7 @@ class MainApp(ctk.CTk):
         h = self._make_setting_card(t, "🎯", "只在原神前台时识别", "切到别的应用就暂停，回到原神自动继续")
         self.only_foreground_var = ctk.BooleanVar(value=bool(self.settings.get("only_foreground", True)))
         ctk.CTkSwitch(h, text="", variable=self.only_foreground_var, onvalue=True, offvalue=False,
-                      width=54, fg_color=ACCENT, progress_color=ACCENT_DARK,
+                      width=54, fg_color=SWITCH_OFF, progress_color=ACCENT,
                       command=self._on_any_setting_change).pack(side="right")
 
         # 换日时间：输入框（自己填 0~23）
@@ -1359,11 +1361,11 @@ class MainApp(ctk.CTk):
             _ro = int(self.settings.get("rollover_hour", 0)) % 24
         except Exception:
             _ro = 0
-        self.rollover_entry = ctk.CTkEntry(h, font=(FONT, 14), height=34, width=90,
+        self.rollover_entry = ctk.CTkEntry(h, font=(FONT, 14), height=34, width=84,
                                            fg_color=CARD_INNER, text_color=TEXT, border_color=BTN_HOVER)
         self.rollover_entry.insert(0, str(_ro))
-        self.rollover_entry.pack(side="left", fill="x", expand=True)
-        ctk.CTkLabel(h, text="点", font=(FONT, 14), text_color=DIM).pack(side="left", padx=(8, 0))
+        ctk.CTkLabel(h, text="点", font=(FONT, 14), text_color=DIM).pack(side="right")
+        self.rollover_entry.pack(side="right", padx=(0, 6))
         self.rollover_var = ctk.StringVar(value=str(_ro))
 
         def _ro_edit(_e=None):
@@ -1467,7 +1469,7 @@ class MainApp(ctk.CTk):
             ctk.CTkLabel(row, text=tip, font=(FONT, 12), text_color=DIM, anchor="w").pack(
                 side="left", padx=(10, 0))
             ctk.CTkSwitch(row, text="", variable=var, onvalue=True, offvalue=False,
-                          width=54, fg_color=ACCENT, progress_color=ACCENT_DARK,
+                          width=54, fg_color=SWITCH_OFF, progress_color=ACCENT,
                           command=self._on_any_setting_change).pack(side="right")
         ctk.CTkFrame(parent, height=8, fg_color="transparent").pack()
 
@@ -1496,7 +1498,7 @@ class MainApp(ctk.CTk):
                      font=(FONT, 12), text_color=DIM).pack(side="left", padx=(10, 0))
         self.glass_var = ctk.BooleanVar(value=bool(self.settings.get("sidebar_glass", True)))
         ctk.CTkSwitch(row2, text="", variable=self.glass_var, onvalue=True, offvalue=False,
-                      width=54, fg_color=ACCENT, progress_color=ACCENT_DARK,
+                      width=54, fg_color=SWITCH_OFF, progress_color=ACCENT,
                       command=self._on_any_setting_change).pack(side="right")
 
     def _build_obs_body(self, parent):
@@ -1507,7 +1509,7 @@ class MainApp(ctk.CTk):
         row.pack(fill="x", padx=14, pady=(0, 10))
         self.obs_var = ctk.BooleanVar(value=bool(self.settings.get("obs_browser_source", False)))
         ctk.CTkSwitch(row, text="开启", variable=self.obs_var, onvalue=True, offvalue=False,
-                      font=(FONT, 14), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
+                      font=(FONT, 14), fg_color=SWITCH_OFF, progress_color=ACCENT, text_color=TEXT,
                       command=self._toggle_obs_source).pack(side="left")
         api_port = int(self.settings.get("api_port", 8765))
         self._obs_addr_label = ctk.CTkLabel(row, text=f"http://127.0.0.1:{api_port}/overlay",
@@ -1623,7 +1625,8 @@ class MainApp(ctk.CTk):
             holder.pack(fill="x", padx=14, pady=(0, 10))
         else:
             # 固定宽度 + 不许子控件撑大：这样每张卡片右边的控件都能对齐
-            holder.configure(width=300, height=44)
+            # 宽度调窄一些（原来 300 太宽），输入框/下拉看起来更紧凑
+            holder.configure(width=178, height=44)
             holder.pack_propagate(False)
             holder.pack(side="right", padx=(10, 14), pady=9)
         ic.pack(side="left", padx=(14, 12), pady=9)
@@ -1673,7 +1676,7 @@ class MainApp(ctk.CTk):
         self.dataset_enabled_var = ctk.BooleanVar(value=bool(self.settings.get("dataset_enabled", False)))
         ctk.CTkSwitch(
             card, text="启用样本采集", variable=self.dataset_enabled_var, onvalue=True, offvalue=False,
-            font=(FONT, 15), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
+            font=(FONT, 15), fg_color=SWITCH_OFF, progress_color=ACCENT, text_color=TEXT,
         ).pack(anchor="w", padx=20, pady=(0, 6))
 
         # 保存位置

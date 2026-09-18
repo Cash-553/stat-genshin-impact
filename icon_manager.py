@@ -87,7 +87,7 @@ class IconManagerWindow(ctk.CTkToplevel):
         ctk.CTkSwitch(
             bottom, text="统计条置顶显示", variable=self.topmost_var,
             onvalue=True, offvalue=False, command=self.on_toggle_topmost,
-            font=(FONT, 15), fg_color=ACCENT, progress_color=ACCENT_DARK, text_color=TEXT,
+            font=(FONT, 15), fg_color="#5A5A5A", progress_color=ACCENT, text_color=TEXT,
         ).pack(anchor="w")
 
         ctk.CTkLabel(
