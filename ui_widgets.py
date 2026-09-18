@@ -29,10 +29,15 @@ ARROW_RIGHT = "▸"
 
 
 class FloatingDropdown(ctk.CTkFrame):
-    """自定义浮动选择下拉（不是原生下拉框）"""
+    """自定义浮动选择下拉（不是原生下拉框）
+
+    性能要点（避免卡顿/拖影）：
+    - 浮层的控件【只创建一次】，之后只是 place / place_forget，不再反复建控件
+    - 浮层用【窗口内叠加层】，不开独立小窗口，避免跨窗口重绘残留
+    """
 
     def __init__(self, master, values, variable=None, command=None,
-                 height=34, font_size=14, placeholder="请选择"):
+                 height=34, font_size=14, placeholder="请选择", min_width=120):
         super().__init__(master, fg_color=theme.BTN, corner_radius=theme.RADIUS_BTN,
                          height=height, cursor="hand2")
         self.pack_propagate(False)
@@ -43,15 +48,16 @@ class FloatingDropdown(ctk.CTkFrame):
         self._font_size = font_size
         self._placeholder = placeholder
         self._popup = None
+        self._items = []
         self._bound = False
-        self._head_h = height
+        self._min_width = min_width
 
         self._lbl = ctk.CTkLabel(self, text="", font=(FONT, font_size),
                                  text_color=theme.TEXT, anchor="w")
-        self._lbl.pack(side="left", fill="x", expand=True, padx=(12, 0))
+        self._lbl.pack(side="left", fill="x", expand=True, padx=(11, 0))
         self._arrow = ctk.CTkLabel(self, text=ARROW_DOWN, font=(FONT, font_size),
-                                   text_color=theme.DIM, width=22)
-        self._arrow.pack(side="right", padx=(0, 9))
+                                   text_color=theme.DIM, width=20)
+        self._arrow.pack(side="right", padx=(0, 8))
 
         for w in (self, self._lbl, self._arrow):
             try:
@@ -59,6 +65,25 @@ class FloatingDropdown(ctk.CTkFrame):
             except Exception:
                 pass
         self._sync()
+
+    # ---------- 工具 ----------
+
+    def _host(self):
+        """拿到根窗口（浮层要放在它上面）。
+
+        注意：不能用 winfo_toplevel()，CustomTkinter 覆盖了 _root 属性，
+        会让 tkinter 的 nametowidget 偶发报错。
+        """
+        w = self
+        try:
+            for _ in range(32):
+                m = getattr(w, "master", None)
+                if m is None:
+                    break
+                w = m
+        except Exception:
+            pass
+        return w
 
     # ---------- 显示 ----------
 
@@ -72,6 +97,7 @@ class FloatingDropdown(ctk.CTkFrame):
 
     def set_values(self, values):
         self._values = [str(v) for v in values]
+        self._popup = None
 
     def get(self):
         return self._var.get()
@@ -83,81 +109,86 @@ class FloatingDropdown(ctk.CTkFrame):
             pass
         self._sync()
 
-    # ---------- 浮层 ----------
+    # ---------- 浮层（只建一次，之后复用）----------
+
+    def _ensure_popup(self):
+        if self._popup is not None:
+            return
+        try:
+            host = self._host()
+        except Exception:
+            return
+        pop = ctk.CTkFrame(host, fg_color=theme.CARD, corner_radius=8,
+                           border_width=1, border_color=theme.BORDER,
+                           width=max(self.winfo_width(), self._min_width), height=96)
+        pop.pack_propagate(False)     # CustomTkinter 的 place 不接受 width/height，
+                                      # 尺寸必须在控件创建时定好
+        self._items = []
+        for v in self._values:
+            b = ctk.CTkButton(
+                pop, text="　" + v, anchor="w", font=(FONT, self._font_size),
+                fg_color="transparent", hover_color=theme.BTN_HOVER,
+                text_color=theme.TEXT, corner_radius=6, height=28,
+                command=lambda vv=v: self._select(vv),
+            )
+            b.pack(fill="x", padx=5, pady=1)
+            self._items.append((v, b))
+        self._popup = pop
 
     def _on_click(self, _e=None):
-        if self._popup is not None:
+        if self._popup is not None and self._popup.winfo_ismapped():
             self._close()
         else:
             self._open()
 
     def _open(self):
-        if self._popup is not None or not self._values:
+        if not self._values:
+            return
+        self._ensure_popup()
+        if self._popup is None:
             return
         try:
-            top = ctk.CTkToplevel(self)
-            top.overrideredirect(True)
-            top.configure(fg_color=theme.CARD)
-            try:
-                top.attributes("-topmost", True)
-            except Exception:
-                pass
-            try:
-                top.attributes("-toolwindow", True)   # 不进任务栏 / Alt+Tab
-            except Exception:
-                pass
-
-            self.update_idletasks()
-            item_h = 32
-            n = len(self._values)
-            w = max(self.winfo_width(), 150)
-            h = item_h * n + 12
-            x = self.winfo_rootx()
-            y = self.winfo_rooty() + self.winfo_height() + 4
-            try:
-                sh = self.winfo_screenheight()
-                if y + h > sh - 10:                    # 下面放不下就往上翻
-                    y = max(10, self.winfo_rooty() - h - 4)
-            except Exception:
-                pass
-            top.geometry(f"{int(w)}x{int(h)}+{int(x)}+{int(y)}")
-
+            # 刷新每个选项的选中状态
             cur = str(self._var.get())
-            for v in self._values:
+            for v, b in self._items:
                 sel = (v == cur)
-                b = ctk.CTkButton(
-                    top, text=("✓ " if sel else "　") + v, anchor="w",
-                    font=(FONT, self._font_size),
-                    fg_color=(theme.ACCENT if sel else "transparent"),
-                    hover_color=(theme.ACCENT_DARK if sel else theme.BTN_HOVER),
-                    text_color=("#FFFFFF" if sel else theme.TEXT),
-                    corner_radius=6, height=item_h - 4,
-                    command=lambda vv=v: self._select(vv),
-                )
-                b.pack(fill="x", padx=6, pady=2)
-
-            self._popup = top
-            try:
-                self._arrow.configure(text=ARROW_UP, text_color=theme.ACCENT)
-            except Exception:
-                pass
-            # 稍微延后再挂"点外面关闭"，避免刚点开就被这次点击关掉
+                b.configure(text=("✓ " if sel else "　") + v,
+                            fg_color=(theme.ACCENT if sel else "transparent"),
+                            hover_color=(theme.ACCENT_DARK if sel else theme.BTN_HOVER),
+                            text_color=("#FFFFFF" if sel else theme.TEXT))
+            self.update_idletasks()
+            host = self._host()
+            w = max(self.winfo_width(), self._min_width)
+            h = 28 * len(self._items) + 12
+            x = self.winfo_rootx() - host.winfo_rootx()
+            y = self.winfo_rooty() - host.winfo_rooty() + self.winfo_height() + 3
+            if y + h > host.winfo_height() - 4:          # 下面放不下就往上翻
+                y = max(2, self.winfo_rooty() - host.winfo_rooty() - h - 3)
+            self._popup.configure(width=w, height=h)
+            self._popup.place(x=x, y=y)
+            self._popup.lift()
+            self._arrow.configure(text=ARROW_UP, text_color=theme.ACCENT)
             self.after(60, self._bind_outside)
         except Exception:
-            self._popup = None
+            pass
 
     def _bind_outside(self):
-        if self._popup is None or self._bound:
+        if self._bound:
             return
         try:
-            self._root = self.winfo_toplevel()
+            self._root = self._host()
             self._root.bind_all("<Button-1>", self._on_global_click, add="+")
+            self._root.bind_all("<MouseWheel>", self._on_scroll_close, add="+")
             self._bound = True
         except Exception:
             pass
 
+    def _on_scroll_close(self, _e=None):
+        """滚动时关掉浮层（否则会和内容脱节）"""
+        self._close()
+
     def _on_global_click(self, event):
-        if self._popup is None:
+        if self._popup is None or not self._popup.winfo_ismapped():
             return
         try:
             px, py = self._popup.winfo_rootx(), self._popup.winfo_rooty()
@@ -188,15 +219,15 @@ class FloatingDropdown(ctk.CTkFrame):
         try:
             if self._bound:
                 self._root.unbind_all("<Button-1>")
+                self._root.unbind_all("<MouseWheel>")
                 self._bound = False
         except Exception:
             pass
         try:
             if self._popup is not None:
-                self._popup.destroy()
+                self._popup.place_forget()
         except Exception:
             pass
-        self._popup = None
         try:
             self._arrow.configure(text=ARROW_DOWN, text_color=theme.DIM)
         except Exception:
