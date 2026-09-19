@@ -20,6 +20,7 @@ from qt_theme import (panel_alpha, label_qss, btn_qss, entry_qss, combo_qss,
                       slider_qss, scroll_qss, rgba)
 import qt_theme as T
 import config_manager
+import qt_notice
 from qt_widgets import (Card, SettingRow, Switch, Accordion, ButtonRow, heading,
                         level_name, level_value)
 
@@ -1449,6 +1450,167 @@ def _qt_key_name(e):
 
 
 # ============================================================
+#  公告（左侧栏那个入口点进来的是这一页，不是弹窗）
+# ============================================================
+class PageNotice(BasePage):
+    """公告页：列出全部公告（最新在最上面），点标题就地展开看全文
+
+    往期公告也在这一页 —— 列表里往下翻就是了。
+    未读的标题前面带个红点，点开就算读过。
+    """
+
+    title = "公告"
+
+    def __init__(self, win):
+        super().__init__(win)
+        self.state = win.state
+        self.notices = []
+        self._cards = []
+
+        # 顶部：条数 + 全部已读 + 刷新
+        bar = QHBoxLayout()
+        self.count_label = QLabel("")
+        self.count_label.setStyleSheet(label_qss(T.DIM, 12))
+        bar.addWidget(self.count_label)
+        bar.addStretch(1)
+        self.read_all_btn = QPushButton("全部标为已读")
+        self.read_all_btn.setFixedHeight(30)
+        self.read_all_btn.setCursor(Qt.PointingHandCursor)
+        self.read_all_btn.setStyleSheet(btn_qss("normal", self.alpha))
+        self.read_all_btn.clicked.connect(self._mark_all)
+        bar.addWidget(self.read_all_btn)
+        self.refresh_btn = QPushButton("↻ 刷新")
+        self.refresh_btn.setFixedHeight(30)
+        self.refresh_btn.setCursor(Qt.PointingHandCursor)
+        self.refresh_btn.setStyleSheet(btn_qss("normal", self.alpha))
+        self.refresh_btn.clicked.connect(self._refresh_online)
+        bar.addWidget(self.refresh_btn)
+        self.v.addLayout(bar)
+
+        # 滚动区放公告列表
+        sc = QScrollArea()
+        sc.setWidgetResizable(True)
+        sc.setFrameShape(QFrame.NoFrame)
+        sc.setStyleSheet(scroll_qss())
+        sc.viewport().setAutoFillBackground(False)
+        inner = QWidget()
+        inner.setStyleSheet("background: transparent;")
+        self.list_lay = QVBoxLayout(inner)
+        self.list_lay.setContentsMargins(0, 0, 10, 0)
+        self.list_lay.setSpacing(8)
+        self.list_lay.addStretch(1)
+        sc.setWidget(inner)
+        self.scroll = sc
+        self.add(sc, 1)
+
+        self.empty = QLabel("（还没有公告）")
+        self.empty.setStyleSheet(label_qss(T.DIM, 14))
+        self.empty.setAlignment(Qt.AlignCenter)
+        self.list_lay.insertWidget(0, self.empty)
+
+        self.set_notices(qt_notice.load_all())
+
+    # ---------- 数据 ----------
+    def set_notices(self, notices):
+        """重建列表。公告本来就不多（几十条以内），整表重建够用，
+        而且只在「切到本页/拉到新公告/标记已读」时才发生 —— 不是每次数据变化都重建。"""
+        self.notices = list(notices or [])
+        for w in self._cards:
+            self.list_lay.removeWidget(w)
+            w.setParent(None)
+            w.deleteLater()
+        self._cards = []
+
+        unread = qt_notice.unread_count(self.notices, self.state.settings)
+        self.empty.setVisible(not self.notices)
+        self.count_label.setText(
+            f"共 {len(self.notices)} 条" + (f"，{unread} 条未读" if unread else ""))
+
+        for i, n in enumerate(self.notices):
+            card = self._make_card(n)
+            self.list_lay.insertWidget(i, card)
+            self._cards.append(card)
+
+    def _make_card(self, n):
+        """一条公告 = 一个折叠区，点标题展开看全文"""
+        body = QWidget()
+        bv = QVBoxLayout(body)
+        bv.setContentsMargins(0, 2, 0, 0)
+        bv.setSpacing(6)
+        txt = QLabel(str(n.get("body", "")))
+        txt.setWordWrap(True)
+        txt.setStyleSheet(label_qss(T.TEXT, 13))
+        bv.addWidget(txt)
+        url = str(n.get("url", "") or "").strip()
+        if url:
+            b = QPushButton("打开链接")
+            b.setFixedHeight(30)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setStyleSheet(btn_qss("accent", self.alpha))
+            b.clicked.connect(lambda _=False, u=url: __import__("webbrowser").open(u))
+            bv.addWidget(b, alignment=Qt.AlignLeft)
+
+        tm = str(n.get("time", "") or "").strip()
+        desc = (f"{tm}　" if tm else "") + (
+            "● 未读" if qt_notice.is_unread(n, self.state.settings) else "已读")
+        acc = Accordion(self, "📢", str(n.get("title", "")), desc, body,
+                        alpha=self.alpha)
+
+        # 展开就算读过了
+        def _toggle(opened, notice=n):
+            if opened:
+                qt_notice.mark_read(
+                    notice, self.state.settings,
+                    lambda s: self.state.set_setting("read_notices", s.get("read_notices", [])))
+                self._sync_unread()
+        acc._on_toggle = _toggle
+        return acc
+
+    def _sync_unread(self):
+        """只更新未读标记和计数，不重建列表"""
+        unread = qt_notice.unread_count(self.notices, self.state.settings)
+        self.count_label.setText(
+            f"共 {len(self.notices)} 条" + (f"，{unread} 条未读" if unread else ""))
+        for card, n in zip(self._cards, self.notices):
+            tm = str(n.get("time", "") or "").strip()
+            card.desc_label.setText(
+                (f"{tm}　" if tm else "") +
+                ("● 未读" if qt_notice.is_unread(n, self.state.settings) else "已读"))
+        try:
+            self.win.sidebar.set_notice_unread(unread > 0)
+        except Exception:
+            pass
+
+    def _mark_all(self):
+        qt_notice.mark_all_read(
+            self.notices, self.state.settings,
+            lambda s: self.state.set_setting("read_notices", s.get("read_notices", [])))
+        self._sync_unread()
+
+    def _refresh_online(self):
+        """手动重新拉一次（带 ?t= 绕开 CDN 缓存）"""
+        self.refresh_btn.setEnabled(False)
+        self.refresh_btn.setText("拉取中…")
+        self._fetcher = qt_notice.NoticeFetcher()
+        self._fetcher.done.connect(self._on_refreshed)
+        self._fetcher.start(bust_cache=True)
+
+    def _on_refreshed(self, notices):
+        self.refresh_btn.setEnabled(True)
+        self.refresh_btn.setText("↻ 刷新")
+        if notices:
+            self.set_notices(notices)
+            QMessageBox.information(self, "已刷新", f"拉到 {len(notices)} 条公告。")
+        else:
+            QMessageBox.information(self, "刷新失败", "没拉到公告（可能是网络问题）。\n"
+                                                      "显示的还是上次缓存的内容。")
+
+    def on_show(self):
+        # 切到本页时重新读一次（可能后台刚拉到新的）
+        self.set_notices(qt_notice.load_all())
+
+
+# ============================================================
 def right_wrap(*widgets):
     """把几个控件包成一个整体，好塞进 SettingRow 的右边"""
     w = QWidget()
@@ -1461,5 +1623,12 @@ def right_wrap(*widgets):
 
 
 def build_pages(win):
+    """页面顺序要和侧栏对应：
+       0 启动  1 今日统计  2 收益统计条  3 收益记录  4 设置  5 公告
+       前 5 个是侧栏导航项，「公告」是单独那个入口（在导航下面）"""
     return [PageLaunch(win), PageHome(win), PageBar(win),
-            PageRecords(win), PageSettings(win)]
+            PageRecords(win), PageSettings(win), PageNotice(win)]
+
+
+# 公告页在栈里的下标（侧栏那个「公告」按钮要用）
+NOTICE_PAGE_INDEX = 5
