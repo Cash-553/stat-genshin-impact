@@ -1,7 +1,0 @@
-{
-  "id": "2026-09-20-v09",
-  "title": "StatGI v0.9 已发布",
-  "body": "本次更新：\n\n· 新增「公告」功能 —— 以后有什么说明，不开新版也能通知到大家\n· 背景色 / 强调色的切换更顺了\n· 设置项整理归类，找起来更方便\n· 修复了打包版托盘和任务栏图标不对的问题\n\n如果你在使用中遇到问题，欢迎到 GitHub Issues 反馈。",
-  "url": "https://github.com/Cash-553/stat-genshin-impact/releases",
-  "level": "info"
-}

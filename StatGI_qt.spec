@@ -7,9 +7,10 @@
 from PyInstaller.utils.hooks import collect_all
 
 datas = [('icons', 'icons'), ('models', 'models'), ('app_icon.ico', '.'),
-         # 内置公告：远程（Gitee / GitHub）都拉不到时，用它兜底
-         # 见 statgi_qt/qt_notice.py
-         ('notice.json', '.')]
+         # 内置公告：远程（Gitee / GitHub）都拉不到时，用它兜底。
+         # 源文件在 发布版\公告\ 里，打包后落在 _internal\notice.json
+         # （这个路径同时也是仓库里给 raw 地址读的那份 —— 见 qt_notice.NOTICE_REL）
+         ('发布版/公告/notice.json', '.')]
 binaries = []
 hiddenimports = []
 

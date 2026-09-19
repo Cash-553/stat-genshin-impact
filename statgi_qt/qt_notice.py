@@ -11,38 +11,51 @@
 设计要点：
   · **全程静默**：拉不到就当没有公告，绝不弹错误、不影响任何功能
   · **缓存上次拉到的**：断网时还能看到上次那份（存 data/notice_cache.json）
-  · **已读记录**：读过哪个 id 记在设置里，不重复提醒（小红点靠它判断）
-  · **手动刷新**：加 ?t=时间戳 绕开 CDN 缓存（自动拉时不加，免得每次都穿透缓存）
+  · **已读记录**：读过哪些 id 记在设置里，不重复提醒（小红点靠它判断）
+  · **多条历史**：一个文件里存着全部公告，程序里能翻往期
+
+数据格式（发布版/公告/notice.json）：
+    {
+      "notices": [
+        {"id": "2026-09-20-1", "title": "...", "body": "...",
+         "url": "...", "time": "2026-09-20 23:10"},
+        ...
+      ]
+    }
+    最新的放**最前面**（程序直接按顺序显示）。
+    也兼容旧的单条格式（{"id":..., "title":...}），会自动当成只有一条。
 
 怎么发一条新公告：
-    把新的 notice.json 传到 Gitee 仓库（覆盖旧的）就行，
-    注意 id 要换一个新的（比如 2026-09-21-1），不然用户那边会被当成读过的。
+    双击 发布版\\公告\\公告编辑器.bat —— 填完点发布就行。
 """
 import json
-import os
+import sys
 import threading
 import time
+import urllib.parse
 import urllib.request
 
 from PySide6.QtCore import QObject, Signal
 
 import paths
 
+# ---- 公告文件在仓库里的位置（相对仓库根目录）----
+# 发布版/ 在 .gitignore 里，但「公告」这个子文件夹专门放行了
+# （程序是从 raw 地址拉公告的，不在仓库里就拉不到）
+NOTICE_REL = "发布版/公告/notice.json"
+
+_REPO_PATH = urllib.parse.quote(NOTICE_REL)          # 中文路径要转义才能进 URL
+
 # ---- 公告来源（按顺序试，谁通用谁）----
 # 改这里就能加源 / 换源。以后哪家不稳了，加一行就行。
 #
 # 为什么 Gitee 写两条：
 #   gitee.com/.../raw/... 会 302 跳到 raw.giteeusercontent.com。
-#   正常情况下 urllib 会自动跟跳转，但万一哪天跳转出问题，
-#   直连那条还能用 —— 两条一样的文件，多一条不亏。
-GITEE = "https://gitee.com/Cash553/stat-genshin-impact/raw/main/notice.json"
-GITEE_DIRECT = "https://raw.giteeusercontent.com/Cash553/stat-genshin-impact/raw/main/notice.json"
-GITHUB = "https://raw.githubusercontent.com/Cash-553/stat-genshin-impact/main/notice.json"
-
+#   正常情况 urllib 会自动跟跳转，但万一跳转出问题，直连那条还能用。
 NOTICE_SOURCES = [
-    GITEE,           # 1) Gitee 主源（国内快）
-    GITEE_DIRECT,    # 2) Gitee 直连（跳转失灵时兜底）
-    GITHUB,          # 3) GitHub raw（最后）
+    f"https://gitee.com/Cash553/stat-genshin-impact/raw/main/{_REPO_PATH}",
+    f"https://raw.giteeusercontent.com/Cash553/stat-genshin-impact/raw/main/{_REPO_PATH}",
+    f"https://raw.githubusercontent.com/Cash-553/stat-genshin-impact/main/{_REPO_PATH}",
 ]
 
 TIMEOUT = 6                       # 单个源最多等几秒
@@ -58,30 +71,62 @@ def cache_file():
 
 
 def builtin_file():
-    """程序内置的那份（打包时带进去的）"""
-    return paths.resource_file("notice.json")
+    """程序内置的那份公告
+
+    · 打包版：在 _MEIPASS 里（spec 的 datas 把 发布版/公告/notice.json
+      打成了 _internal/notice.json），所以用 resource_file()
+    · 源码模式：直接读仓库里那份（发布版/公告/notice.json）
+    """
+    if getattr(sys, "frozen", False):
+        return paths.resource_file("notice.json")
+    return paths.app_dir() / NOTICE_REL
 
 
-def _valid(d):
-    """公告格式检查 —— 不合规的直接丢掉，别让界面显示一半坏数据"""
+def parse(raw):
+    """把文件内容变成「公告列表」，最新的在前
+
+    兼容两种格式：
+      {"notices": [ {...}, {...} ]}   多条（现在用的）
+      {"id": ..., "title": ...}       单条（旧格式，当成只有一条）
+    不合规的条目直接丢掉 —— 宁可不显示，也不能显示一半坏数据。
+    """
+    try:
+        d = json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:
+        return []
     if not isinstance(d, dict):
-        return False
-    if not str(d.get("id", "")).strip():
-        return False
-    if not str(d.get("title", "")).strip():
-        return False
-    return True
+        return []
+
+    items = d.get("notices")
+    if not isinstance(items, list):
+        items = [d]                       # 旧格式：整个对象就是一条
+
+    out = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        nid = str(it.get("id", "")).strip()
+        title = str(it.get("title", "")).strip()
+        if not nid or not title:
+            continue
+        out.append({
+            "id": nid,
+            "title": title,
+            "body": str(it.get("body", "") or ""),
+            "url": str(it.get("url", "") or "").strip(),
+            "time": str(it.get("time", "") or "").strip(),
+        })
+    return out
 
 
 def _load_file(p):
     try:
         if p.exists():
             with open(p, "r", encoding="utf-8") as f:
-                d = json.load(f)
-            return d if _valid(d) else None
+                return parse(f.read())
     except Exception:
         pass
-    return None
+    return []
 
 
 def load_cached():
@@ -94,12 +139,17 @@ def load_builtin():
     return _load_file(builtin_file())
 
 
-def save_cache(d):
+def load_all(settings=None):
+    """给界面用：缓存 > 内置。返回公告列表（最新在前）"""
+    return load_cached() or load_builtin()
+
+
+def save_cache(notices):
     try:
         p = cache_file()
         p.parent.mkdir(parents=True, exist_ok=True)
         with open(p, "w", encoding="utf-8") as f:
-            json.dump(d, f, ensure_ascii=False, indent=2)
+            json.dump({"notices": notices}, f, ensure_ascii=False, indent=2)
     except Exception:
         pass
 
@@ -111,48 +161,23 @@ def _fetch_one(url, bust_cache=False):
     req = urllib.request.Request(u, headers=UA)
     with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
         raw = resp.read().decode("utf-8", errors="replace")
-    d = json.loads(raw)
-    return d if _valid(d) else None
+    return parse(raw)
 
 
 def fetch(bust_cache=False):
-    """按顺序试每个源，返回 (公告dict 或 None, 命中的源地址)
+    """按顺序试每个源，返回 (公告列表, 命中的源地址)
 
-    全失败返回 (None, None) —— 调用方不用管错误，静默处理就行。
+    全失败返回 ([], None) —— 调用方不用管错误，静默处理就行。
     """
     for url in NOTICE_SOURCES:
-        if not url or "changeme" in url:
-            continue                       # 还没填用户名，跳过
         try:
-            d = _fetch_one(url, bust_cache)
-            if d:
-                save_cache(d)              # 拉到就缓存一份，断网时还能看
-                return d, url
+            lst = _fetch_one(url, bust_cache)
+            if lst:
+                save_cache(lst)               # 拉到就缓存，断网时还能看
+                return lst, url
         except Exception:
-            continue                       # 这个源不行就试下一个
-    return None, None
-
-
-def fetch_async(callback):
-    """后台线程里拉，结果用 Qt 信号发回主线程
-
-    ⚠ 为什么不能直接 callback(notice)：
-    这个函数是在后台线程里跑的，直接调回调就等于**在别的线程里碰控件** ——
-    Qt 会崩或者行为不定（检测更新那儿我踩过一次）。
-    Qt 信号跨线程是安全的：emit 之后会自动排队到主线程执行。
-    """
-    fetcher = NoticeFetcher()
-    fetcher.done.connect(callback)
-    fetcher.start()
-    return fetcher
-
-
-def refresh_async(callback):
-    """手动刷新：带 ?t= 绕开 CDN 缓存"""
-    fetcher = NoticeFetcher()
-    fetcher.done.connect(callback)
-    fetcher.start(bust_cache=True)
-    return fetcher
+            continue                          # 这个源不行就试下一个
+    return [], None
 
 
 # ------------------------------------------------------------
@@ -161,8 +186,12 @@ class NoticeFetcher(QObject):
 
     用法：
         f = NoticeFetcher()
-        f.done.connect(收到公告的函数)     # 参数是 公告dict 或 None
+        f.done.connect(收到公告的函数)     # 参数是 公告列表（可能为空）
         f.start()
+
+    ⚠ 为什么用信号而不是直接回调：这个类的活儿在后台线程跑，
+    直接调回调就等于在别的线程里碰 Qt 控件 —— 会崩。
+    信号跨线程是安全的（emit 之后 Qt 自动排队到主线程）。
     """
 
     done = Signal(object)
@@ -171,41 +200,70 @@ class NoticeFetcher(QObject):
         threading.Thread(target=self._work, args=(bust_cache,), daemon=True).start()
 
     def _work(self, bust_cache):
-        d = None
+        lst = []
         try:
+            global _fetching
             with _lock:
-                global _fetching
                 if _fetching:
                     return                    # 已经有一个在拉了，别重复发请求
                 _fetching = True
             try:
-                d, _src = fetch(bust_cache=bust_cache)
+                lst, _src = fetch(bust_cache=bust_cache)
             except Exception:
-                d = None
+                lst = []
             finally:
                 with _lock:
                     _fetching = False
         finally:
-            # 不管成没成都要发信号，界面好把按钮恢复
             try:
-                self.done.emit(d)
+                self.done.emit(lst)
             except Exception:
                 pass
 
 
 # ------------------------------------------------------------
+def read_ids(settings):
+    """已经读过的公告 id 集合"""
+    v = (settings or {}).get("read_notices", [])
+    if isinstance(v, str):
+        v = [v]
+    return set(str(x) for x in v) if isinstance(v, list) else set()
+
+
 def is_unread(notice, settings):
-    """这条公告用户读过没有"""
     if not notice:
         return False
-    return str(notice.get("id", "")) != str(settings.get("last_read_notice", ""))
+    return str(notice.get("id", "")) not in read_ids(settings)
+
+
+def unread_count(notices, settings):
+    rd = read_ids(settings)
+    return sum(1 for n in (notices or []) if str(n.get("id", "")) not in rd)
 
 
 def mark_read(notice, settings, save):
-    """标记为已读（存 id）"""
+    """标记某条为已读"""
     if not notice:
         return
-    settings["last_read_notice"] = str(notice.get("id", ""))
+    nid = str(notice.get("id", ""))
+    if not nid:
+        return
+    ids = read_ids(settings)
+    if nid in ids:
+        return
+    ids.add(nid)
+    # 只留最近 200 条，免得设置文件无限长大
+    settings["read_notices"] = sorted(ids)[-200:]
+    try:
+        save(settings)
+    except Exception:
+        pass
+
+
+def mark_all_read(notices, settings, save):
+    ids = read_ids(settings)
+    ids |= set(str(n.get("id", "")) for n in (notices or []))
+    settings["read_notices"] = sorted(ids)[-200:]
     try:
         save(settings)
     except Exception:

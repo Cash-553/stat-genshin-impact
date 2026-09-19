@@ -14,11 +14,11 @@ import os
 from PySide6.QtCore import Qt, QRectF, QRect, QPoint, QTimer
 from PySide6.QtGui import QPainter, QPainterPath, QPixmap, QColor, QIcon
 from PySide6.QtWidgets import (QWidget, QFrame, QLabel, QPushButton, QVBoxLayout,
-                               QHBoxLayout, QStackedWidget, QMessageBox, QDialog,
-                               QTextEdit)
+                               QHBoxLayout, QStackedWidget, QMessageBox)
 
 import config_manager
 import paths
+from qt_pages import NOTICE_PAGE_INDEX
 from qt_theme import (HEADER, RADIUS_WINDOW, panel_alpha, label_qss, rgba,
                       btn_qss)
 import qt_theme as T
@@ -172,7 +172,7 @@ class Sidebar(QFrame):
         self.set_active(0)
 
     def _on_notice_click(self):
-        fn = getattr(self.win, "show_notice", None)
+        fn = getattr(self.win, "show_notice_page", None)
         if callable(fn):
             fn()
 
@@ -269,6 +269,7 @@ class MainWindow(QWidget):
         self.hotkey = None
         self.bar_window = None
         self.icon_dialog = None
+        self.notices = []
         self.api_server = None
         self._quitting = False
 
@@ -324,8 +325,17 @@ class MainWindow(QWidget):
             self.api_server = None
             log_exc("qt_window 直播接口")
 
-        # 公告：后台静默拉一次
-        # 拉到了就更新启动页那张卡片；拉不到什么都不做 ——
+        # 公告：先用本地已有的（缓存 / 内置）初始化一次。
+        # 这样「还没拉回来」和「拉不到」的时候侧栏红点也是对的 ——
+        # 公告页显示了几条，侧栏就该反映几条，两边不能不一致。
+        try:
+            import qt_notice
+            self.set_notice(qt_notice.load_all())
+        except Exception:
+            log_exc("qt_window 公告初始化")
+
+        # 公告：再后台静默拉一次
+        # 拉到了就更新侧栏红点和公告页；拉不到什么都不做 ——
         # 公告是锦上添花，不能因为没网就弹错误打扰人。
         try:
             import qt_notice
@@ -336,87 +346,46 @@ class MainWindow(QWidget):
             self.notice_fetcher = None
             log_exc("qt_window 公告")
 
-    def _on_notice(self, notice):
+    def _on_notice(self, notices):
         """公告拉回来了（这里已经在主线程 —— 信号跨线程是安全的）"""
-        if not notice:
+        if not notices:
             return
         try:
-            self.set_notice(notice)
+            self.set_notice(notices)
+            # 公告页如果已经建好，顺手把列表也更新一下
+            pg = self.pages[NOTICE_PAGE_INDEX] if len(self.pages) > NOTICE_PAGE_INDEX else None
+            fn = getattr(pg, "set_notices", None)
+            if callable(fn):
+                fn(notices)
         except Exception:
             pass
 
     # ---------- 公告 ----------
-    def set_notice(self, n):
-        """记下当前公告，并更新侧栏那个未读小红点"""
-        self.notice = n
-        unread = False
+    def set_notice(self, notices):
+        """记下公告列表，并更新侧栏那个未读小红点"""
+        self.notices = list(notices or [])
+        unread = 0
         try:
             import qt_notice
-            unread = qt_notice.is_unread(n, self.state.settings)
+            unread = qt_notice.unread_count(self.notices, self.state.settings)
         except Exception:
             pass
         try:
-            self.sidebar.set_notice_unread(unread)
+            self.sidebar.set_notice_unread(unread > 0)
         except Exception:
             pass
 
-    def show_notice(self):
-        """点侧栏「公告」→ 弹窗看全文"""
-        n = getattr(self, "notice", None)
-        if not n:
-            QMessageBox.information(self, "公告", "暂时没有公告。")
+    def show_notice_page(self):
+        """点侧栏「公告」→ 切到公告页（不是弹窗）"""
+        done = self.stack.currentIndex() == NOTICE_PAGE_INDEX
+        if done:
+            # 已经在这一页了，再点一次就当作「刷新一下」
+            pg = self.pages[NOTICE_PAGE_INDEX]
+            fn = getattr(pg, "on_show", None)
+            if callable(fn):
+                fn()
             return
-
-        dlg = QDialog(self)
-        dlg.setWindowTitle("公告")
-        dlg.setMinimumWidth(540)
-        v = QVBoxLayout(dlg)
-        v.setContentsMargins(20, 18, 20, 16)
-        v.setSpacing(10)
-
-        t = QLabel(str(n.get("title", "公告")))
-        t.setStyleSheet(label_qss(T.ACCENT, 18, True))
-        t.setWordWrap(True)
-        v.addWidget(t)
-
-        body = QTextEdit()
-        body.setPlainText(str(n.get("body", "")))
-        body.setReadOnly(True)
-        body.setMinimumHeight(220)
-        body.setStyleSheet(
-            f"QTextEdit {{ background: {rgba('#FFFFFF', 18)}; color: {T.TEXT};"
-            f" border: none; border-radius: 8px; padding: 10px;"
-            f" font-family: 'Microsoft YaHei UI'; font-size: 13px; }}")
-        v.addWidget(body, 1)
-
-        row = QHBoxLayout()
-        url = str(n.get("url", "") or "").strip()
-        if url:
-            b_open = QPushButton("打开链接")
-            b_open.setFixedHeight(32)
-            b_open.setCursor(Qt.PointingHandCursor)
-            b_open.setStyleSheet(btn_qss("accent", self.alpha))
-            b_open.clicked.connect(lambda: __import__("webbrowser").open(url))
-            row.addWidget(b_open)
-        row.addStretch(1)
-        b_ok = QPushButton("知道了")
-        b_ok.setFixedSize(100, 32)
-        b_ok.setCursor(Qt.PointingHandCursor)
-        b_ok.setStyleSheet(btn_qss("normal", self.alpha))
-        b_ok.clicked.connect(dlg.accept)
-        row.addWidget(b_ok)
-        v.addLayout(row)
-
-        # 读过就记下 id，红点消失
-        try:
-            import qt_notice
-            qt_notice.mark_read(n, self.state.settings,
-                                lambda s: self.state.set_setting(
-                                    "last_read_notice", n.get("id", "")))
-        except Exception:
-            pass
-        self.set_notice(n)
-        dlg.exec()
+        self.show_page(NOTICE_PAGE_INDEX)
 
     def _api_data(self):
         snap = self.state.snapshot()
@@ -778,7 +747,9 @@ class MainWindow(QWidget):
 
     def show_page(self, idx):
         self.stack.setCurrentIndex(idx)
-        self.sidebar.set_active(idx)
+        # 公告页不在导航里（是侧栏下面那个单独入口），
+        # 所以在公告页时把导航的高亮全部清掉
+        self.sidebar.set_active(-1 if idx == NOTICE_PAGE_INDEX else idx)
         page = self.pages[idx]
         # 页面第一次显示时让它自己刷新一次（各页自己实现）
         fn = getattr(page, "on_show", None)
