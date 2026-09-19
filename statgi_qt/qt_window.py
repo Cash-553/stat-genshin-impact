@@ -252,8 +252,14 @@ class MainWindow(QWidget):
         # 托盘 + 全局热键
         try:
             from qt_tray import Tray, HotkeyManager
-            ico = paths.app_dir() / "app_icon.ico"
-            self.tray = Tray(self, ico, QIcon(str(ico)))
+            # 用 resource_file()，不能用 app_dir()：
+            # app_icon.ico 打包后在 _internal\ 里（= _MEIPASS），**不在 EXE 旁边**。
+            # 用 app_dir() 会找不到 → 托盘退回兜底图标、任务栏变成 Qt 默认图标。
+            ico = paths.resource_file("app_icon.ico")
+            icon = QIcon(str(ico)) if ico.exists() else QIcon()
+            if not icon.isNull():
+                self.setWindowIcon(icon)     # 任务栏 / Alt+Tab 用这个
+            self.tray = Tray(self, ico, icon)
             self.hotkey = HotkeyManager(self, self.state.toggle)
         except Exception:
             log_exc("qt_window 托盘/热键")

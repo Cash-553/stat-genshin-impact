@@ -38,9 +38,16 @@ def main():
     app.setApplicationName("StatGI")
 
     # 窗口 / 任务栏图标
-    ico = os.path.join(ROOT, "app_icon.ico")
-    if os.path.exists(ico):
-        app.setWindowIcon(QIcon(ico))
+    # 用 paths.resource_file()，不能自己拼路径：
+    # 打包后 app_icon.ico 在 _internal\ 里（= _MEIPASS），不在 EXE 旁边；
+    # 而且打包版没有 __file__ 可依赖，ROOT 算出来是错的。
+    try:
+        from paths import resource_file
+        ico = resource_file("app_icon.ico")
+        if ico.exists():
+            app.setWindowIcon(QIcon(str(ico)))
+    except Exception:
+        pass
 
     # 出错也记进 data/error.log（跟 Tk 版共用同一套）
     try:

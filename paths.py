@@ -45,3 +45,27 @@ def icons_dir() -> Path:
         base = getattr(sys, "_MEIPASS", str(exe_dir))
         return Path(base) / "icons"
     return Path(__file__).resolve().parent / "icons"
+
+
+def resource_file(name: str) -> Path:
+    """找一个「打包内置的单个文件」（比如 app_icon.ico）
+
+    为什么不能直接用 app_dir() / name：
+    PyInstaller 会把 spec 里 datas 指定的文件放到 **_MEIPASS** 里
+    （打包后就是 _internal\\ 文件夹），**不在 EXE 旁边**。
+    所以 app_dir() / "app_icon.ico" 在打包版里是找不到的 ——
+    托盘和任务栏就会用上兜底/默认图标。
+
+    查找顺序：
+      1. EXE 旁边（想换图标的话，直接放一个同名文件在这儿就行）
+      2. 打包内置的（_MEIPASS）
+      3. 源码模式：项目目录
+    """
+    exe_dir = app_dir()
+    p = exe_dir / name
+    if p.exists():
+        return p
+    if getattr(sys, "frozen", False):
+        base = Path(getattr(sys, "_MEIPASS", str(exe_dir)))
+        return base / name
+    return Path(__file__).resolve().parent / name
