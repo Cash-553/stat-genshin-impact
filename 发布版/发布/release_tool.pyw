@@ -28,19 +28,44 @@ import os
 import re
 import shutil
 import sys
+import traceback
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                                QLabel, QPlainTextEdit, QPushButton, QComboBox,
                                QMessageBox, QFileDialog)
 
-# 本文件在 发布版/ 里，往上一层是仓库根目录
-HERE = os.path.dirname(os.path.abspath(__file__))          # 发布版
-ROOT = os.path.dirname(HERE)                                # 仓库根
+HERE = os.path.dirname(os.path.abspath(__file__))
 
-VERSION_FILE = os.path.join(HERE, "公告", "version.json")
+
+def find_repo_root(start):
+    """往上找仓库根目录（有 statgi_qt/ 或 README.md 的那一层）
+
+    为什么要「找」而不是写死往上几层：
+    这个工具放在 发布版\\ 或 发布版\\发布\\ 里都可能（就被挪过一次），
+    写死相对层数的话一挪位置路径全错 —— 而 pythonw 不带控制台，
+    报错是**看不见**的，表现就是「双击没反应 / 只能开一次」。
+    """
+    p = os.path.abspath(start)
+    for _ in range(8):
+        if (os.path.isdir(os.path.join(p, "statgi_qt"))
+                or os.path.isfile(os.path.join(p, "README.md"))):
+            return p
+        up = os.path.dirname(p)
+        if up == p:
+            break
+        p = up
+    return None
+
+
+ROOT = find_repo_root(HERE)
+PUB = os.path.join(ROOT, "发布版") if ROOT else None
+VERSION_FILE = os.path.join(PUB, "公告", "version.json") if PUB else None
 # 分卷输出到这里：发布版\发布\v<版本号>\
-OUT_ROOT = os.path.join(HERE, "发布")
+OUT_ROOT = os.path.join(PUB, "发布") if PUB else None
+# 发布包（zip）放在 发布版\ 下
+ZIP_DIR = PUB
+
 CHUNK = 95 * 1024 * 1024        # 每块 95MB（Gitee 限制 100MB，留点余量）
 
 FONT = "Microsoft YaHei UI"
@@ -237,13 +262,13 @@ class Tool(QWidget):
         """扫 发布版\\StatGI_v*.zip"""
         got = []
         try:
-            for f in os.listdir(HERE):
+            for f in os.listdir(ZIP_DIR):
                 if not f.lower().endswith(".zip"):
                     continue
                 m = re.match(r"^StatGI_v(.+)\.zip$", f, re.I)
                 if not m:
                     continue
-                p = os.path.join(HERE, f)
+                p = os.path.join(ZIP_DIR, f)
                 got.append((m.group(1), p, os.path.getsize(p)))
         except Exception:
             pass
@@ -434,13 +459,52 @@ class Tool(QWidget):
 
 
 # ============================================================
+CRASH_LOG = os.path.join(HERE, "发布工具_报错.log")
+
+
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName("StatGI 发布工具")
+
+    if not ROOT:
+        QMessageBox.critical(
+            None, "找不到项目目录",
+            "这个工具必须放在 StatGI 项目里面（发布版\\ 或 发布版\\发布\\ 都行）。\n\n"
+            f"现在它在：\n{HERE}\n\n"
+            "它要找的是仓库根目录（有 statgi_qt 或 README.md 的那一层）。")
+        return 1
+
     w = Tool()
     w.show()
     return app.exec()
 
 
+def _entry():
+    """入口兜底：pythonw 没有控制台，出错必须写到文件里 + 弹个框
+
+    不然表现就是「双击没反应」，完全不知道哪里错了。
+    """
+    try:
+        return main()
+    except Exception:
+        tb = traceback.format_exc()
+        try:
+            with open(os.path.join(HERE, "发布工具_报错.log"), "w",
+                      encoding="utf-8") as f:
+                f.write(tb)
+        except Exception:
+            pass
+        try:
+            from PySide6.QtWidgets import QApplication as QA, QMessageBox as QB
+            app = QA.instance() or QA(sys.argv)
+            QB.critical(None, "发布工具出错了",
+                        "出错了，详情写在这里：\n"
+                        + os.path.join(HERE, "发布工具_报错.log")
+                        + "\n\n" + tb[-800:])
+        except Exception:
+            pass
+        return 1
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(_entry())
