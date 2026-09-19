@@ -1,6 +1,25 @@
 {
   "version": "0.8",
-  "notes": "修复了打包版托盘和任务栏图标不对的问题；检测更新不再受网络限流影响",
+  "notes": "修复了打包版托盘和任务栏图标不对的问题；检测更新不再受网络限流影响；新增自动更新",
   "url_github": "https://github.com/Cash-553/stat-genshin-impact/releases",
-  "url_gitee": ""
+  "url_gitee": "https://gitee.com/Cash553/stat-genshin-impact/releases",
+  "update": {
+    "size": 150155694,
+    "sha256": "f5c309256b1e5ae815b407207a9533fa423152033c106ccdf327e1549ba96f35",
+    "sources": [
+      {
+        "label": "Gitee（国内快）",
+        "parts": [
+          "https://gitee.com/Cash553/stat-genshin-impact/releases/download/v0.8/StatGI_v0.8.part1",
+          "https://gitee.com/Cash553/stat-genshin-impact/releases/download/v0.8/StatGI_v0.8.part2"
+        ]
+      },
+      {
+        "label": "GitHub",
+        "parts": [
+          "https://github.com/Cash-553/stat-genshin-impact/releases/download/v0.8/StatGI_v0.8.zip"
+        ]
+      }
+    ]
+  }
 }
