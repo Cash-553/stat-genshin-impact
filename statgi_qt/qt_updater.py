@@ -213,6 +213,27 @@ def prepare(update, on_log=None, on_progress=None):
 UPDATE_BAT = "更新.bat"
 
 
+def _oem_encoding():
+    """取系统控制台用的代码页（中文 Windows = 936 / GBK）
+
+    为什么要这个：cmd.exe 读 .bat 是按**控制台代码页**解析的。
+      · 文件按 UTF-8 写 → cmd 按 GBK 读 → 中文乱码，路径也会读错
+      · 文件按 GBK 写，但脚本开头 chcp 65001 → 一样会乱 ✗
+        （这个坑真踩过：chcp 切了之后连 robocopy 的路径都读错，
+          导致替换失败、走了还原流程）
+    正确做法：**文件按系统 OEM 代码页写，并且 chcp 切到同一个值**。
+    这样不是中文系统也能正常工作（英文系统 OEM 是 437）。
+    """
+    try:
+        import ctypes
+        cp = int(ctypes.windll.kernel32.GetOEMCP())
+        if cp > 0:
+            return f"cp{cp}", cp
+    except Exception:
+        pass
+    return "cp936", 936
+
+
 def write_updater(new_dir):
     """写好「更新.bat」—— 它负责等程序退出后替换文件、再打开程序
 
@@ -220,13 +241,10 @@ def write_updater(new_dir):
     """
     app = paths.app_dir()
     bat = app / UPDATE_BAT
-    # ⚠ 这个 bat 必须按 **GBK** 写盘：
-    #   cmd.exe 读 .bat 是按系统 OEM 代码页（中文系统就是 GBK）解析的，
-    #   写成 UTF-8 的话里面的中文会变成乱码 —— 命令本身还能跑，
-    #   但用户看到的提示全是乱码，甚至可能把某行解析坏。
-    # bat 里用相对路径（%~dp0），整个文件夹挪位置也不影响。
+    enc, cp = _oem_encoding()
+    # bat 里用相对路径（%~dp0），整个文件夹挪位置也不影响
     content = f'''@echo off
-chcp 65001 >nul
+chcp {cp} >nul
 title StatGI 正在更新
 cd /d "%~dp0"
 
@@ -280,7 +298,8 @@ rd /s /q "_backup" 2>nul
 start "" "StatGI.exe"
 exit /b
 '''
-    with open(bat, "w", encoding="gbk", errors="replace") as f:
+    # ⚠ 必须按 OEM 代码页写盘，不能写 UTF-8（见 _oem_encoding 的说明）
+    with open(bat, "w", encoding=enc, errors="replace", newline="\r\n") as f:
         f.write(content)
     return bat
 

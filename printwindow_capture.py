@@ -190,7 +190,7 @@ def enable_dpi_awareness(global_=False):
     """
     让 GetWindowRect/GetClientRect 返回物理像素（而不是被 DPI 虚拟化缩放过的值），
     否则高分屏上截出来的图和窗口实际大小不一致。
-    global_=False（默认）：只影响当前线程 —— 推荐，避免改动 Tkinter 主线程的布局。
+    global_=False（默认）：只影响当前线程 —— 推荐，不会干扰主线程的状态。
     global_=True ：整进程 Per-Monitor DPI Aware（可能影响 GUI 布局，慎用）。
     """
     global _g_dpi_aware_done

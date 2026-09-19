@@ -92,28 +92,7 @@ def log_exc(where=""):
 
 def install_hooks():
     """把「界面上没人管的异常」「后台线程里的异常」都记到文件里"""
-    # 1) Tkinter 回调里抛出来的
-    try:
-        import tkinter
-        _orig = tkinter.Tk.report_callback_exception
-
-        def _tk_hook(self, exc, val, tb):
-            try:
-                _write("[%s] 界面回调异常\n%s" % (
-                    time.strftime("%Y-%m-%d %H:%M:%S"),
-                    "".join(traceback.format_exception(exc, val, tb)).rstrip()))
-            except Exception:
-                pass
-            try:
-                _orig(self, exc, val, tb)
-            except Exception:
-                pass
-
-        tkinter.Tk.report_callback_exception = _tk_hook
-    except Exception:
-        pass
-
-    # 1.5) Qt 的消息/异常（Qt 版用；没装 PySide6 就跳过）
+    # 1) Qt 的消息/异常
     # 为什么需要：Python 异常如果发生在 Qt 的槽函数里，不一定走 sys.excepthook，
     # 而打包成窗口版后 stderr 是被丢掉的 —— 不钩的话等于什么都没记到，
     # 出了问题只能看到「程序闪退了」。QMessageHandler 是 Qt 唯一的出口。

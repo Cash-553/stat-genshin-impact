@@ -75,17 +75,17 @@ git 推两个地方是怎么配的
 
 怎么打包
 --------
-用根目录的 StatGI_qt.spec（跟 Tk 版的 StatGI.spec 是两份，互不影响）：
+用根目录的 StatGI.spec：
 
     cd E:\收益识别
-    python -m PyInstaller StatGI_qt.spec --noconfirm
+    python -m PyInstaller StatGI.spec --noconfirm
 
 打出来的在 dist\StatGI\，再复制到发布版文件夹，写好干净的
 config/settings.json、清掉 data\，最后压成 zip。
 
-打包入口是根目录的 **app_qt.py**（不是 statgi_qt/main.py）——
+打包入口是根目录的 **app.py**（不是 statgi_qt/main.py）——
 PyInstaller 要能分析到 qt_window / qt_pages 这些在子目录里的模块，
-app_qt.py 会把 statgi_qt 加进搜索路径，spec 的 pathex 也带了 'statgi_qt'。
+app.py 会把 statgi_qt 加进搜索路径，spec 的 pathex 也带了 'statgi_qt'。
 不加的话打出来的 exe 一启动就 ImportError。
 
 V0.8 打包结果（2026-09-19）：

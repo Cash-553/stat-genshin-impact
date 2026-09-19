@@ -19,7 +19,10 @@ import io
 import json
 import os
 import sys
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+# 用 reconfigure 而不是重新包一层 TextIOWrapper：
+# 包一层的话原来那个 sys.stdout 没人引用了，被 GC 掉时会
+# 顺手把底层的 buffer 关掉 —— 之后再 print 就报「I/O operation on closed file」
+sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 HERE = os.path.dirname(os.path.abspath(__file__))          # 发布版/公告
 ROOT = os.path.dirname(os.path.dirname(HERE))              # 仓库根目录
