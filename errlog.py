@@ -120,8 +120,15 @@ def install_hooks():
     try:
         from PySide6.QtCore import qInstallMessageHandler, QtMsgType
 
+        # 已知无害、但会刷屏的 Qt 警告 —— 记下来只会让人以为程序出问题了
+        _BENIGN = (
+            "QFont::setPointSize",      # Qt 内部对无效字号的抱怨，不影响显示
+        )
+
         def _qt_hook(mode, ctx, msg):
             try:
+                if any(b in str(msg) for b in _BENIGN):
+                    return
                 if mode in (QtMsgType.QtWarningMsg, QtMsgType.QtCriticalMsg,
                             QtMsgType.QtFatalMsg):
                     where = ""
