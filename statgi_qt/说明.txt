@@ -11,6 +11,50 @@ StatGI · Qt 版（新界面）
     cd E:\收益识别\statgi_qt
     python main.py
 
+怎么发一条公告（不用发新版）
+----------------------------
+1) 改根目录的 notice.json：
+
+    {
+      "id": "2026-09-25-1",     ← 必须换个新的 id！
+                                  不换的话用户那边以为是读过的，不提醒
+      "title": "标题",
+      "body": "正文，可以换行",
+      "url": "可选，点「打开链接」跳这里",
+      "level": "info"
+    }
+
+2) git push
+
+   → GitHub 和 Gitee 会同时更新（origin 配了两个推送地址）
+   → 用户下次启动就能看到（Gitee 服务端缓存 60~300 秒）
+
+**不用重新打包、不用发 Release、不用用户下载新版。**
+
+公告来源（qt_notice.py 里改，按顺序试，谁通用谁）：
+
+    1. Gitee raw             国内快，主源
+    2. Gitee 直连域名        跳转失灵时用
+    3. GitHub raw            最后
+    ────────────────
+    都没有 → 用程序内置的那份（就是仓库里这个 notice.json，打包时带进去）
+
+设计上**全程静默**：拉不到就当没有公告，绝不弹错误、不影响任何功能。
+另外会自动缓存上次拉到的（data/notice_cache.json），断网时还能看到上次那份。
+
+git 推两个地方是怎么配的
+------------------------
+给 origin 加了第二个 push 地址，之后还是一条 `git push` 推两边：
+
+    git remote set-url --add --push origin https://github.com/Cash-553/stat-genshin-impact.git
+    git remote set-url --add --push origin https://gitee.com/Cash553/stat-genshin-impact.git
+
+    git remote -v  →  fetch 一条（GitHub），push 两条（GitHub + Gitee）
+
+第一次推 Gitee 会要账号：用户名 Cash553，密码填
+**Gitee 私人令牌**（https://gitee.com/profile/personal_access_tokens 生成，不是登录密码）。
+填一次就会被凭据管理器记住。
+
 （根目录那套识别/统计模块会被自动引用，不用复制过来。）
 
 文件说明
