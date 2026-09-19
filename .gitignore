@@ -48,3 +48,6 @@ gameplay/
 non_gameplay/
 dataset_stats.json
 
+# 临时验证脚本（跑完就该删，别提交）
+_run*.py
+_r*.txt
