@@ -43,28 +43,36 @@ def sha256_of(path):
     return h.hexdigest()
 
 
-def find_zip():
-    """自动找发布包：优先 发布版\\StatGI_v<版本>.zip"""
-    ver = ""
-    try:
-        with open(VERSION_FILE, "r", encoding="utf-8") as f:
-            ver = str(json.load(f).get("version", "")).strip()
-    except Exception:
-        pass
-    cands = []
+def find_zip(ver):
+    """找要切分的发布包
+
+    顺序：
+      1. 命令行传的路径（最优先，双击 bat 的话没有）
+      2. 发布版\\StatGI_v<版本>_*.zip   比如「StatGI_v0.8_修复版.zip」
+      3. 发布版\\StatGI_v<版本>.zip
+      4. 发布版\\StatGI*.zip 里最新的那个
+    """
     pub = os.path.join(ROOT, "发布版")
+    if not os.path.isdir(pub):
+        return None
+    names = sorted(os.listdir(pub))
+
+    def pick(pred):
+        got = [os.path.join(pub, x) for x in names
+               if x.lower().endswith(".zip") and pred(x)]
+        if not got:
+            return None
+        got.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+        return got[0]
+
     if ver:
-        cands.append(os.path.join(pub, f"StatGI_v{ver}.zip"))
-    # 再扫一遍所有 zip，挑最新的
-    if os.path.isdir(pub):
-        zips = [os.path.join(pub, x) for x in os.listdir(pub)
-                if x.lower().endswith(".zip") and x.startswith("StatGI")]
-        zips.sort(key=lambda p: os.path.getmtime(p), reverse=True)
-        cands += zips
-    for c in cands:
-        if os.path.exists(c):
-            return c
-    return None
+        p = pick(lambda x: x.startswith(f"StatGI_v{ver}_"))
+        if p:
+            return p
+        p = pick(lambda x: x == f"StatGI_v{ver}.zip")
+        if p:
+            return p
+    return pick(lambda x: x.startswith("StatGI"))
 
 
 def main():
@@ -73,15 +81,42 @@ def main():
     print("=" * 60)
     print()
 
-    zip_path = find_zip()
+    # 先读版本号（决定分卷名字和 Gitee 发行版的 tag）
+    ver = ""
+    try:
+        with open(VERSION_FILE, "r", encoding="utf-8") as f:
+            ver = str(json.load(f).get("version", "")).strip()
+    except Exception:
+        pass
+
+    # 发布包：命令行给了就用它，没给就自动找
+    zip_path = sys.argv[1] if len(sys.argv) > 1 and os.path.exists(sys.argv[1]) else None
+    if not zip_path:
+        zip_path = find_zip(ver)
     if not zip_path:
         print("✗ 没找到发布包（发布版\\StatGI_v?.zip）")
-        print("  请先打包出 zip，再跑这个。")
+        print("  可以这样指定：")
+        print("     python build_update.py \"E:\\收益识别\\发布版\\StatGI_v0.8_修复版.zip\"")
         return 1
-    print(f"发布包：{zip_path}")
+
     size = os.path.getsize(zip_path)
+    print(f"版本号：{ver or '（version.json 里没写）'}")
+    print(f"发布包：{zip_path}")
     print(f"大小  ：{size/1024/1024:.1f} MB")
     print()
+    # 让用户确认一下，别切错文件
+    try:
+        ans = input("是这个文件吗？(直接回车=对，输 n=不对) ").strip().lower()
+    except Exception:
+        ans = ""
+    if ans in ("n", "no", "不是"):
+        print("那就把要切的 zip 拖到 bat 上、或者命令行传路径进来。")
+        return 1
+    print()
+
+    tag = f"v{ver}" if ver else "v0.0"
+    # 分卷名用 ASCII（URL 里更稳，不用转义）
+    stem = f"StatGI_{tag}"
 
     if size <= CHUNK:
         print("包不超过 95MB，其实不用切分。")
@@ -90,16 +125,17 @@ def main():
         n = (size + CHUNK - 1) // CHUNK
         print(f"要切成 {n} 块（每块约 {CHUNK/1024/1024:.0f}MB）")
         os.makedirs(PART_DIR, exist_ok=True)
-        # 先清掉上次的
         for x in os.listdir(PART_DIR):
-            os.remove(os.path.join(PART_DIR, x))
+            try:
+                os.remove(os.path.join(PART_DIR, x))
+            except Exception:
+                pass
 
-        base = os.path.basename(zip_path)
         parts = []
         with open(zip_path, "rb") as f:
             for i in range(1, n + 1):
                 data = f.read(CHUNK)
-                p = os.path.join(PART_DIR, f"{base}.part{i}")
+                p = os.path.join(PART_DIR, f"{stem}.part{i}")
                 with open(p, "wb") as g:
                     g.write(data)
                 parts.append(p)
@@ -111,17 +147,9 @@ def main():
     print(f"   {digest}")
     print()
 
-    # 分卷的下载地址：Gitee 发行版附件。文件名里的中文/特殊字符要转义
+    # 分卷的下载地址：Gitee 发行版附件
     import urllib.parse
-    ver = ""
-    try:
-        with open(VERSION_FILE, "r", encoding="utf-8") as f:
-            ver = str(json.load(f).get("version", "")).strip()
-    except Exception:
-        pass
-    tag = f"v{ver}" if ver else "v0.0"
-    gitee_parts = [f"{GITEE_RAW}/{tag}/{urllib.parse.quote(os.path.basename(p))}"
-                   for p in parts]
+    gitee_parts = [f"{GITEE_RAW}/{tag}/{os.path.basename(p)}" for p in parts]
 
     # 写回 version.json
     try:
@@ -129,14 +157,16 @@ def main():
             vj = json.load(f)
     except Exception:
         vj = {}
+    # GitHub 那边的附件名按惯例是 StatGI_v<版本>.zip
+    # （发布时要把 zip 改名成这个再传，否则这条备用地址会 404）
+    gh_asset = f"StatGI_{tag}.zip"
     vj["update"] = {
         "size": size,
         "sha256": digest,
         "sources": [
             {"label": "Gitee（国内快）", "parts": gitee_parts},
             {"label": "GitHub", "parts": [
-                vj.get("url_github", "").rstrip("/") + f"/download/{tag}/"
-                + urllib.parse.quote(os.path.basename(zip_path))]},
+                vj.get("url_github", "").rstrip("/") + f"/download/{tag}/{gh_asset}"]},
         ],
     }
     with open(VERSION_FILE, "w", encoding="utf-8") as f:
@@ -163,7 +193,11 @@ def main():
     print()
     print("② 到 GitHub 建发行版（" + tag + "），传原来的整包：")
     print(f"     {zip_path}")
-    print("   （GitHub 那边不用切，整包直接传）")
+    print()
+    print("   ⚠ 附件名必须是 " + gh_asset + "！")
+    print("     自动更新会按这个名字去 GitHub 找备用包，")
+    print("     名字对不上的话，Gitee 那边出问题时就退不到 GitHub。")
+    print("     （发布页上先把旧附件删掉，再传这个改好名的）")
     print()
     print("③ 推一下代码，让 version.json 生效：")
     print("     cd " + ROOT)
