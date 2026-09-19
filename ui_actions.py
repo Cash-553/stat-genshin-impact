@@ -60,6 +60,8 @@ class ActionsMixin:
                 self.detail_toggle_btn.configure(text="查看明细")
         except Exception:
             pass
+        # 明细区刚显示出来，补贴一次玻璃
+        self._glass_schedule_refresh()
 
     @staticmethod
     def _fmt_dur(sec):
@@ -84,10 +86,13 @@ class ActionsMixin:
                 sc, text="（还没有记录）\n点「开始监测」跑一段时间，再点「停止监测」，就会生成一条。",
                 font=(FONT, 15), text_color=DIM, justify="left",
             ).pack(pady=24)
+            self._glass_schedule_refresh()
             return
         # 最新的排在最上面
         for idx in range(len(items) - 1, -1, -1):
             self._make_record_card(sc, idx, items[idx])
+        # 上面这些都是刚造出来的控件，补贴一次玻璃
+        self._glass_schedule_refresh()
 
     def _toggle_record_detail(self, idx):
         w = getattr(self, "_rec_widgets", {}).get(idx)
@@ -104,6 +109,8 @@ class ActionsMixin:
             self._rec_open.add(idx)
             detail.pack(fill="x", padx=12, pady=(0, 8))
             btn.configure(text="收起明细 ▴")
+        # 明细区刚显示出来，里面那些控件之前不可见、还没贴过玻璃，补贴一次
+        self._glass_schedule_refresh()
 
     def on_clear_records(self):
         if not messagebox.askyesno("确认", "确定清空所有收益记录吗？\n（今日统计的数据不受影响）"):
@@ -292,12 +299,14 @@ class ActionsMixin:
                 self.mat_scroll, text="（暂无，开始监测后自动统计）",
                 font=(FONT, 15), text_color=DIM,
             ).pack(pady=16)
+            self._glass_schedule_refresh()
             return
         for name, count in items:
             row = ctk.CTkFrame(self.mat_scroll, fg_color="transparent")
             row.pack(fill="x", padx=6, pady=2)
             ctk.CTkLabel(row, text=name, font=(FONT, 16), text_color=TEXT).pack(side="left")
             ctk.CTkLabel(row, text=f"×{count}", font=(FONT, 16, "bold"), text_color=ACCENT).pack(side="right")
+        self._glass_schedule_refresh()
 
     def _rebuild_detail_list(self):
         """素材明细页：合并怪物+普通为一个列表"""
@@ -323,6 +332,7 @@ class ActionsMixin:
         self.detail_total_label.configure(
             text=f"共 {len(items)} 种材料，合计 {total} 个"
         )
+        self._glass_schedule_refresh()
 
     def _api_data(self):
         total = self.stats.running_seconds

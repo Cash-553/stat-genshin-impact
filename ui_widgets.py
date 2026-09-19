@@ -343,6 +343,14 @@ class FloatingDropdown(ctk.CTkFrame):
             self._popup.lift()
             self._arrow.configure(text=ARROW_UP, text_color=theme.ACCENT)
             self.after(60, self._bind_outside)
+            # 浮层里的选项是刚显示出来的控件，如果主窗口开了自定义背景，
+            # 这时候它们身上还没有玻璃、会露出自己的实色底 —— 通知主窗口补一次
+            try:
+                fn = getattr(host, "_glass_schedule_refresh", None)
+                if callable(fn):
+                    fn(40)
+            except Exception:
+                pass
         except Exception:
             pass
 
