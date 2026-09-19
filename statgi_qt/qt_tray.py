@@ -142,7 +142,7 @@ class Tray(QObject):
 
 
 class HotkeyManager(QObject):
-    """全局热键（开始/停止监测）
+    """全局热键（可以挂多个动作）
 
     做法：每 120ms 用 GetAsyncKeyState 轮询一次组合键。
     为什么不用 RegisterHotKey？
@@ -150,14 +150,21 @@ class HotkeyManager(QObject):
         而 Tk 版就是在那上面踩过坑（吞掉消息导致任务栏最小化/还原失灵）
       · 轮询只是读一下键盘状态，不碰窗口过程，也没有回调用悬空的风险
     代价：轮询有极小开销；极快的点按（<120ms）可能漏掉一次。
+
+    用法：actions 是 [(设置里的键名, 回调), ...]，比如
+        HotkeyManager(win, [("hotkey", win.state.toggle),
+                            ("hotkey_bar", win.toggle_stat_bar)])
+    每个热键各记各的「上次按下了没有」，所以互不影响。
     """
 
-    def __init__(self, win, on_trigger):
+    def __init__(self, win, actions):
         super().__init__(win)
         self.win = win
-        self.on_trigger = on_trigger
-        self._down = False
-        self._cache = None            # 上次解析出来的 (mods, vk, 原始字符串)
+        # 兼容老的单个回调写法（万一还有地方这么用）
+        if callable(actions):
+            actions = [("hotkey", actions)]
+        self.actions = list(actions or [])
+        self._state = {}              # 键名 -> {"cache":…, "down":bool}
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._check)
         self._timer.start(120)
@@ -165,31 +172,42 @@ class HotkeyManager(QObject):
     def _check(self):
         try:
             import ctypes
-            want = str((self.win.state.settings or {}).get("hotkey", "关闭"))
-            # 只在设置里那条热键字符串改了之后才重新解析
-            if self._cache is None or self._cache[1] != want:
-                self._cache = (parse_hotkey(want), want)
-            parsed = self._cache[0]
-            if not parsed:
-                self._down = False
-                return
-            mods, vk = parsed
             u = ctypes.windll.user32
-            keys = []
-            if mods & 0x0002:
-                keys.append(0x11)     # Ctrl
-            if mods & 0x0001:
-                keys.append(0x12)     # Alt
-            if mods & 0x0004:
-                keys.append(0x10)     # Shift
-            if mods & 0x0008:
-                keys.append(0x5B)     # Win
-            keys.append(vk)
-            pressed = all(u.GetAsyncKeyState(k) & 0x8000 for k in keys)
-            if pressed and not self._down:
-                self._down = True
-                self.on_trigger()
-            elif not pressed:
-                self._down = False
+            settings = self.win.state.settings or {}
+            for key, callback in self.actions:
+                st = self._state.get(key)
+                if st is None:
+                    st = {"cache": None, "down": False}
+                    self._state[key] = st
+
+                want = str(settings.get(key, "关闭"))
+                # 只在设置里那条热键字符串改了之后才重新解析
+                if st["cache"] is None or st["cache"][1] != want:
+                    st["cache"] = (parse_hotkey(want), want)
+                parsed = st["cache"][0]
+                if not parsed:
+                    st["down"] = False
+                    continue
+
+                mods, vk = parsed
+                keys = []
+                if mods & 0x0002:
+                    keys.append(0x11)     # Ctrl
+                if mods & 0x0001:
+                    keys.append(0x12)     # Alt
+                if mods & 0x0004:
+                    keys.append(0x10)     # Shift
+                if mods & 0x0008:
+                    keys.append(0x5B)     # Win
+                keys.append(vk)
+                pressed = all(u.GetAsyncKeyState(k) & 0x8000 for k in keys)
+                if pressed and not st["down"]:
+                    st["down"] = True
+                    try:
+                        callback()
+                    except Exception:
+                        pass
+                elif not pressed:
+                    st["down"] = False
         except Exception:
             pass

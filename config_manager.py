@@ -66,7 +66,9 @@ DEFAULT_SETTINGS = {
         "show_slot3": True,          # 是否显示「狗粮」格
     },
     "rollover_hour": 0,              # 换日时间（0=自然日；4=凌晨4点换日）
-    "hotkey": "关闭",                # 全局热键（开始/停止监测）
+    "hotkey": "关闭",                # 全局热键：开始/停止监测
+    "hotkey_bar": "关闭",            # 全局热键：显示/隐藏统计条
+    "hotkey_home": "关闭",           # 全局热键：把主窗口叫回来
     "update_channel": "auto",        # 检测更新走哪个渠道：auto / gitee / github
 }
 

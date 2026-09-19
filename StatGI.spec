@@ -4,6 +4,7 @@
 # v0.9 起只有这一个版本了：界面是 Qt（PySide6）。
 # （v0.7 及以前那套 Tk 界面和它的 StatGI.spec 已经删掉了。）
 from PyInstaller.utils.hooks import collect_all
+from PyInstaller.building.datastruct import TOC
 
 datas = [('icons', 'icons'), ('models', 'models'), ('app_icon.ico', '.'),
          # 内置公告：远程（Gitee / GitHub）都拉不到时，用它兜底。
@@ -65,6 +66,54 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+
+# ============================================================
+#  瘦身：把确认用不到的大文件剔出去（省约 58MB）
+#
+#  为什么要在 Analysis 之后手动过滤，而不是写进 excludes：
+#    excludes 只管「Python 模块导不导入」，管不了「PyInstaller 顺手拷进来的
+#    DLL / 数据文件」。这些 Qt 的 dll 和插件是被依赖链带进来的，不会因为
+#    excludes 就不拷 —— 只能在生成 binaries / datas 列表之后自己删。
+#
+#  每一条都确认过项目里没用到（全局搜过 VideoCapture / QtNetwork /
+#  QtQml / QPdf / avif 等，都没有）：
+#    · opencv 的视频解码  29.4MB  我们只处理图片，不碰视频
+#    · Qt6Quick/Qml       12.3MB  界面用的是 Widgets，没用 QML
+#    · PIL 的 avif 插件    7.5MB  AVIF 图片格式极罕见
+#    · Qt6Pdf              4.4MB  PDF 完全不碰
+#    · Qt6Network          2.7MB  联网用的是 Python 的 urllib
+#    · 用不到的图片插件    约 1MB  tiff/icns/gif/svg
+#
+#  ⚠ webp 插件**必须留** —— 自定义背景图的文件对话框里允许选 *.webp。
+#  ⚠ opengl32sw.dll 也**必须留** —— 没装显卡驱动的机器靠它软件渲染，
+#    删了一启动就崩。省那 19.7MB 不值得。
+# ============================================================
+_DROP_KEYWORDS = (
+    'opencv_videoio_ffmpeg',        # OpenCV 视频解码
+    'qt6quick', 'qt6qml',           # QML / Quick
+    '_avif',                        # AVIF 图片插件
+    'qt6pdf',                       # PDF
+    'qt6network', 'qtnetwork',      # Qt 的网络模块
+)
+_DROP_IMAGE_PLUGINS = ('qtiff', 'qicns', 'qgif', 'qsvg', 'qpdf')
+
+
+def _drop(name):
+    low = str(name).lower().replace('\\', '/')
+    if any(k in low for k in _DROP_KEYWORDS):
+        return True
+    base = low.rsplit('/', 1)[-1]
+    if 'imageformats' in low and any(base.startswith(p) for p in _DROP_IMAGE_PLUGINS):
+        return True
+    return False
+
+
+_before = sum(1 for _ in a.binaries) + sum(1 for _ in a.datas)
+a.binaries = TOC([x for x in a.binaries if not _drop(x[0])])
+a.datas = TOC([x for x in a.datas if not _drop(x[0])])
+_after = len(a.binaries) + len(a.datas)
+print(f'[瘦身] 过滤掉 {_before - _after} 个用不到的文件')
+
 pyz = PYZ(a.pure)
 
 exe = EXE(
