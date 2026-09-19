@@ -1,32 +1,3 @@
 {
-  "notices": [
-    {
-      "id": "2026-09-20-2",
-      "title": "12",
-      "body": "12",
-      "url": "https://github.com/Cash-553/stat-genshin-impact/releases",
-      "time": "2026-09-20 02:31"
-    },
-    {
-      "id": "2026-09-20-v09",
-      "title": "StatGI v0.9 已发布",
-      "body": "本次更新：\n\n· 新增「公告」功能 —— 以后有什么说明，不开新版也能通知到大家\n· 公告可以翻往期\n· 背景色 / 强调色的切换更顺了\n· 修复了打包版托盘和任务栏图标不对的问题\n\n如果你在使用中遇到问题，欢迎到 GitHub Issues 反馈。",
-      "url": "https://github.com/Cash-553/stat-genshin-impact/releases",
-      "time": "2026-09-20 23:10"
-    },
-    {
-      "id": "2026-09-19-1",
-      "title": "关于界面拖影问题的说明",
-      "body": "有用户反馈：界面滚动时偶尔会有拖影 / 残影。\n\n这个问题在 v0.7（旧界面）时就存在，换成 Qt 之后仍然能观察到，目前还没定位到根本原因。\n\n已经确认的是：\n· 不是识别或统计的问题（不影响数据准确）\n· 手动截图有时能截到、有时截不到\n\n如果你也遇到，欢迎到 Issues 反馈你看到的情况 —— 特别是「出现拖影时截图能不能截到」，这一条能帮我们缩小一半范围。",
-      "url": "https://github.com/Cash-553/stat-genshin-impact/issues",
-      "time": "2026-09-19 20:30"
-    },
-    {
-      "id": "2026-09-19-0",
-      "title": "StatGI v0.8 已发布",
-      "body": "界面整个换成 Qt 重写了：\n\n· 半透明、圆角、毛玻璃都是原生效果，Win10 上也有圆角了\n· 背景色 / 强调色改完立即生效，不用重启\n· 设置页重新分成 6 类\n· 检测更新修好了\n\n识别与统计逻辑没有改动，设置和数据可以直接沿用。",
-      "url": "https://github.com/Cash-553/stat-genshin-impact/releases",
-      "time": "2026-09-19 11:20"
-    }
-  ]
+  "notices": []
 }
