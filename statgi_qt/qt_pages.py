@@ -14,7 +14,8 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                                QPushButton, QComboBox, QLineEdit, QSlider,
                                QScrollArea, QFrame, QMessageBox, QFileDialog,
-                               QStackedWidget)
+                               QStackedWidget, QDialog, QApplication,
+                               QProgressBar)
 
 from qt_theme import (panel_alpha, label_qss, btn_qss, entry_qss, combo_qss,
                       slider_qss, scroll_qss, rgba)
@@ -1262,16 +1263,183 @@ class PageSettings(BasePage):
             return
         self.update_status.setText(f"发现新版本 {ver}（来自 {used}）")
         self.update_status.setStyleSheet(label_qss(T.ACCENT, 12))
+        self._ask_update(info)
+
+    def _ask_update(self, info):
+        """发现新版本。
+
+        有自动更新信息（version.json 里带了分卷地址）→ 给「立即更新」；
+        没带 → 只给「打开下载页」，跟以前一样。
+        """
+        ver = info.get("version", "")
         notes = str(info.get("notes", "") or "").strip()
-        msg = f"当前版本 {VERSION}\n最新版本 {ver}\n\n"
-        if notes:
-            msg += f"更新内容：\n{notes}\n\n"
-        msg += "是否打开下载页面？"
-        if QMessageBox.question(self, "发现新版本", msg) == QMessageBox.Yes:
-            import webbrowser
-            url = str(info.get("url", "") or "").strip()
-            if url:
-                webbrowser.open(url)
+        try:
+            import qt_updater
+            up = qt_updater.update_info_from({"update": info.get("update")})
+        except Exception:
+            up = None
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("发现新版本")
+        dlg.setMinimumWidth(470)
+        v = QVBoxLayout(dlg)
+        v.setContentsMargins(20, 18, 20, 16)
+        v.setSpacing(10)
+
+        t = QLabel(f"发现新版本 {ver}")
+        t.setStyleSheet(label_qss(T.ACCENT, 18, True))
+        v.addWidget(t)
+
+        size_txt = ""
+        if up and up.get("size"):
+            size_txt = f"（安装包约 {up['size']/1024/1024:.0f} MB）"
+        body = QLabel(f"当前版本 {VERSION}　→　{ver} {size_txt}\n\n"
+                      + (f"更新内容：\n{notes}" if notes else ""))
+        body.setWordWrap(True)
+        body.setStyleSheet(label_qss(T.TEXT, 13))
+        v.addWidget(body)
+
+        if up:
+            tip = QLabel("点「立即更新」会自动下载并替换好，全程不用管：\n"
+                         "软件先自己关掉 → 自动替换 → 自动重新打开。\n"
+                         "你的设置和收益数据不会被覆盖。")
+            tip.setWordWrap(True)
+            tip.setStyleSheet(label_qss(T.DIM, 12))
+            v.addWidget(tip)
+
+        row = QHBoxLayout()
+        url = str(info.get("url", "") or "").strip()
+        if url:
+            b_page = QPushButton("打开下载页")
+            b_page.setFixedHeight(34)
+            b_page.setCursor(Qt.PointingHandCursor)
+            b_page.setStyleSheet(btn_qss("normal", self.alpha))
+            b_page.clicked.connect(lambda: __import__("webbrowser").open(url))
+            row.addWidget(b_page)
+        row.addStretch(1)
+        b_later = QPushButton("以后再说")
+        b_later.setFixedHeight(34)
+        b_later.setCursor(Qt.PointingHandCursor)
+        b_later.setStyleSheet(btn_qss("normal", self.alpha))
+        b_later.clicked.connect(dlg.reject)
+        row.addWidget(b_later)
+        if up:
+            b_go = QPushButton("立即更新")
+            b_go.setFixedHeight(34)
+            b_go.setMinimumWidth(120)
+            b_go.setCursor(Qt.PointingHandCursor)
+            b_go.setStyleSheet(btn_qss("accent", self.alpha))
+            b_go.clicked.connect(dlg.accept)
+            row.addWidget(b_go)
+        v.addLayout(row)
+
+        if dlg.exec() == QDialog.Accepted and up:
+            self._do_auto_update(up, ver)
+
+    # ---------- 自动更新 ----------
+    def _do_auto_update(self, up, ver):
+        """下载 → 合并 → 校验 → 解压 → 交给「更新.bat」去替换
+
+        下载在**后台线程**跑，进度通过信号发回主线程更新界面 ——
+        后台线程绝对不能直接碰控件。
+        """
+        import qt_updater
+        from PySide6.QtCore import QObject, Signal
+
+        class Sig(QObject):
+            progress = Signal(int, int)
+            msg = Signal(str)
+            done = Signal(bool, str)
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("正在更新")
+        dlg.setMinimumWidth(470)
+        dlg.setWindowFlag(Qt.WindowCloseButtonHint, False)
+        v = QVBoxLayout(dlg)
+        v.setContentsMargins(20, 18, 20, 16)
+        v.setSpacing(10)
+
+        lb = QLabel(f"正在下载 StatGI {ver}…")
+        lb.setStyleSheet(label_qss(T.TEXT, 14))
+        v.addWidget(lb)
+
+        bar = QProgressBar()
+        bar.setRange(0, 100)
+        bar.setFixedHeight(18)
+        bar.setStyleSheet(
+            f"QProgressBar {{ background:{rgba('#FFFFFF', 20)}; border:none;"
+            f" border-radius:9px; text-align:center; color:{T.TEXT}; font-size:11px; }}"
+            f"QProgressBar::chunk {{ background:{T.ACCENT}; border-radius:9px; }}")
+        v.addWidget(bar)
+
+        log = QLabel("准备中…")
+        log.setWordWrap(True)
+        log.setStyleSheet(label_qss(T.DIM, 12))
+        v.addWidget(log)
+
+        sig = Sig()
+        state = {"dir": None}
+
+        def on_p(p, t):
+            if t > 0:
+                pct = max(0, min(100, int(p * 100 / t)))
+                bar.setValue(pct)
+                bar.setFormat(f"{pct}%　{p/1024/1024:.0f} / {t/1024/1024:.0f} MB")
+
+        sig.progress.connect(on_p)
+        sig.msg.connect(log.setText)
+
+        def work():
+            try:
+                d = qt_updater.prepare(up, on_log=lambda s: sig.msg.emit(str(s)),
+                                       on_progress=lambda a, b: sig.progress.emit(int(a), int(b)))
+                state["dir"] = d
+                sig.done.emit(True, "")
+            except Exception as e:
+                sig.done.emit(False, str(e))
+
+        def on_fin(ok, err):
+            if not ok:
+                QMessageBox.warning(self, "更新没做成",
+                                    f"{err}\n\n不影响现在这个版本，可以稍后再试，"
+                                    "或者点「打开下载页」手动下载。")
+                dlg.reject()
+                return
+            try:
+                bat = qt_updater.write_updater(state["dir"])
+            except Exception as e:
+                QMessageBox.warning(self, "更新没做成", f"准备更新脚本失败：{e}")
+                dlg.reject()
+                return
+            if QMessageBox.question(
+                    self, "更新已准备好",
+                    f"新版本 {ver} 已经下载好了。\n\n"
+                    "点「确定」后：\n"
+                    "  · 软件会自动关闭\n"
+                    "  · 自动完成替换（会弹一个黑窗口，**别关它**）\n"
+                    "  · 更新完自动重新打开\n\n"
+                    "你的设置和收益数据不会被覆盖。\n\n现在就开始更新吗？"
+            ) != QMessageBox.Yes:
+                dlg.reject()
+                return
+            if not qt_updater.launch_updater(bat):
+                QMessageBox.warning(self, "启动更新失败",
+                                    f"请手动双击这个文件完成更新：\n{bat}")
+                dlg.reject()
+                return
+            dlg.accept()
+            # 关掉自己，让更新脚本接手
+            try:
+                self.win._shutdown()
+            except Exception:
+                pass
+            QApplication.quit()
+
+        sig.done.connect(on_fin)
+
+        import threading
+        threading.Thread(target=work, daemon=True).start()
+        dlg.exec()
 
     def _on_update_channel(self, text):
         val = {"自动": "auto", "Gitee（国内快）": "gitee",

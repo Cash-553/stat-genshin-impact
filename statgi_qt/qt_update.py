@@ -130,6 +130,9 @@ def check(channel="auto", bust_cache=True):
                 "url": page,
                 "is_newer": is_newer_version(ver, current_version()),
                 "channel": ch,
+                # 自动更新用的信息（分卷地址 + 校验值）。
+                # 这个版本没准备的话就是 None —— 界面那边就只给「打开下载页」。
+                "update": d.get("update"),
             }, ch, ""
         except urllib.error.HTTPError as e:
             if e.code in (403, 429):
