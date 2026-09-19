@@ -273,37 +273,6 @@ class MainApp(ctk.CTk):
         except Exception:
             pass
 
-    def _install_wndproc(self):
-        """不再子类化窗口过程（保留空实现，兼容旧调用）。
-
-        历史原因：以前无边框窗口是用 withdraw() 把窗口「藏起来」的，
-        藏起来的窗口任务栏按钮叫不回来，所以必须拦截
-        SC_MINIMIZE / SC_RESTORE 自己处理。
-
-        现在改成系统原生最小化（窗口仍然存活，只是最小化了），
-        Windows 本来就能正确处理任务栏按钮的 最小化/还原，
-        再拦截反而出问题：
-          - 点任务栏还原时，如果窗口是被系统/任务栏最小化的，
-            _minimized 标志是 False，消息被 return 0 吞掉，
-            窗口就永远卡在最小化状态出不来了；
-          - 点任务栏最小化也可能被吞掉。
-        所以这里直接不拦截，全部交给 Windows 原生处理。
-        """
-        return
-
-    def _uninstall_wndproc(self):
-        """退出前恢复原窗口过程，防止窗口销毁后回调悬空导致闪退"""
-        try:
-            if getattr(self, "_orig_wndproc", 0):
-                import ctypes
-                user32 = ctypes.windll.user32
-                user32.SetWindowLongPtrW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
-                user32.SetWindowLongPtrW.restype = ctypes.c_void_p
-                user32.SetWindowLongPtrW(int(self.winfo_id()), -4, self._orig_wndproc)
-                self._orig_wndproc = 0
-        except Exception:
-            pass
-
     # ---------- 全局热键 ----------
 
     def _install_hotkey_proc(self):
@@ -1559,10 +1528,10 @@ class MainApp(ctk.CTk):
                 except Exception:
                     pass
         except Exception as e:
-            # 不要静默失败：记下来，方便排查（以前这里被吞掉，
-            # 导致「背景图没效果」这种问题很难查）
-            import traceback
-            self._bg_error = traceback.format_exc()
+            # 不要静默失败：写进 data/error.log，方便排查
+            # （以前这里被吞掉，导致「背景图没效果」这种问题很难查）
+            from errlog import log_exc
+            log_exc("背景图")
             print("[背景图] 应用失败:", e)
         finally:
             self._bg_busy = False
@@ -2209,6 +2178,13 @@ class MainApp(ctk.CTk):
             self._build_bg_body, on_change=self._apply_background)
         self._acc_bg.pack(fill="x", pady=(0, 8))
 
+        # 统计条图标：打开图标管理窗口
+        h = self._make_setting_card(t, "🖼", "统计条图标", "换收益统计条三个格子的图标（摩拉/材料/狗粮）")
+        ctk.CTkButton(
+            h, text="打开图标管理", font=(FONT, 14), height=34,
+            fg_color=BTN, hover_color=BTN_HOVER, command=self.on_icon_manager,
+        ).pack(fill="x")
+
         # OBS：第 2 种折叠区
         self._acc_obs = Accordion(
             t, "📺", "连接 OBS 直播覆盖", "点开可以看到开关和浏览器源地址",
@@ -2375,36 +2351,6 @@ class MainApp(ctk.CTk):
         ctk.CTkButton(row, text="复制", font=(FONT, 13), width=56, height=28,
                       corner_radius=8, fg_color=BTN, hover_color=BTN_HOVER,
                       command=self._copy_obs_addr).pack(side="left")
-
-
-    @staticmethod
-    def _rollover_text(h):
-        h = int(h) % 24
-        if h == 0:
-            return "0 点"
-        if h < 6:
-            return f"凌晨 {h} 点"
-        if h < 12:
-            return f"上午 {h} 点"
-        return f"{h} 点"
-
-    def _on_rollover_change(self, value):
-        try:
-            h = int(round(float(value))) % 24
-            self.rollover_var.set(str(h))
-            self.rollover_label.configure(text=self._rollover_text(h))
-        except Exception:
-            pass
-        # 拖动过程中不频繁写文件，停 0.4 秒后再保存生效
-        try:
-            if getattr(self, "_ro_after", None):
-                try:
-                    self.after_cancel(self._ro_after)
-                except Exception:
-                    pass
-            self._ro_after = self.after(400, self._on_any_setting_change)
-        except Exception:
-            pass
 
     # ---------- 全局热键：按键捕获 ----------
 
@@ -2909,13 +2855,6 @@ class MainApp(ctk.CTk):
         except Exception:
             pass
 
-    def on_save_settings(self):
-        """兼容旧逻辑：手动保存一次（现在设置本来就是即时生效的）"""
-        try:
-            self._on_any_setting_change()
-        except Exception:
-            pass
-
     # ---- 通用卡片 ----
 
     def _make_card(self, parent):
@@ -3225,8 +3164,12 @@ class MainApp(ctk.CTk):
             messagebox.showinfo("成功", "识别区域已更新")
         self._refresh_region_state()
 
-    def on_settings(self):
-        IconManagerWindow(self, on_change=self.reload_icons)
+    def on_icon_manager(self):
+        """打开图标管理窗口（收益统计条三个格子的图标）"""
+        try:
+            IconManagerWindow(self, on_change=self.reload_icons)
+        except Exception:
+            messagebox.showerror("打开失败", "图标管理窗口打不开，请重启程序再试。")
 
     def on_check_update(self):
         """检测 GitHub Releases 是否有新版本（后台线程，不卡界面）"""
@@ -3676,10 +3619,6 @@ class MainApp(ctk.CTk):
         except Exception:
             pass
         try:
-            self._uninstall_wndproc()
-        except Exception:
-            pass
-        try:
             if self.stat_bar is not None:
                 self.stat_bar.close_bar()
         except Exception:
@@ -3698,6 +3637,10 @@ class MainApp(ctk.CTk):
 
 
 if __name__ == "__main__":
+    # 先把「出错记录」装好：打包版没有控制台，异常不写文件就等于消失
+    from errlog import install_hooks
+    install_hooks()
+
     # 防止重复打开（两个程序同时识别会重复统计）
     import ctypes
     import sys

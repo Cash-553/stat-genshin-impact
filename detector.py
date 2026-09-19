@@ -205,11 +205,19 @@ class Detector:
     # ---------- 完整检测 ----------
 
     def _dbg(self):
-        """【临时debug】本轮定位始终开启，写入 data/debug.log（定位后删除）"""
-        return True
+        """调试日志开关：默认关闭。
+
+        打开方式：设置 → 关于 → 开发者选项 → 自动保存诊断截图。
+        关着的时候下面那些 [DBG] 日志一行都不写（以前是常开，
+        每轮检测都往 data/debug.log 写，既费性能又一直涨）。
+        """
+        try:
+            return bool((getattr(self, "settings", None) or {}).get("save_debug", False))
+        except Exception:
+            return False
 
     def _log(self, msg):
-        """【临时debug】把诊断日志写入 data/debug.log（打包版无控制台，需看文件）"""
+        """把诊断日志写入 data/debug.log（打包版没有控制台，只能看文件）"""
         try:
             from paths import app_dir
             p = app_dir() / "data" / "debug.log"
