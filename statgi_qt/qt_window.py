@@ -398,13 +398,31 @@ class MainWindow(QWidget):
         self.show_page(NOTICE_PAGE_INDEX)
 
     def _api_data(self):
+        """直播接口给出去的数据
+
+        ⚠ 字段名要**同时**给新旧两套：
+        · 新名字（materials / seconds）是 Qt 版内部一直在用的
+        · 老名字（material_total / running_seconds）是 OBS 那套网页要的
+          —— 内置在 api_server.py 里的那个页面、还有用户自建的
+          「直播间美化.html」，读的都是老名字。v0.8 换 Qt 的时候
+          只给了新名字，网页上「材料」和「挂机时间」就一直显示 0 了。
+        两套都给最省事，也不会再踩一次。
+        """
         snap = self.state.snapshot()
+        mats = snap.get("materials") or {}
+        try:
+            mat_total = sum(int(v) for v in mats.values())
+        except Exception:
+            mat_total = 0
+        secs = snap["seconds"]
         return {
             "date": getattr(self.state.stats, "date", ""),
             "mora": snap["mora"],
             "artifact": snap["artifact"],
-            "seconds": snap["seconds"],
-            "materials": snap["materials"],
+            "seconds": secs,
+            "running_seconds": secs,        # ← OBS 网页用的老名字
+            "materials": mats,
+            "material_total": mat_total,    # ← OBS 网页用的老名字
             "monitoring": self.state.monitoring,
         }
 
