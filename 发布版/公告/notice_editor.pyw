@@ -26,7 +26,9 @@ from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
 # 本文件在 发布版/公告/ 里，往上三层才是仓库根目录
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 NOTICE_REL = "发布版/公告/notice.json"
+VERSION_REL = "发布版/公告/version.json"
 NOTICE = os.path.join(ROOT, *NOTICE_REL.split("/"))
+VERSION_FILE = os.path.join(ROOT, *VERSION_REL.split("/"))
 
 FONT = "Microsoft YaHei UI"
 BG, CARD, TEXT, DIM = "#1C1C1C", "#242424", "#E8E8E8", "#9A9A9A"
@@ -42,9 +44,10 @@ class Worker(QObject):
     log = Signal(str)
     done = Signal(bool, str)
 
-    def __init__(self, notices, do_push):
+    def __init__(self, notices, version, do_push):
         super().__init__()
         self.notices = notices
+        self.version = version
         self.do_push = do_push
 
     def run(self):
@@ -54,7 +57,12 @@ class Worker(QObject):
                 f.write("\n")
             self.log.emit(f"已写入 {len(self.notices)} 条公告")
 
-            r = self._git(["add", NOTICE_REL])
+            with open(VERSION_FILE, "w", encoding="utf-8") as f:
+                json.dump(self.version, f, ensure_ascii=False, indent=2)
+                f.write("\n")
+            self.log.emit(f"已写入版本信息（v{self.version.get('version', '?')}）")
+
+            r = self._git(["add", NOTICE_REL, VERSION_REL])
             if r.returncode != 0:
                 self.done.emit(False, "git add 失败：\n" + (r.stderr or ""))
                 return
@@ -189,6 +197,37 @@ class Editor(QWidget):
         for b in (b_new, b_up, b_dn, b_del):
             row.addWidget(b)
         lv.addLayout(row)
+
+        # ---- 版本信息（给程序里的「检测更新」用）----
+        # 发新版时**一定要改这里的版本号**，不然用户那边收不到更新提醒。
+        lv.addSpacing(10)
+        sep = QLabel("版本信息（程序里的「检测更新」读这个）")
+        sep.setStyleSheet(f"color:{ACCENT}; font-size:13px; font-weight:600;")
+        lv.addWidget(sep)
+
+        rv0 = QHBoxLayout()
+        rv0.addWidget(QLabel("最新版本"))
+        self.version_edit = QLineEdit()
+        self.version_edit.setPlaceholderText("0.9")
+        rv0.addWidget(self.version_edit, 1)
+        lv.addLayout(rv0)
+
+        lv.addWidget(QLabel("更新说明（检测到新版时给用户看的）"))
+        self.ver_notes_edit = QPlainTextEdit()
+        self.ver_notes_edit.setFixedHeight(56)
+        lv.addWidget(self.ver_notes_edit)
+
+        rg = QHBoxLayout()
+        rg.addWidget(QLabel("GitHub"))
+        self.url_gh_edit = QLineEdit()
+        rg.addWidget(self.url_gh_edit, 1)
+        lv.addLayout(rg)
+
+        rgt = QHBoxLayout()
+        rgt.addWidget(QLabel("Gitee"))
+        self.url_gitee_edit = QLineEdit()
+        rgt.addWidget(self.url_gitee_edit, 1)
+        lv.addLayout(rgt)
         split.addWidget(left)
 
         # ---------- 右边：编辑区 ----------
@@ -291,11 +330,34 @@ class Editor(QWidget):
             })
         return out
 
+    def read_version(self):
+        """读版本信息（文件不在就用默认值）"""
+        try:
+            with open(VERSION_FILE, "r", encoding="utf-8") as f:
+                d = json.load(f)
+            if isinstance(d, dict):
+                return d
+        except Exception:
+            pass
+        return {
+            "version": "",
+            "notes": "",
+            "url_github": "https://github.com/Cash-553/stat-genshin-impact/releases",
+            "url_gitee": "https://gitee.com/Cash553/stat-genshin-impact/releases",
+        }
+
     def reload(self):
         self.cur = -1
         self.notices = self.read_file()
         self.refresh_list()
-        self.logline(f"已读取 {len(self.notices)} 条公告")
+
+        v = self.read_version()
+        self.version_edit.setText(str(v.get("version", "")))
+        self.ver_notes_edit.setPlainText(str(v.get("notes", "")))
+        self.url_gh_edit.setText(str(v.get("url_github", "")))
+        self.url_gitee_edit.setText(str(v.get("url_gitee", "")))
+
+        self.logline(f"已读取 {len(self.notices)} 条公告，版本 v{v.get('version', '?')}")
         if self.notices:
             self.listw.setCurrentRow(0)
             self.cur = -1
@@ -456,19 +518,38 @@ class Editor(QWidget):
             QMessageBox.warning(self, "提示", "有两条公告的 ID 重复了，改一下再发布。")
             return
 
+        ver = self.version_edit.text().strip()
+        if not ver:
+            if QMessageBox.question(
+                    self, "版本号空着",
+                    "「最新版本号」没填。\n\n"
+                    "这个号是给「检测更新」用的 —— 填对了用户才会收到更新提醒。\n"
+                    "留空的话，程序检测更新会说「没找到版本文件」。\n\n"
+                    "仍然要发布吗？") != QMessageBox.Yes:
+                return
+
         if QMessageBox.question(
                 self, "确认发布",
-                f"将要发布 {len(self.notices)} 条公告到 GitHub + Gitee。\n\n"
-                f"最新的一条是：\n  {self.notices[0].get('title', '')}\n\n确定吗？"
+                f"将要发布到 GitHub + Gitee：\n\n"
+                f"  · 最新版本号：{ver or '（空）'}\n"
+                f"  · 公告 {len(self.notices)} 条，最新一条是：\n"
+                f"      {self.notices[0].get('title', '')}\n\n确定吗？"
         ) != QMessageBox.Yes:
             return
+
+        vinfo = {
+            "version": ver,
+            "notes": self.ver_notes_edit.toPlainText().strip(),
+            "url_github": self.url_gh_edit.text().strip(),
+            "url_gitee": self.url_gitee_edit.text().strip(),
+        }
 
         self.b_pub.setEnabled(False)
         self.log.clear()
         self.logline("开始发布…")
 
         self._thread = QThread()
-        self._worker = Worker(self.notices, do_push=True)
+        self._worker = Worker(self.notices, vinfo, do_push=True)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.log.connect(self.logline)
