@@ -13,17 +13,28 @@ BASE_DIR = paths.app_dir()
 CONFIG_DIR = BASE_DIR / "config"
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
 
+# ---- 档位表（界面下拉框用，两个版本共用这一份）----
+# 名字统一成 4 档：性能 / 标准 / 省电 / 极致省电
+#   文字识别频率：数值是毫秒，**越小越频繁**（越频繁越吃 CPU）
+#   画面变化灵敏度：数值是变化阈值，**越小越灵敏**（越灵敏越吃 CPU）
+# 两处名字一致，用户不用分别记两套叫法。
+OCR_LEVELS = [("性能", 100), ("标准", 150), ("省电", 250), ("极致省电", 500)]
+CHANGE_LEVELS = [("性能", 1.0), ("标准", 2.0), ("省电", 4.0), ("极致省电", 8.0)]
+
+DEFAULT_OCR_LEVEL = "标准"          # = 150ms
+DEFAULT_CHANGE_LEVEL = "标准"       # = 2.0
+
 # 默认设置（第一次运行时使用）
 DEFAULT_SETTINGS = {
     "region": None,      # 识别区域 {"x":.., "y":.., "w":.., "h":..}，屏幕绝对坐标
     "monitor": 1,        # 显示器编号（暂时固定用主显示器）
     "api_port": 8765,    # 直播数据接口端口（OBS 浏览器源用）
     "event_end_window": 1.5,   # 事件去重窗口（秒）：提示消失多久后算新事件
-    "change_threshold": 4.0,   # 画面变化检测灵敏度（越小越敏感）
+    "change_threshold": 2.0,   # 画面变化检测灵敏度（越小越敏感）=「标准」
     "safety_interval": 1.5,    # 无变化时的保底检测间隔（秒）
     "tick_interval": 50,       # 检测间隔（毫秒，默认50）
-    "ocr_interval": 250,       # 文字识别节流（毫秒，OCR最多多久一次）
-    "change_level": "中",      # 画面变化灵敏度（界面显示用）
+    "ocr_interval": 150,       # 文字识别节流（毫秒）=「标准」
+    "change_level": "标准",    # 画面变化灵敏度（界面显示用；真正生效的是 change_threshold）
     # 识别开关（文字识别：想统计什么就开什么）
     "enable_mora": True,             # 识别摩拉
     "enable_material": True,         # 识别怪物素材

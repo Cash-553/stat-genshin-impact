@@ -351,17 +351,20 @@ class SettingsMixin:
             self.settings["tick_interval"] = max(10, min(5000, val))
         except Exception:
             pass
-        change_map = {"高": 2.0, "中": 4.0, "低": 8.0}
         if hasattr(self, "change_var"):
-            self.settings["change_threshold"] = change_map.get(self.change_var.get(), 4.0)
+            _name = self.change_var.get()
+            self.settings["change_threshold"] = next(
+                (v for n, v in config_manager.CHANGE_LEVELS if n == _name), 2.0)
+            self.settings["change_level"] = _name
         try:
             self.settings["event_end_window"] = float(
                 str(self.event_var.get()).replace("秒", "").strip())
         except Exception:
             pass
-        ocr_map = {"快": 150, "标准": 250, "慢": 500}
         if hasattr(self, "ocr_var"):
-            self.settings["ocr_interval"] = ocr_map.get(self.ocr_var.get(), 250)
+            _oname = self.ocr_var.get()
+            self.settings["ocr_interval"] = next(
+                (v for n, v in config_manager.OCR_LEVELS if n == _oname), 150)
         if hasattr(self, "auto_reg_var"):
             self.settings["auto_register_material"] = bool(self.auto_reg_var.get())
         if hasattr(self, "enable_mora_var"):
