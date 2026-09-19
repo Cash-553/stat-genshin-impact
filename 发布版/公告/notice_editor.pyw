@@ -188,13 +188,21 @@ class Editor(QWidget):
         b_dn.clicked.connect(lambda: self.move(1))
         b_del = QPushButton("🗑")
         b_del.setFixedWidth(38)
-        b_del.setToolTip("删除这条")
+        b_del.setToolTip("删除这一条")
         b_del.setStyleSheet(
             f"QPushButton {{ background:{CARD}; color:{DANGER};"
             f" border:1px solid #4A2A2A; border-radius:8px; padding:7px; }}"
             f"QPushButton:hover {{ background:#3A2020; }}")
         b_del.clicked.connect(self.delete_notice)
-        for b in (b_new, b_up, b_dn, b_del):
+        b_clear = QPushButton("清空全部")
+        b_clear.setToolTip("把所有公告一次删掉（发布后就一条都不剩了）")
+        b_clear.setStyleSheet(
+            f"QPushButton {{ background:{CARD}; color:{DANGER};"
+            f" border:1px solid #4A2A2A; border-radius:8px; padding:7px 10px;"
+            f" font-size:12px; }}"
+            f"QPushButton:hover {{ background:#3A2020; }}")
+        b_clear.clicked.connect(self.clear_all)
+        for b in (b_new, b_up, b_dn, b_del, b_clear):
             row.addWidget(b)
         lv.addLayout(row)
 
@@ -469,6 +477,29 @@ class Editor(QWidget):
             self.body_edit.clear()
         self.logline("已删除一条（还没发布）")
 
+    def clear_all(self):
+        """把全部公告清空
+
+        发布之后用户那边就一条公告都没有了（侧栏红点也消失）。
+        所以这里问两遍，免得手滑把发过的公告全清了。
+        """
+        if not self.notices:
+            QMessageBox.information(self, "提示", "现在本来就是空的。")
+            return
+        if QMessageBox.question(
+                self, "确认清空",
+                f"要把这 {len(self.notices)} 条公告**全部删掉**吗？\n\n"
+                "（发布之后，用户那边一条公告都没有了）"
+        ) != QMessageBox.Yes:
+            return
+        self.cur = -1
+        self.notices = []
+        self.refresh_list()
+        for w in (self.id_edit, self.title_edit, self.url_edit, self.time_edit):
+            w.clear()
+        self.body_edit.clear()
+        self.logline("已清空全部（还没发布）—— 点「发布」才会生效")
+
     # ---------- 预览 / 发布 ----------
     def preview(self):
         if self.cur >= 0:
@@ -503,9 +534,8 @@ class Editor(QWidget):
     def publish(self):
         if self.cur >= 0:
             self.stash_current()
-        if not self.notices:
-            QMessageBox.warning(self, "提示", "一条公告都没有。")
-            return
+        # 允许一条公告都没有 —— 「清空全部」之后必须能发布出去，
+        # 不然就永远删不掉了。（程序那边会显示「（还没有公告）」）
         for i, n in enumerate(self.notices):
             if not n.get("id"):
                 QMessageBox.warning(self, "提示", f"第 {i+1} 条没填 ID。")
@@ -528,21 +558,33 @@ class Editor(QWidget):
                     "仍然要发布吗？") != QMessageBox.Yes:
                 return
 
+        newest = self.notices[0].get('title', '') if self.notices else '（一条都没有）'
         if QMessageBox.question(
                 self, "确认发布",
                 f"将要发布到 GitHub + Gitee：\n\n"
                 f"  · 最新版本号：{ver or '（空）'}\n"
                 f"  · 公告 {len(self.notices)} 条，最新一条是：\n"
-                f"      {self.notices[0].get('title', '')}\n\n确定吗？"
+                f"      {newest}\n\n确定吗？"
         ) != QMessageBox.Yes:
             return
 
+        # ⚠ 要**保留** version.json 里原有的 update 段！
+        #   那里面是自动更新用的分卷地址和校验值，是「发布工具」写进去的。
+        #   这里如果整个覆盖掉，用户那边就再也收不到自动更新了。
+        old = {}
+        try:
+            with open(VERSION_FILE, "r", encoding="utf-8") as f:
+                old = json.load(f) or {}
+        except Exception:
+            old = {}
         vinfo = {
             "version": ver,
             "notes": self.ver_notes_edit.toPlainText().strip(),
             "url_github": self.url_gh_edit.text().strip(),
             "url_gitee": self.url_gitee_edit.text().strip(),
         }
+        if isinstance(old.get("update"), dict):
+            vinfo["update"] = old["update"]
 
         self.b_pub.setEnabled(False)
         self.log.clear()
