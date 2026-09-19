@@ -26,37 +26,6 @@ from qt_widgets import (Card, SettingRow, Switch, Accordion, ButtonRow, heading,
 
 VERSION = "0.9"
 
-# 检测更新用的仓库。注意这个仓库改过两次名：
-#   genshin-income-tracker（最早的旧名，**已经不存在了**，Tk 版就错在这儿）
-#   StatGI（别名，会 301 重定向到下面这个）
-#   stat-genshin-impact（现在的真名）
-# 用真名可以少一次重定向，更稳。
-UPDATE_REPO = "Cash-553/stat-genshin-impact"
-
-
-def version_tuple(s):
-    """'0.10-beta' -> (0, 10)   只取版本号前面的数字段"""
-    import re
-    head = str(s or "").split("-")[0].split("+")[0]
-    nums = re.findall(r"\d+", head)
-    return tuple(int(x) for x in nums) if nums else ()
-
-
-def is_newer_version(latest, current):
-    """latest 是不是真的比 current 新
-
-    为什么不能直接用 != 比较：GitHub 上最新发布可能是 v0.7，而本地已经
-    跑到 v0.8 了 —— 用 != 的话会把**老版本**当新版本弹出来。
-    另外字符串比较下 "0.10" < "0.9"，按数字比才是对的。
-    """
-    a, b = version_tuple(latest), version_tuple(current)
-    if not a or not b:
-        return str(latest) != str(current)
-    n = max(len(a), len(b))
-    a = a + (0,) * (n - len(a))
-    b = b + (0,) * (n - len(b))
-    return a > b
-
 
 def fmt_seconds(sec):
     """秒 -> 时:分:秒"""
@@ -1114,6 +1083,22 @@ class PageSettings(BasePage):
     # ================= 其它 =================
     def _build_other(self, s):
         tb = "其它"
+
+        # ---- 更新渠道 ----
+        # 国内用 Gitee 快；GitHub 的 API 有每小时 60 次的限流，
+        # 所以版本信息走的是仓库里的 version.json（raw 地址，不限流）。
+        self.channel_dd = self._dd([n for n, _v in
+                                    __import__("qt_update").CHANNELS], width=170)
+        _cur = str(s.get("update_channel", "auto") or "auto")
+        self.channel_dd.setCurrentText(
+            {"auto": "自动（先试 Gitee）", "gitee": "Gitee（国内快）",
+             "github": "GitHub"}.get(_cur, "自动（先试 Gitee）"))
+        self.channel_dd.currentTextChanged.connect(self._on_update_channel)
+        self._row(tb, "🌐", "更新渠道",
+                  "从哪个渠道查更新和打开下载页（国内选 Gitee 更快）",
+                  self.channel_dd)
+
+        # ---- 检测更新 ----
         upd_row = QWidget()
         ul = QHBoxLayout(upd_row)
         ul.setContentsMargins(0, 0, 0, 0)
@@ -1247,50 +1232,52 @@ class PageSettings(BasePage):
         self.update_status.setText("正在检测…")
         self.update_status.setStyleSheet(label_qss(T.DIM, 12))
         import threading
+        import qt_update
+
+        ch = str(self.state.get_setting("update_channel", "auto") or "auto")
 
         def _do():
-            latest = url = None
+            # 网络活儿在后台线程干，结果用信号发回主线程
+            # （后台线程绝对不能直接碰控件）
             try:
-                import urllib.request
-                import json as _json
-                req = urllib.request.Request(
-                    f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest",
-                    headers={"User-Agent": "Mozilla/5.0"})
-                with urllib.request.urlopen(req, timeout=8) as resp:
-                    data = _json.loads(resp.read().decode("utf-8"))
-                tag = str(data.get("tag_name", "")).strip()
-                # 只去掉开头的那个 v（lstrip("v") 会把开头的所有 v 都吃掉）
-                latest = tag[1:] if tag[:1].lower() == "v" else tag
-                url = data.get("html_url", f"https://github.com/{UPDATE_REPO}/releases")
+                info, used, reason = qt_update.check(ch, bust_cache=True)
             except Exception:
-                latest = None
-            # 发信号回主线程 —— 后台线程绝对不能直接碰控件
-            self.update_checked.emit(latest, url)
+                info, used, reason = None, "", "network"
+            self.update_checked.emit(info, reason)
 
         threading.Thread(target=_do, daemon=True).start()
 
-    def _update_result(self, latest, url):
-        if latest is None:
-            self.update_status.setText("检测失败（需联网）")
+    def _update_result(self, info, reason):
+        import qt_update
+        if not info:
+            self.update_status.setText(f"检测失败：{qt_update.reason_text(reason)}")
             self.update_status.setStyleSheet(label_qss("#E06C5A", 12))
             return
-        if not latest:
-            self.update_status.setText("未获取到版本信息")
-            self.update_status.setStyleSheet(label_qss(T.DIM, 12))
-            return
-        if not is_newer_version(latest, VERSION):
+        ver = info.get("version", "")
+        used = qt_update.CHANNEL_NAMES.get(info.get("channel", ""), "")
+        if not info.get("is_newer"):
             # 远端不比本地新（包括远端更旧的情况）—— 都算「已是最新」
-            self.update_status.setText(f"已是最新版本（{VERSION}）")
+            self.update_status.setText(f"已是最新版本（{VERSION}）· 来自 {used}")
             self.update_status.setStyleSheet(label_qss("#6CCB5F", 12))
             return
-        self.update_status.setText(f"发现新版本 {latest}")
+        self.update_status.setText(f"发现新版本 {ver}（来自 {used}）")
         self.update_status.setStyleSheet(label_qss(T.ACCENT, 12))
-        if QMessageBox.question(
-                self, "发现新版本",
-                f"当前版本 {VERSION}\n最新版本 {latest}\n\n是否打开下载页面？"
-        ) == QMessageBox.Yes:
+        notes = str(info.get("notes", "") or "").strip()
+        msg = f"当前版本 {VERSION}\n最新版本 {ver}\n\n"
+        if notes:
+            msg += f"更新内容：\n{notes}\n\n"
+        msg += "是否打开下载页面？"
+        if QMessageBox.question(self, "发现新版本", msg) == QMessageBox.Yes:
             import webbrowser
-            webbrowser.open(url)
+            url = str(info.get("url", "") or "").strip()
+            if url:
+                webbrowser.open(url)
+
+    def _on_update_channel(self, text):
+        val = {"自动（先试 Gitee）": "auto", "Gitee（国内快）": "gitee",
+               "GitHub": "github"}.get(text, "auto")
+        self.state.set_setting("update_channel", val)
+        self.update_status.setText("")
 
     # ---------- 各项回调 ----------
     def _on_alpha(self, v):

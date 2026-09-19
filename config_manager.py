@@ -67,6 +67,7 @@ DEFAULT_SETTINGS = {
     },
     "rollover_hour": 0,              # 换日时间（0=自然日；4=凌晨4点换日）
     "hotkey": "关闭",                # 全局热键（开始/停止监测）
+    "update_channel": "auto",        # 检测更新走哪个渠道：auto / gitee / github
 }
 
 
