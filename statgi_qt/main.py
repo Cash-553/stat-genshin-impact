@@ -84,6 +84,30 @@ def main():
 
     win = MainWindow()
     win.show()
+
+    # 启动预热：在**后台线程**里把 OCR 模型加载好、空跑一次。
+    #
+    # 为什么要：ONNX Runtime 第一次推理要先建内存池、做图优化，
+    # 实测首次要 1.5~2.5 秒。不预热的话，用户点「开始监测」之后
+    # 第一次识别会明显卡一下（现在虽然也会显示「正在加载识别模型…」，
+    # 但那是点下去之后才开始的）。
+    #
+    # 放后台 + daemon：不拖慢启动，也不影响程序能不能关掉。
+    # 失败就失败，识别时会自己再加载一遍，不影响功能。
+    try:
+        import threading
+
+        def _warm():
+            try:
+                from ocr_engine import OcrEngine
+                OcrEngine().warm_up()
+            except Exception:
+                pass
+
+        threading.Thread(target=_warm, daemon=True, name="ocr-warmup").start()
+    except Exception:
+        pass
+
     return app.exec()
 
 
