@@ -118,7 +118,7 @@ class Detector:
         self._last_full_scan = 0.0       # 上次全屏扫描的时间
 
         # 性能控制参数
-        self.change_threshold = float(self.settings.get("change_threshold", 4.0))
+        self.change_threshold = float(self.settings.get("change_threshold", 2.0))
         self.prev_small = None
         self.last_full_check = 0.0
         self.safety_interval = float(self.settings.get("safety_interval", 1.5))

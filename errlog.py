@@ -113,6 +113,31 @@ def install_hooks():
     except Exception:
         pass
 
+    # 1.5) Qt 的消息/异常（Qt 版用；没装 PySide6 就跳过）
+    # 为什么需要：Python 异常如果发生在 Qt 的槽函数里，不一定走 sys.excepthook，
+    # 而打包成窗口版后 stderr 是被丢掉的 —— 不钩的话等于什么都没记到，
+    # 出了问题只能看到「程序闪退了」。QMessageHandler 是 Qt 唯一的出口。
+    try:
+        from PySide6.QtCore import qInstallMessageHandler, QtMsgType
+
+        def _qt_hook(mode, ctx, msg):
+            try:
+                if mode in (QtMsgType.QtWarningMsg, QtMsgType.QtCriticalMsg,
+                            QtMsgType.QtFatalMsg):
+                    where = ""
+                    try:
+                        if ctx is not None and ctx.file:
+                            where = f"（{ctx.file}:{ctx.line}）"
+                    except Exception:
+                        pass
+                    _write("[%s] Qt 消息%s\n%s" % (
+                        time.strftime("%Y-%m-%d %H:%M:%S"), where, msg))
+            except Exception:
+                pass
+        qInstallMessageHandler(_qt_hook)
+    except Exception:
+        pass
+
     # 2) 后台线程里抛出来的
     try:
         import threading

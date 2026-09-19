@@ -154,7 +154,7 @@ class ActionsMixin:
                 import urllib.request
                 import json
                 req = urllib.request.Request(
-                    "https://api.github.com/repos/Cash-553/genshin-income-tracker/releases/latest",
+                    "https://api.github.com/repos/Cash-553/stat-genshin-impact/releases/latest",
                     headers={"User-Agent": "Mozilla/5.0"},
                 )
                 with urllib.request.urlopen(req, timeout=8) as resp:
@@ -162,7 +162,7 @@ class ActionsMixin:
                 latest = str(data.get("tag_name", "")).lstrip("v")
                 current = "0.7"
                 if latest and latest != current:
-                    url = data.get("html_url", "https://github.com/Cash-553/StatGI/releases")
+                    url = data.get("html_url", "https://github.com/Cash-553/stat-genshin-impact/releases")
                     self.after(0, lambda: self._update_found(latest, current, url))
                 elif latest:
                     self.after(0, lambda: self.update_status_label.configure(text="已是最新版本", text_color=theme.GOOD))

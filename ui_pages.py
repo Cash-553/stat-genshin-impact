@@ -426,8 +426,8 @@ class PagesMixin:
         self.tick_entry.bind("<FocusOut>", self._on_any_setting_change)
 
         h = self._make_setting_card(t, "🎚", "画面变化灵敏度", "越灵敏识别越快，太灵敏会耗电")
-        self.change_var = ctk.StringVar(value=str(self.settings.get("change_level", "中")))
-        self.change_dd = FloatingDropdown(h, ["高", "中", "低"], variable=self.change_var,
+        self.change_var = ctk.StringVar(value=str(self.settings.get("change_level", "标准")))
+        self.change_dd = FloatingDropdown(h, [n for n, _v in config_manager.CHANGE_LEVELS], variable=self.change_var,
                                           command=self._on_any_setting_change, font_size=14)
         self.change_dd.pack(fill="x")
 
@@ -440,8 +440,8 @@ class PagesMixin:
 
         h = self._make_setting_card(t, "🔍", "文字识别频率", "越快响应越及时，越慢越省电")
         self.ocr_var = ctk.StringVar(
-            value={150: "快", 250: "标准", 500: "慢"}.get(int(self.settings.get("ocr_interval", 250)), "标准"))
-        self.ocr_dd = FloatingDropdown(h, ["快", "标准", "慢"], variable=self.ocr_var,
+            value=next((n for n, v in config_manager.OCR_LEVELS if v == int(self.settings.get("ocr_interval", 150))), "标准"))
+        self.ocr_dd = FloatingDropdown(h, [n for n, _v in config_manager.OCR_LEVELS], variable=self.ocr_var,
                                        command=self._on_any_setting_change, font_size=14)
         self.ocr_dd.pack(fill="x")
 
