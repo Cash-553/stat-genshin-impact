@@ -1,23 +1,23 @@
 {
-  "version": "0.9",
-  "notes": "新增「公告」功能（不开新版也能收到说明）；公告可以翻往期；检测更新更稳、可以选 Gitee 或 GitHub；支持一键自动更新",
+  "version": "0.8",
+  "notes": "修复了打包版托盘和任务栏图标不对的问题；检测更新不再受网络限流影响；新增自动更新（点一下就能升级，不用手动下载）",
   "url_github": "https://github.com/Cash-553/stat-genshin-impact/releases",
   "url_gitee": "https://gitee.com/Cash553/stat-genshin-impact/releases",
   "update": {
-    "size": 150172481,
-    "sha256": "396984fbb5668c01c2f9778f75b6e01d3b7ed5b18ad5096eb8bdae1b5aa1a21e",
+    "size": 150157221,
+    "sha256": "b902cab1d667258ce541133d13cb22a852d61d84e140530545c6a87d8e83ab76",
     "sources": [
       {
         "label": "Gitee（国内快）",
         "parts": [
-          "https://gitee.com/Cash553/stat-genshin-impact/releases/download/v0.9/StatGI_v0.9.part1",
-          "https://gitee.com/Cash553/stat-genshin-impact/releases/download/v0.9/StatGI_v0.9.part2"
+          "https://gitee.com/Cash553/stat-genshin-impact/releases/download/v0.8/StatGI_v0.8.part1",
+          "https://gitee.com/Cash553/stat-genshin-impact/releases/download/v0.8/StatGI_v0.8.part2"
         ]
       },
       {
         "label": "GitHub",
         "parts": [
-          "https://github.com/Cash-553/stat-genshin-impact/releases/download/v0.9/StatGI_v0.9.zip"
+          "https://github.com/Cash-553/stat-genshin-impact/releases/download/v0.8/StatGI_v0.8.zip"
         ]
       }
     ]
