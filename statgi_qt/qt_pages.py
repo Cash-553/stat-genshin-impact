@@ -1091,8 +1091,8 @@ class PageSettings(BasePage):
                                     __import__("qt_update").CHANNELS], width=170)
         _cur = str(s.get("update_channel", "auto") or "auto")
         self.channel_dd.setCurrentText(
-            {"auto": "自动（先试 Gitee）", "gitee": "Gitee（国内快）",
-             "github": "GitHub"}.get(_cur, "自动（先试 Gitee）"))
+            {"auto": "自动", "gitee": "Gitee（国内快）",
+             "github": "GitHub"}.get(_cur, "自动"))
         self.channel_dd.currentTextChanged.connect(self._on_update_channel)
         self._row(tb, "🌐", "更新渠道",
                   "从哪个渠道查更新和打开下载页（国内选 Gitee 更快）",
@@ -1274,7 +1274,7 @@ class PageSettings(BasePage):
                 webbrowser.open(url)
 
     def _on_update_channel(self, text):
-        val = {"自动（先试 Gitee）": "auto", "Gitee（国内快）": "gitee",
+        val = {"自动": "auto", "Gitee（国内快）": "gitee",
                "GitHub": "github"}.get(text, "auto")
         self.state.set_setting("update_channel", val)
         self.update_status.setText("")

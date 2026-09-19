@@ -7,8 +7,8 @@
     （Gitee 那边也没有 releases，只能用 tags，拿不到版本说明。）
 
 现在的做法：
-    版本信息放在仓库里的一个**文件** 发布版/公告/version.json，
-    跟公告一样走 raw 地址读。没有 API、没有限流，两个渠道都能读。
+    版本信息放在仓库里的一个**文件**（发布版/公告/version.json），
+    直接走 raw 地址读 —— 没有 API、没有限流，两个渠道都能读。
 
 渠道（设置里可选）：
     GitHub / Gitee / 自动（两个都试，谁先通用谁）
@@ -32,7 +32,7 @@ TIMEOUT = 8
 UA = {"User-Agent": "StatGI"}
 
 # 渠道：显示名 -> 内部值
-CHANNELS = [("自动（先试 Gitee）", "auto"), ("Gitee（国内快）", "gitee"), ("GitHub", "github")]
+CHANNELS = [("自动", "auto"), ("Gitee（国内快）", "gitee"), ("GitHub", "github")]
 
 CHANNEL_NAMES = {"auto": "自动", "gitee": "Gitee", "github": "GitHub"}
 
