@@ -110,6 +110,32 @@ class GlassMixin:
         cache[key] = out
         return out
 
+    def _glass_schedule_refresh(self, delay=25):
+        """「刚有控件显示出来」时补贴一次玻璃。
+
+        什么时候需要：展开明细、下拉浮层弹出来 —— 这些控件之前是不可见的，
+        我们的遍历会跳过不可见控件，所以它们身上没有玻璃，会露出自己的实色底。
+        这里延后一点点整体补一次（贴过的会跳过，所以不算慢）。
+        """
+        if not self.settings.get("bg_image"):
+            return
+        try:
+            if getattr(self, "_glass_refresh_after", None):
+                try:
+                    self.after_cancel(self._glass_refresh_after)
+                except Exception:
+                    pass
+            self._glass_refresh_after = self.after(delay, self._glass_refresh_now)
+        except Exception:
+            pass
+
+    def _glass_refresh_now(self):
+        self._glass_refresh_after = None
+        try:
+            self._apply_background()
+        except Exception:
+            pass
+
     def _glass_clear(self):
         """清掉所有玻璃层，并把改过的文字底色还原"""
         for w, info in list(getattr(self, "_glass_placed", {}).items()):
@@ -131,10 +157,9 @@ class GlassMixin:
         for t, orig in list(getattr(self, "_glass_text_orig", {}).items()):
             try:
                 if t.winfo_exists():
-                    bg, img, comp, px, py, bd = orig
+                    bg, img, comp = orig[:3]
                     t.configure(bg=bg, image=(img if img else ""),
-                                compound=(comp or "none"),
-                                padx=px, pady=py, borderwidth=bd)
+                                compound=(comp or "none"))
             except Exception:
                 pass
         self._glass_text_orig = {}
@@ -204,6 +229,16 @@ class GlassMixin:
         把该位置的真实玻璃图铺满标签、文字叠在上面，底色就彻底看不出来了。
         （只把底色改成一块平均色的话，在有花纹的背景图上还是能看出方块。）
         输入框内部的 tk.Entry 不支持图片，只能给它一块平均色。
+
+        关键：图要按【去掉内边距 / 边框之后的内尺寸】裁。
+        tk 标签的请求宽度 = max(文字宽, 图片宽) + 2*padx + 2*border，
+        直接按整个标签的尺寸裁图的话，请求宽度每贴一次就涨一点，
+        会无限膨胀（之前右上角叉号一直变大就是这个原因）；
+        按内尺寸裁尺寸就不变，也就不需要去动标签的内边距了。
+        —— 早先的写法是「把内边距清零，然后跳过这一轮、等下一次
+        <Configure> 再回来贴图」，但那次 Configure 经常不来
+        （按钮的字标签 borderwidth=1，就会踩到这条路），
+        结果文字一直带着自己的实色底。现在一次贴好，不依赖第二轮。
         """
         from PIL import Image, ImageTk
         for attr in ("_label", "_text_label", "_entry"):
@@ -223,7 +258,7 @@ class GlassMixin:
                     self._glass_text_last = last
                 if last.get(t) == (rect, id(base)) and t.cget("image"):
                     continue
-                # 防止「越贴越大」死循环：标签一旦比我们贴过的尺寸还大，就不再贴
+                # 防止万一还是变大：标签一旦比我们贴过的尺寸还大，就不再贴
                 sizes = getattr(self, "_glass_text_size", None)
                 if sizes is None:
                     sizes = {}
@@ -235,18 +270,19 @@ class GlassMixin:
                 from PIL import Image
                 if t not in self._glass_text_orig:
                     self._glass_text_orig[t] = (t.cget("bg"), t.cget("image"),
-                                                t.cget("compound"),
-                                                t.cget("padx"), t.cget("pady"),
-                                                t.cget("borderwidth"))
-                # 关键：先把内边距 / 边框清零。
-                # tk 标签的请求宽度 = max(文字宽, 图片宽) + 2*padx + 2*border，
-                # 不清零的话，贴上图之后请求宽度每轮都会变大一点，无限膨胀
-                # （表现就是按钮、右上角叉号一直变大）。
-                if t.cget("padx") != 0 or t.cget("pady") != 0 or t.cget("borderwidth") != 0:
-                    t.configure(padx=0, pady=0, borderwidth=0)
-                    continue        # 等布局稳定，下一轮再贴
+                                                t.cget("compound"))
 
-                crop = self._glass_crop(base, rect)
+                # 去掉内边距 / 边框之后的内尺寸（裁图用这个尺寸，标签才不会变大）
+                try:
+                    bx = int(t.cget("borderwidth")) + int(t.cget("highlightthickness"))
+                    pad_x = 2 * (int(t.cget("padx")) + bx)
+                    pad_y = 2 * (int(t.cget("pady")) + bx)
+                except Exception:
+                    pad_x = pad_y = 0
+                inner = (rect[0] + pad_x // 2, rect[1] + pad_y // 2,
+                         max(2, rect[2] - pad_x), max(2, rect[3] - pad_y))
+
+                crop = self._glass_crop(base, inner)
                 if crop is None:
                     continue
                 r, g, b = crop.resize((1, 1), Image.BILINEAR).getpixel((0, 0))
