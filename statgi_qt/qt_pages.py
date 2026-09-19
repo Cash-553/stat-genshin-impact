@@ -1025,13 +1025,24 @@ class PageSettings(BasePage):
         self.close_dd.currentTextChanged.connect(self._on_close_behavior)
         self._row(tb, "✖", "点右上角 ✕ 时", "关闭窗口时的行为", self.close_dd)
 
-        self.hotkey_btn = QPushButton(str(s.get("hotkey", "关闭")))
-        self.hotkey_btn.setFixedSize(140, 32)
-        self.hotkey_btn.setCursor(Qt.PointingHandCursor)
-        self.hotkey_btn.setStyleSheet(btn_qss("normal", self.alpha))
-        self.hotkey_btn.clicked.connect(self._start_hotkey_capture)
-        self._row(tb, "⌨", "全局热键（开始/停止监测）",
-                  "点按钮后按下想用的键（Esc 取消）", self.hotkey_btn)
+        # 热键可以有多个动作 —— 每个动作一个按钮。
+        # _hotkey_btns 记着「设置里的键名 -> 按钮」，录制的时候按名字找按钮。
+        self._hotkey_btns = {}
+        self._capturing = None
+        for key, icon, title, desc in (
+                ("hotkey", "⌨", "热键：开始 / 停止监测",
+                 "点按钮后按下想用的键（Esc 取消）"),
+                ("hotkey_bar", "⌨", "热键：显示 / 隐藏统计条",
+                 "再按一次就收起。不想用就留「关闭」"),
+                ("hotkey_home", "⌨", "热键：显示主窗口",
+                 "窗口最小化到托盘后，按一下叫回来")):
+            btn = QPushButton(str(s.get(key, "关闭")))
+            btn.setFixedSize(140, 32)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setStyleSheet(btn_qss("normal", self.alpha))
+            btn.clicked.connect(lambda _=False, k=key: self._start_hotkey_capture(k))
+            self._hotkey_btns[key] = btn
+            self._row(tb, icon, title, desc, btn)
 
     # ================= 统计 =================
     def _build_stats(self, s):
@@ -1546,25 +1557,44 @@ class PageSettings(BasePage):
             self._apply_colors("accent_color", v)
 
     # ---------- 热键捕获 ----------
-    def _start_hotkey_capture(self):
-        self._capturing = True
-        self.hotkey_btn.setText("请按下按键…（Esc 取消）")
+    def _start_hotkey_capture(self, which="hotkey"):
+        """开始录制热键
+
+        which 指明这次是给哪个动作录：设置里的键名（hotkey / hotkey_bar …）。
+        """
+        self._capturing = which
+        if which not in self._hotkey_btns:
+            return
+        self._hotkey_btns[which].setText("请按下按键…（Esc 取消）")
         self.setFocus()
 
     def _on_key_press(self, e):
-        if not self._capturing:
+        which = getattr(self, "_capturing", None)
+        if not which:
             return
-        self._capturing = False
+        btn = self._hotkey_btns.get(which)
+        cur = str(self.state.settings.get(which, "关闭"))
+        self._capturing = None
+        if btn is None:
+            return
         k = e.key()
         if k == Qt.Key_Escape:
-            self.hotkey_btn.setText(str(self.state.settings.get("hotkey", "关闭")))
+            btn.setText(cur)
             return
         name = _qt_key_name(e)
         if name is None:
-            self.hotkey_btn.setText(str(self.state.settings.get("hotkey", "关闭")))
+            btn.setText(cur)
             return
-        self.state.set_setting("hotkey", name)
-        self.hotkey_btn.setText(name)
+        # 同一个键不能同时给两个动作用 —— 不然按一下触发两个
+        for other, obtn in self._hotkey_btns.items():
+            if other != which and str(self.state.settings.get(other, "关闭")) == name:
+                QMessageBox.information(
+                    self, "这个键已经用过了",
+                    f"「{name}」已经分配给另一个动作了，换一个键吧。")
+                btn.setText(cur)
+                return
+        self.state.set_setting(which, name)
+        btn.setText(name)
 
     def on_show(self):
         pass
