@@ -140,8 +140,19 @@ def load_builtin():
 
 
 def load_all(settings=None):
-    """给界面用：缓存 > 内置。返回公告列表（最新在前）"""
-    return load_cached() or load_builtin()
+    """给界面用：有缓存就用缓存，没缓存才用内置的
+
+    ⚠ 不能写成 `load_cached() or load_builtin()`：
+    空列表是假值，会把「远端已经清空公告」当成「没缓存」，
+    然后退回内置的那份（里面可能还留着老公告）—— 公告就删不干净了。
+    所以这里按**文件在不在**来判断，不看列表空不空。
+    """
+    try:
+        if cache_file().exists():
+            return load_cached()
+    except Exception:
+        pass
+    return load_builtin()
 
 
 def save_cache(notices):
@@ -155,29 +166,52 @@ def save_cache(notices):
 
 
 def _fetch_one(url, bust_cache=False):
+    """拉一个源。返回 (拿到没有, 公告列表)
+
+    ⚠ 为什么把「拿到没有」和「列表」分开返回：
+    「公告被清空」也是一个**有效状态** —— 远端就是 {"notices": []}。
+    如果只看列表真假（if lst:），空列表会被当成"没拉到"，
+    结果就是：**用户永远删不掉公告**（本地一直用旧缓存）——
+    这个 bug 真出现过。所以要明确区分「拉到了但是空的」和「根本没拉到」。
+    """
     u = url
     if bust_cache:
         u += ("&" if "?" in url else "?") + "t=%d" % int(time.time())
     req = urllib.request.Request(u, headers=UA)
     with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
         raw = resp.read().decode("utf-8", errors="replace")
-    return parse(raw)
+    try:
+        d = json.loads(raw)
+    except Exception:
+        return False, []
+    if not isinstance(d, dict):
+        return False, []
+    # 新格式：有 notices 键（哪怕数组是空的）就算合法
+    if isinstance(d.get("notices"), list):
+        return True, parse(d)
+    # 旧格式：整个对象就是一条公告
+    if str(d.get("id", "")).strip() and str(d.get("title", "")).strip():
+        return True, parse(d)
+    return False, []
 
 
 def fetch(bust_cache=False):
-    """按顺序试每个源，返回 (公告列表, 命中的源地址)
+    """按顺序试每个源。返回 (公告列表, 命中的源地址)
 
-    全失败返回 ([], None) —— 调用方不用管错误，静默处理就行。
+    公告列表可以是**空列表** —— 那表示「远端把公告清空了」，
+    是个有效结果，调用方要按这个把本地缓存也清掉。
+
+    全部源都拉不到才返回 (None, None)，调用方保持现状即可。
     """
     for url in NOTICE_SOURCES:
         try:
-            lst = _fetch_one(url, bust_cache)
-            if lst:
-                save_cache(lst)               # 拉到就缓存，断网时还能看
+            ok, lst = _fetch_one(url, bust_cache)
+            if ok:
+                save_cache(lst)               # 空的也要存 —— 那代表"清空了"
                 return lst, url
         except Exception:
             continue                          # 这个源不行就试下一个
-    return [], None
+    return None, None
 
 
 # ------------------------------------------------------------
@@ -186,8 +220,12 @@ class NoticeFetcher(QObject):
 
     用法：
         f = NoticeFetcher()
-        f.done.connect(收到公告的函数)     # 参数是 公告列表（可能为空）
+        f.done.connect(收到公告的函数)     # 参数是 公告列表，或 None
         f.start()
+
+    done 发出来的东西有两种：
+        []      拉到了，但远端一条公告都没有（公告被清空了 —— 有效结果）
+        None    一个源都没拉到（没网 / 都被墙），调用方保持现状
 
     ⚠ 为什么用信号而不是直接回调：这个类的活儿在后台线程跑，
     直接调回调就等于在别的线程里碰 Qt 控件 —— 会崩。
@@ -200,7 +238,7 @@ class NoticeFetcher(QObject):
         threading.Thread(target=self._work, args=(bust_cache,), daemon=True).start()
 
     def _work(self, bust_cache):
-        lst = []
+        lst = None
         try:
             global _fetching
             with _lock:
@@ -210,7 +248,7 @@ class NoticeFetcher(QObject):
             try:
                 lst, _src = fetch(bust_cache=bust_cache)
             except Exception:
-                lst = []
+                lst = None
             finally:
                 with _lock:
                     _fetching = False

@@ -1757,14 +1757,23 @@ class PageNotice(BasePage):
         self._fetcher.start(bust_cache=True)
 
     def _on_refreshed(self, notices):
+        """手动刷新回来了
+
+        notices 为 None = 一个源都没拉到（保持现状）；
+        为空列表 = 拉到了，远端确实一条公告都没有（要把本地的也清掉）。
+        """
         self.refresh_btn.setEnabled(True)
         self.refresh_btn.setText("↻ 刷新")
-        if notices:
-            self.set_notices(notices)
-            QMessageBox.information(self, "已刷新", f"拉到 {len(notices)} 条公告。")
-        else:
+        if notices is None:
             QMessageBox.information(self, "刷新失败", "没拉到公告（可能是网络问题）。\n"
                                                       "显示的还是上次缓存的内容。")
+            return
+        self.set_notices(notices)
+        if notices:
+            QMessageBox.information(self, "已刷新", f"拉到 {len(notices)} 条公告。")
+        else:
+            QMessageBox.information(self, "已刷新", "远端现在一条公告都没有。\n"
+                                                    "（可能刚被清空）")
 
     def on_show(self):
         # 切到本页时重新读一次（可能后台刚拉到新的）

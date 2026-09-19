@@ -347,8 +347,13 @@ class MainWindow(QWidget):
             log_exc("qt_window 公告")
 
     def _on_notice(self, notices):
-        """公告拉回来了（这里已经在主线程 —— 信号跨线程是安全的）"""
-        if not notices:
+        """公告拉回来了（这里已经在主线程 —— 信号跨线程是安全的）
+
+        notices 有两种：
+            []      拉到了，远端一条公告都没有（公告被清空）→ 要跟着清空
+            None    一个源都没拉到 → 保持现状（用缓存），别乱动
+        """
+        if notices is None:
             return
         try:
             self.set_notice(notices)
