@@ -10,9 +10,9 @@
 import os
 import sys
 
-# 项目根目录（识别/统计那些模块都在这儿，跟 Tk 版共用一份）。
+# 项目根目录（识别/统计那些模块都在这儿）。
 # 注意用 append 而不是 insert(0)：本目录的 qt_*.py 必须排在前面，
-# 否则一旦有同名模块，就会加载到根目录里 Tk 版的那个（之前就踩过这个坑）。
+# 否则一旦有同名模块，就可能加载到根目录里的那个（之前就踩过这个坑）。
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.append(ROOT)
@@ -30,7 +30,7 @@ except ImportError:
 
 
 def main():
-    # 高 DPI：Qt 自己处理，不需要 Tk 版那个 0.906 的缩放补丁
+    # 高 DPI：交给 Qt 自己处理
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
 
@@ -49,7 +49,7 @@ def main():
     except Exception:
         pass
 
-    # 出错也记进 data/error.log（跟 Tk 版共用同一套）
+    # 出错也记进 data/error.log
     try:
         from errlog import install_hooks
         install_hooks()
@@ -57,8 +57,8 @@ def main():
         pass
 
     # 防止重复打开（两个程序同时识别会重复统计）。
-    # 用的是跟 Tk 版**同一个**互斥体名字 —— 这样两版也不会同时跑，
-    # 避免它们抢同一份 config/settings.json 互相覆盖。
+    # 互斥体名字沿用旧版那个。改成新的会让新旧两版能同时跑，
+    # 那样它们会抢同一份 config/settings.json 互相覆盖 —— 所以别改。
     try:
         import ctypes
         ctypes.windll.kernel32.CreateMutexW(
@@ -66,8 +66,7 @@ def main():
         if ctypes.windll.kernel32.GetLastError() == 183:      # ERROR_ALREADY_EXISTS
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.warning(None, "提示",
-                                "程序已经在运行了。\n\n请到右下角托盘找到它。\n"
-                                "（Tk 版和 Qt 版也不能同时开）")
+                                "程序已经在运行了。\n\n请到右下角托盘找到它。")
             return 0
     except Exception:
         pass
