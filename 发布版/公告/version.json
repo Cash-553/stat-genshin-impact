@@ -2,5 +2,5 @@
   "version": "0.8",
   "notes": "修复了打包版托盘和任务栏图标不对的问题；检测更新不再受网络限流影响",
   "url_github": "https://github.com/Cash-553/stat-genshin-impact/releases",
-  "url_gitee": "https://gitee.com/Cash553/stat-genshin-impact/releases"
+  "url_gitee": ""
 }
