@@ -140,7 +140,7 @@ class Sidebar(QFrame):
             self.buttons.append(b)
 
         lay.addStretch(1)
-        v = QLabel("V0.8 · Qt 版")
+        v = QLabel("V0.9 · Qt 版")
         v.setStyleSheet(label_qss(T.DIM, 12))
         v.setAlignment(Qt.AlignCenter)
         lay.addWidget(v)

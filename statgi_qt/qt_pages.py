@@ -23,7 +23,7 @@ import config_manager
 from qt_widgets import (Card, SettingRow, Switch, Accordion, ButtonRow, heading,
                         level_name, level_value)
 
-VERSION = "0.8"
+VERSION = "0.9"
 
 # 检测更新用的仓库。注意这个仓库改过两次名：
 #   genshin-income-tracker（最早的旧名，**已经不存在了**，Tk 版就错在这儿）
