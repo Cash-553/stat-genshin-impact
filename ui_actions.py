@@ -114,10 +114,27 @@ class ActionsMixin:
         messagebox.showinfo("已清空", "收益记录已清空")
 
     def on_icon_manager(self):
-        """打开图标管理窗口（收益统计条三个格子的图标）"""
+        """打开图标管理窗口（收益统计条三个格子的图标）。
+
+        只能开一个：已经开着就把它拎到前面来，不再开第二个。
+        """
+        win = getattr(self, "_icon_win", None)
+        if win is not None:
+            try:
+                if win.winfo_exists():
+                    win.lift()
+                    win.focus_force()
+                    return
+            except Exception:
+                pass
+            self._icon_win = None
         try:
-            IconManagerWindow(self, on_change=self.reload_icons)
+            self._icon_win = IconManagerWindow(
+                self, on_change=self.reload_icons,
+                on_closed=lambda: setattr(self, "_icon_win", None))
+            self._icon_win.show()
         except Exception:
+            self._icon_win = None
             messagebox.showerror("打开失败", "图标管理窗口打不开，请重启程序再试。")
 
     def on_check_update(self):
