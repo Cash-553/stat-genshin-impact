@@ -14,11 +14,13 @@ import os
 from PySide6.QtCore import Qt, QRectF, QRect, QPoint, QTimer
 from PySide6.QtGui import QPainter, QPainterPath, QPixmap, QColor, QIcon
 from PySide6.QtWidgets import (QWidget, QFrame, QLabel, QPushButton, QVBoxLayout,
-                               QHBoxLayout, QStackedWidget, QSizeGrip, QMessageBox)
+                               QHBoxLayout, QStackedWidget, QMessageBox, QDialog,
+                               QTextEdit)
 
 import config_manager
 import paths
-from qt_theme import (HEADER, RADIUS_WINDOW, panel_alpha, label_qss, rgba)
+from qt_theme import (HEADER, RADIUS_WINDOW, panel_alpha, label_qss, rgba,
+                      btn_qss)
 import qt_theme as T
 
 
@@ -140,12 +142,59 @@ class Sidebar(QFrame):
             self.buttons.append(b)
 
         lay.addStretch(1)
+
+        # ---- 公告（放在导航和版本号之间，做一个独立入口）----
+        # 它不是"页面"，点一下是弹窗 —— 所以不参与 set_active 的高亮
+        self.notice_btn = QPushButton("  📢   公告")
+        self.notice_btn.setFixedHeight(40)
+        self.notice_btn.setCursor(Qt.PointingHandCursor)
+        self.notice_btn.setStyleSheet(
+            f"QPushButton {{ background:transparent; color:{T.TEXT}; border:none;"
+            f" border-radius:8px; text-align:left; padding-left:14px;"
+            f" font-family:'Microsoft YaHei UI'; font-size:14px; }}"
+            f"QPushButton:hover {{ background: rgba(255,255,255,28); }}")
+        self.notice_btn.clicked.connect(self._on_notice_click)
+        lay.addWidget(self.notice_btn)
+
+        # 未读小红点：浮在按钮右上角（做成按钮的子控件，跟着按钮走）
+        self.notice_dot = QLabel("●", self.notice_btn)
+        self.notice_dot.setStyleSheet(
+            "color:#E06C5A; font-size:13px; background:transparent;")
+        self.notice_dot.setFixedSize(16, 16)
+        self.notice_dot.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.notice_dot.hide()
+
         v = QLabel("V0.9 · Qt 版")
         v.setStyleSheet(label_qss(T.DIM, 12))
         v.setAlignment(Qt.AlignCenter)
         lay.addWidget(v)
 
         self.set_active(0)
+
+    def _on_notice_click(self):
+        fn = getattr(self.win, "show_notice", None)
+        if callable(fn):
+            fn()
+
+    def set_notice_unread(self, unread):
+        """有没有未读公告 —— 有就在公告那一项右上角挂个红点"""
+        self.notice_dot.setVisible(bool(unread))
+        if unread:
+            self._place_dot()
+            self.notice_dot.raise_()
+
+    def _place_dot(self):
+        """把红点摆在按钮右上角（按钮大小定了之后才准）"""
+        b = self.notice_btn
+        self.notice_dot.move(max(0, b.width() - 20), 4)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._place_dot()
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self._place_dot()
 
     def set_active(self, idx):
         for i, b in enumerate(self.buttons):
@@ -292,11 +341,82 @@ class MainWindow(QWidget):
         if not notice:
             return
         try:
-            fn = getattr(self.pages[0], "set_notice", None)
-            if callable(fn):
-                fn(notice)
+            self.set_notice(notice)
         except Exception:
             pass
+
+    # ---------- 公告 ----------
+    def set_notice(self, n):
+        """记下当前公告，并更新侧栏那个未读小红点"""
+        self.notice = n
+        unread = False
+        try:
+            import qt_notice
+            unread = qt_notice.is_unread(n, self.state.settings)
+        except Exception:
+            pass
+        try:
+            self.sidebar.set_notice_unread(unread)
+        except Exception:
+            pass
+
+    def show_notice(self):
+        """点侧栏「公告」→ 弹窗看全文"""
+        n = getattr(self, "notice", None)
+        if not n:
+            QMessageBox.information(self, "公告", "暂时没有公告。")
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("公告")
+        dlg.setMinimumWidth(540)
+        v = QVBoxLayout(dlg)
+        v.setContentsMargins(20, 18, 20, 16)
+        v.setSpacing(10)
+
+        t = QLabel(str(n.get("title", "公告")))
+        t.setStyleSheet(label_qss(T.ACCENT, 18, True))
+        t.setWordWrap(True)
+        v.addWidget(t)
+
+        body = QTextEdit()
+        body.setPlainText(str(n.get("body", "")))
+        body.setReadOnly(True)
+        body.setMinimumHeight(220)
+        body.setStyleSheet(
+            f"QTextEdit {{ background: {rgba('#FFFFFF', 18)}; color: {T.TEXT};"
+            f" border: none; border-radius: 8px; padding: 10px;"
+            f" font-family: 'Microsoft YaHei UI'; font-size: 13px; }}")
+        v.addWidget(body, 1)
+
+        row = QHBoxLayout()
+        url = str(n.get("url", "") or "").strip()
+        if url:
+            b_open = QPushButton("打开链接")
+            b_open.setFixedHeight(32)
+            b_open.setCursor(Qt.PointingHandCursor)
+            b_open.setStyleSheet(btn_qss("accent", self.alpha))
+            b_open.clicked.connect(lambda: __import__("webbrowser").open(url))
+            row.addWidget(b_open)
+        row.addStretch(1)
+        b_ok = QPushButton("知道了")
+        b_ok.setFixedSize(100, 32)
+        b_ok.setCursor(Qt.PointingHandCursor)
+        b_ok.setStyleSheet(btn_qss("normal", self.alpha))
+        b_ok.clicked.connect(dlg.accept)
+        row.addWidget(b_ok)
+        v.addLayout(row)
+
+        # 读过就记下 id，红点消失
+        try:
+            import qt_notice
+            qt_notice.mark_read(n, self.state.settings,
+                                lambda s: self.state.set_setting(
+                                    "last_read_notice", n.get("id", "")))
+        except Exception:
+            pass
+        self.set_notice(n)
+        dlg.exec()
 
     def _api_data(self):
         snap = self.state.snapshot()

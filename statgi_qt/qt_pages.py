@@ -14,7 +14,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                                QPushButton, QComboBox, QLineEdit, QSlider,
                                QScrollArea, QFrame, QMessageBox, QFileDialog,
-                               QStackedWidget, QDialog, QTextEdit)
+                               QStackedWidget)
 
 from qt_theme import (panel_alpha, label_qss, btn_qss, entry_qss, combo_qss,
                       slider_qss, scroll_qss, rgba)
@@ -127,30 +127,8 @@ class PageLaunch(BasePage):
         v.addWidget(self.last_label)
         self.add(c)
 
-        # ---- 公告卡片 ----
-        # 只有真的有公告时才显示；没读过的话右边带个红点。
-        # 拉不到公告就整张卡片藏起来，什么都不说（公告是锦上添花，不能打扰人）。
-        # 标题放在卡片说明栏里（那是它该在的地方），右边只留红点 + 按钮。
-        self.notice = None
-        spot = QWidget()
-        sl = QHBoxLayout(spot)
-        sl.setContentsMargins(0, 0, 0, 0)
-        sl.setSpacing(8)
-        self.notice_dot = QLabel("●")
-        self.notice_dot.setStyleSheet(label_qss("#E06C5A", 12))
-        self.notice_btn = QPushButton("查看 ▸")
-        self.notice_btn.setFixedSize(96, 32)
-        self.notice_btn.setCursor(Qt.PointingHandCursor)
-        self.notice_btn.setStyleSheet(btn_qss("normal", self.alpha))
-        self.notice_btn.clicked.connect(self._show_notice)
-        sl.addWidget(self.notice_dot)
-        sl.addWidget(self.notice_btn)
-        self.notice_row = SettingRow(
-            self, "📢", "公告", "", spot, alpha=self.alpha, height=70)
-        self.notice_row.setVisible(False)
-        self.add(self.notice_row)
-
-        self._refresh_notice()
+        # 公告不在这儿了 —— 挪到左侧栏做一个独立入口（未读时挂红点），
+        # 点一下由 MainWindow.show_notice() 弹窗显示。
 
         # 开始监测
         # 尺寸跟下面的「清空」按钮**完全一致**（都是 110×38），
@@ -323,87 +301,8 @@ class PageLaunch(BasePage):
         except Exception as e:
             QMessageBox.warning(self, "失败", f"截图失败：{e}")
 
-    def _refresh_notice(self):
-        """显示公告卡片。
-
-        优先级：远程拉到的（缓存在 data/notice_cache.json）> 程序内置的那份。
-        两个都没有就藏起来 —— 什么都不做，不弹错。
-        """
-        import qt_notice
-        n = qt_notice.load_cached() or qt_notice.load_builtin()
-        self.set_notice(n)
-
-    def set_notice(self, n):
-        self.notice = n
-        if not n:
-            self.notice_row.setVisible(False)
-            return
-        self.notice_row.setVisible(True)
-        import qt_notice
-        unread = qt_notice.is_unread(n, self.state.settings)
-        self.notice_dot.setVisible(unread)
-        # 标题放说明栏里，太长就截断（完整内容点「查看」能看到）
-        # 未读小红点只留右边那一个 —— 放两处反而乱
-        title = str(n.get("title", "公告"))
-        if len(title) > 34:
-            title = title[:33] + "…"
-        self.notice_row.set_text(desc=title)
-        self.notice_btn.setText("查看 ▸")
-
-    def _show_notice(self):
-        if not self.notice:
-            return
-        import qt_notice
-        n = self.notice
-        dlg = QDialog(self.win)
-        dlg.setWindowTitle("公告")
-        dlg.setMinimumWidth(520)
-        v = QVBoxLayout(dlg)
-        v.setContentsMargins(20, 18, 20, 16)
-        v.setSpacing(10)
-
-        t = QLabel(str(n.get("title", "公告")))
-        t.setStyleSheet(label_qss(T.ACCENT, 18, True))
-        t.setWordWrap(True)
-        v.addWidget(t)
-
-        body = QTextEdit()
-        body.setPlainText(str(n.get("body", "")))
-        body.setReadOnly(True)
-        body.setMinimumHeight(200)
-        body.setStyleSheet(
-            f"QTextEdit {{ background: {rgba('#FFFFFF', 18)}; color: {T.TEXT};"
-            f" border: none; border-radius: 8px; padding: 10px;"
-            f" font-family: 'Microsoft YaHei UI'; font-size: 13px; }}")
-        v.addWidget(body, 1)
-
-        row = QHBoxLayout()
-        url = str(n.get("url", "") or "").strip()
-        if url:
-            b_open = QPushButton("打开链接")
-            b_open.setFixedHeight(32)
-            b_open.setCursor(Qt.PointingHandCursor)
-            b_open.setStyleSheet(btn_qss("accent", self.alpha))
-            b_open.clicked.connect(lambda: __import__("webbrowser").open(url))
-            row.addWidget(b_open)
-        row.addStretch(1)
-        b_ok = QPushButton("知道了")
-        b_ok.setFixedSize(100, 32)
-        b_ok.setCursor(Qt.PointingHandCursor)
-        b_ok.setStyleSheet(btn_qss("normal", self.alpha))
-        b_ok.clicked.connect(dlg.accept)
-        row.addWidget(b_ok)
-        v.addLayout(row)
-
-        # 打开就算读过了（记下 id，下次不再显示红点）
-        qt_notice.mark_read(n, self.state.settings,
-                            lambda s: self.state.set_setting("last_read_notice", n.get("id", "")))
-        self.notice_dot.setVisible(False)
-        dlg.exec()
-
     def on_show(self):
         self._sync_button()
-        self._refresh_notice()
 
     def on_show(self):
         pass
