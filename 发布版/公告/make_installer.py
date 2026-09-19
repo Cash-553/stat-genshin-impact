@@ -6,24 +6,48 @@
     必须先合并再解压。让普通用户敲 copy /b 太难了，
     所以给一个小 bat，双击就自动合并+解压。
 
-⚠ 这个 bat 必须以 **GBK** 写盘！
-   cmd.exe 读 .bat 是按系统 OEM 代码页（中文系统是 GBK）解析的，
-   写成 UTF-8 的话中文提示全是乱码，还可能把某行解析坏。
+⚠ 这个 bat 必须按**系统 OEM 代码页**（中文系统 = GBK）写盘，
+   而且脚本开头 chcp 要切到同一个值！
+   cmd.exe 读 .bat 就是按控制台代码页解析的：
+     · 文件 UTF-8 + cmd 按 GBK 读  → 中文乱码
+     · 文件 GBK   + chcp 65001     → 一样乱，连路径都会读错
    （write 工具只会写 UTF-8，所以专门用这个脚本生成。）
 
-用法：python 生成一键安装.bat.py
+用法：python make_installer.py
 """
+import ctypes
 import io
 import json
 import os
 import sys
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+# 用 reconfigure 而不是重新包一层 TextIOWrapper：
+# 包一层的话原来那个 sys.stdout 没人引用了，被 GC 掉时会
+# 顺手把底层的 buffer 关掉 —— 之后再 print 就报「I/O operation on closed file」
+sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+
+
+def oem():
+    try:
+        cp = int(ctypes.windll.kernel32.GetOEMCP())
+        if cp > 0:
+            return f"cp{cp}", cp
+    except Exception:
+        pass
+    return "cp936", 936
+import io
+import json
+import os
+import sys
+# 用 reconfigure 而不是重新包一层 TextIOWrapper：
+# 包一层的话原来那个 sys.stdout 没人引用了，被 GC 掉时会
+# 顺手把底层的 buffer 关掉 —— 之后再 print 就报「I/O operation on closed file」
+sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 VER_FILE = os.path.join(HERE, "version.json")
 
 TEMPLATE = '''@echo off
-chcp 936 >nul
+chcp {cp} >nul
 title StatGI 一键安装
 cd /d "%~dp0"
 
@@ -109,11 +133,11 @@ def main():
     parts = gitee["parts"]
     p1 = os.path.basename(parts[0])
     p2 = os.path.basename(parts[1])
-    text = TEMPLATE.format(ver=ver, p1=p1, p2=p2,
-                           u1=parts[0], u2=parts[1])
-
     out = os.path.join(HERE, "一键安装.bat")
-    with open(out, "w", encoding="gbk", errors="replace", newline="\r\n") as f:
+    enc, cp = oem()
+    text = TEMPLATE.format(ver=ver, p1=p1, p2=p2,
+                           u1=parts[0], u2=parts[1], cp=cp)
+    with open(out, "w", encoding=enc, errors="replace", newline="\r\n") as f:
         f.write(text)
 
     print(f"✓ 生成好了：{out}")

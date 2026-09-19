@@ -130,21 +130,24 @@ Qt 里这两件事都是原生的：半透明就是一个 `rgba()` 背景色，�
 ## 📁 目录结构（源码）
 
 ```
-├─ app_qt.py                 ★ V0.8 打包入口（Qt 版）
-├─ StatGI_qt.spec            ★ V0.8 打包配置
+├─ app.py                    ★ 打包入口
+├─ StatGI.spec               ★ 打包配置
 
-├─ statgi_qt/                ★ V0.8 界面（Qt）
+├─ statgi_qt/                ★ 界面（Qt）
 │    ├─ main.py              直接运行用这个：python main.py
 │    ├─ qt_window.py         主窗口（无边框 + 圆角 + 背景图 + 透明卡片 + 侧边栏）
-│    ├─ qt_pages.py          五个页面（启动 / 今日统计 / 收益统计条 / 收益记录 / 设置）
+│    ├─ qt_pages.py          六个页面（启动 / 今日统计 / 收益统计条 / 收益记录 / 设置 / 公告）
 │    ├─ qt_widgets.py        通用控件（卡片 / 设置行 / 开关 / 折叠区）
 │    ├─ qt_theme.py          配色与样式表
 │    ├─ qt_core.py           数据与监测核心（唯一的刷新定时器在这里）
 │    ├─ qt_bar.py            收益统计条窗口
 │    ├─ qt_dialogs.py        图标管理 / 区域框选
-│    └─ qt_tray.py           系统托盘 + 全局热键
+│    ├─ qt_tray.py           系统托盘 + 全局热键
+│    ├─ qt_notice.py         公告（从 Gitee / GitHub 拉）
+│    ├─ qt_update.py         检测更新（读仓库里的 version.json）
+│    └─ qt_updater.py        自动更新（下载分卷 → 合并 → 校验 → 交给脚本替换）
 
-│  ── 识别与数据（两版共用，未改动）──
+│  ── 识别与数据 ──
 ├─ detector.py               检测流水线（文字识别 + 拾取提示去重）
 ├─ ocr_engine.py             OCR 引擎（RapidOCR 封装）
 ├─ capture.py                屏幕捕捉（mss 抓取指定区域）
@@ -160,14 +163,15 @@ Qt 里这两件事都是原生的：半透明就是一个 `rgba()` 背景色，�
 ├─ theme.py                  统一主题配色
 ├─ paths.py                  路径工具（源码运行 / 打包运行）
 
-│  ── 周边（共用）──
+│  ── 周边 ──
 ├─ api_server.py             直播数据接口（Flask）
+└─ test_event_lifecycle.py   拾取提示去重的单元测试
 
-│  ── 旧版 Tk 界面（v0.7，保留作参考，暂不再更新）──
-├─ app.py  ui_base.py  ui_glass.py  ui_pages.py  ui_settings.py
-├─ ui_actions.py  ui_monitor.py  ui_widgets.py  win_shell.py
-├─ overlay_bar.py  icon_manager.py  region_selector.py  tray.py  fonts.py
-└─ StatGI.spec               旧版打包配置
+│  ── 发布相关（发布版/公告/）──
+   notice.json               公告内容
+   version.json              最新版本号 + 更新包地址（程序读这个）
+   notice_editor.pyw         公告编辑器
+   build_update.py           生成更新分卷 + 一键安装脚本
 ```
 
 ---
