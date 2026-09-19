@@ -252,16 +252,23 @@ echo.
 echo   StatGI 正在更新，请不要关掉这个窗口…
 echo.
 
-rem ---- 1) 等主程序完全退出（最多等 60 秒）----
+rem ---- 1) 等主程序完全退出（最多等 30 秒，不行就强关）----
 set /a n=0
 :wait
 tasklist /fi "imagename eq StatGI.exe" 2>nul | find /i "StatGI.exe" >nul
 if not errorlevel 1 (
     set /a n+=1
-    if %n% gtr 60 goto giveup
+    if %n% gtr 30 (
+        echo   主程序没有自己关掉，正在强制关闭…
+        taskkill /f /im StatGI.exe >nul 2>nul
+        timeout /t 2 /nobreak >nul
+        goto go
+    )
     timeout /t 1 /nobreak >nul
     goto wait
 )
+
+:go
 
 rem ---- 2) 备份旧文件（除了用户数据）----
 if exist "_backup" rd /s /q "_backup"
@@ -286,16 +293,19 @@ pause
 goto done
 
 :giveup
-echo   ✗ 等太久了，主程序好像没关掉。请手动关掉 StatGI 再双击本文件。
-echo.
-pause
+rem （已不再跳到这里 —— 等不到就 taskkill 了。留着是防止 goto 写错时炸掉）
 exit /b
 
 :done
 rem ---- 4) 清理 + 重新打开 ----
 rd /s /q "data\\_update" 2>nul
 rd /s /q "_backup" 2>nul
-start "" "StatGI.exe"
+echo.
+echo   正在重新打开 StatGI…
+start "" "%~dp0StatGI.exe"
+echo.
+echo   好了，这个窗口 3 秒后自动关闭。
+timeout /t 3 /nobreak >nul
 exit /b
 '''
     # ⚠ 必须按 OEM 代码页写盘，不能写 UTF-8（见 _oem_encoding 的说明）
@@ -305,23 +315,49 @@ exit /b
 
 
 def launch_updater(bat_path):
-    """启动更新 bat（脱离本程序，这样本程序退出后它还能继续跑）"""
+    """启动更新 bat（新开一个**可见**的控制台窗口，本程序退出后它继续跑）
+
+    ⚠ 这里踩过坑：一开始用的是 DETACHED_PROCESS（脱离控制台），
+    结果 bat 在「没有控制台」的状态下跑 —— 里面的 tasklist 管道、
+    start 都行为异常，用户那边什么都看不到，更新完也不会重新打开。
+    正确做法是 CREATE_NEW_CONSOLE：给它一个自己的窗口，
+    bat 里的 echo 用户能看到，出问题也知道卡在哪一步。
+    """
+    CREATE_NEW_CONSOLE = 0x00000010
+    CREATE_NEW_PROCESS_GROUP = 0x00000200
     try:
-        # CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS，让它不跟着我们死
-        DETACHED = 0x00000008
-        subprocess.Popen(["cmd", "/c", str(bat_path)],
-                         cwd=str(paths.app_dir()),
-                         creationflags=DETACHED | subprocess.CREATE_NEW_PROCESS_GROUP,
-                         close_fds=True)
+        subprocess.Popen(
+            ["cmd", "/c", str(bat_path)],
+            cwd=str(paths.app_dir()),
+            creationflags=CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP,
+            close_fds=True)
         return True
     except Exception:
-        # 退一步：用 start 打开（会弹个窗口，但也能用）
+        # 退一步：用 start 打开
         try:
             subprocess.Popen(["cmd", "/c", "start", "", str(bat_path)],
                              cwd=str(paths.app_dir()))
             return True
         except Exception:
             return False
+
+
+def force_quit_soon(seconds=3.0):
+    """兜底：过几秒把本进程强杀掉
+
+    更新时必须让位给更新脚本 —— 万一 Qt 的事件循环或某个后台线程
+    卡住了（窗口还留在屏幕上、exec 不返回），更新脚本就会一直等，
+    最后放弃。所以启动一个看门狗线程，到点直接 os._exit。
+
+    设置和统计都是**改一下立刻存盘**的，所以强杀不会丢数据。
+    """
+    import threading
+
+    def _die():
+        time.sleep(seconds)
+        os._exit(0)
+
+    threading.Thread(target=_die, daemon=True).start()
 
 
 def cleanup():

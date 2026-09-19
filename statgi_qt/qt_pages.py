@@ -1428,11 +1428,17 @@ class PageSettings(BasePage):
                 dlg.reject()
                 return
             dlg.accept()
-            # 关掉自己，让更新脚本接手
+            # 关掉自己，让更新脚本接手。
+            # 三步走，越往后越狠：
             try:
-                self.win._shutdown()
+                self.win.hide()          # 先藏窗口，别让用户盯着一个卡住的界面
             except Exception:
                 pass
+            try:
+                self.win._shutdown()     # 停监测 / 关子窗口 / 停接口
+            except Exception:
+                pass
+            qt_updater.force_quit_soon(3)   # 兜底：3 秒后强杀自己
             QApplication.quit()
 
         sig.done.connect(on_fin)
