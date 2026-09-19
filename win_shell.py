@@ -13,6 +13,7 @@ from tkinter import messagebox
 import customtkinter as ctk
 
 import config_manager
+import theme
 from ui_base import (
     CARD, ACCENT, ACCENT_DARK, TEXT, DIM, BTN, BTN_HOVER, DANGER, DANGER_HOVER,
     FONT, HOTKEY_ID, WM_HOTKEY, _parse_hotkey,
@@ -430,77 +431,40 @@ class WindowShellMixin:
             self._ask_close()
 
     def _ask_close(self):
-        """弹窗询问：关闭程序 / 最小化到托盘 / 取消（在主窗口中间弹出）"""
-        dlg = ctk.CTkToplevel(self)
-        dlg.title("退出确认")
-        dlg.geometry("380x210")
-        dlg.resizable(False, False)
-        try:
-            dlg.transient(self)
-            dlg.grab_set()  # 模态：必须先选择
-        except Exception:
-            pass
-        dlg.configure(fg_color=CARD)
-        # 居中显示在主窗口中间
-        try:
-            dlg.update_idletasks()
-            self.update_idletasks()
-            mw, mh = self.winfo_width(), self.winfo_height()
-            mx, my = self.winfo_rootx(), self.winfo_rooty()
-            dw, dh = 380, 210
-            dlg.geometry(f"+{mx + (mw - dw) // 2}+{my + (mh - dh) // 2}")
-        except Exception:
-            pass
+        """弹窗询问：关闭程序 / 最小化到托盘 / 取消（和主程序同款的无边框弹窗）"""
+        from ui_widgets import FramelessWindow
 
+        dlg = FramelessWindow(self, title="退出", width=400, height=230, modal=True)
+        dlg.set_title("要关闭程序，还是最小化到托盘？")
+
+        body = dlg.body
         ctk.CTkLabel(
-            dlg, text="要关闭程序，还是最小化到托盘？",
-            font=(FONT, 17, "bold"), text_color=TEXT,
-        ).pack(pady=(22, 4))
-        ctk.CTkLabel(
-            dlg, text="最小化后监测会继续运行",
-            font=(FONT, 13), text_color=DIM,
-        ).pack(pady=(0, 12))
+            body, text="最小化后监测会继续运行，\n想彻底退出就选「关闭程序」。",
+            font=(FONT, 13), text_color=DIM, justify="center",
+        ).pack(pady=(16, 14))
 
         def _do_exit():
-            try:
-                dlg.destroy()
-            except Exception:
-                pass
+            dlg.close()
             self.on_exit()
 
         def _do_tray():
-            try:
-                dlg.destroy()
-            except Exception:
-                pass
+            dlg.close()
             self._minimize_to_tray()
 
-        def _do_cancel():
-            try:
-                dlg.destroy()
-            except Exception:
-                pass
-
-        row = ctk.CTkFrame(dlg, fg_color="transparent")
+        row = ctk.CTkFrame(body, fg_color="transparent")
         row.pack(pady=(4, 18))
         ctk.CTkButton(
-            row, text="🗑 关闭程序", font=(FONT, 16), width=100, height=36,
+            row, text="🗑 关闭程序", font=(FONT, 15), width=120, height=38,
+            corner_radius=theme.RADIUS_BTN,
             fg_color=DANGER, hover_color=DANGER_HOVER, text_color=TEXT, command=_do_exit,
-        ).pack(side="left", padx=6)
+        ).pack(side="left", padx=5)
         ctk.CTkButton(
-            row, text="📌 最小化到托盘", font=(FONT, 16), width=130, height=36,
+            row, text="📌 最小化到托盘", font=(FONT, 15), width=140, height=38,
+            corner_radius=theme.RADIUS_BTN,
             fg_color=ACCENT, hover_color=ACCENT_DARK, text_color="#FFFFFF", command=_do_tray,
-        ).pack(side="left", padx=6)
-        ctk.CTkButton(
-            row, text="取消", font=(FONT, 16), width=80, height=36,
-            fg_color=BTN, hover_color=BTN_HOVER, text_color=TEXT, command=_do_cancel,
-        ).pack(side="left", padx=6)
+        ).pack(side="left", padx=5)
 
-        dlg.protocol("WM_DELETE_WINDOW", _do_cancel)
-        try:
-            dlg.after(100, dlg.lift)
-        except Exception:
-            pass
+        dlg.show()
         try:
             self.wait_window(dlg)
         except Exception:

@@ -17,6 +17,10 @@
 两者区别（必须分清）：
    Dropdown ：点 -> 旁边浮出 -> 选一个 -> 自动关（不改页面布局）
    Accordion：点 -> 原地撑开 -> 显示内部设置 -> 再点收起（页面变高）
+
+3) FramelessWindow —— 无边框弹窗（图标管理 / 退出确认用）
+   和主程序同款外观：自己画标题条（标题 + ✕），拖动标题条移动窗口。
+   用无边框的原因：系统标题栏会带一个窗口图标，也和主程序的风格不搭。
 """
 import customtkinter as ctk
 
@@ -26,6 +30,163 @@ from fonts import FONT
 ARROW_DOWN = "▾"
 ARROW_UP = "▴"
 ARROW_RIGHT = "▸"
+
+
+class FramelessWindow(ctk.CTkToplevel):
+    """无边框弹窗：深色 + 自定义标题条 + 圆角，和主程序一个风格。
+
+    - 不显示系统标题栏（所以也就没有窗口图标）
+    - 按住标题条可以拖动
+    - 默认不进任务栏（无边框窗口天然是工具窗口，弹窗这样正合适）
+    - modal=True 时是模态窗（必须先关掉它才能操作主窗口）
+    - 内容放进 self.body
+    """
+
+    def __init__(self, master, title="", width=680, height=430, modal=False,
+                 on_close=None):
+        super().__init__(master)
+        self._parent_win = master
+        self._modal = modal
+        self._on_close = on_close
+        self._drag_x = 0
+        self._drag_y = 0
+
+        self.withdraw()                       # 先藏起来，避免出现白屏闪一下
+        self.overrideredirect(True)           # 无边框
+        try:
+            self.configure(fg_color=theme.BG)
+        except Exception:
+            pass
+
+        # ---- 标题条 ----
+        head = ctk.CTkFrame(self, height=44, corner_radius=0, fg_color=theme.HEADER)
+        head.pack(fill="x")
+        head.pack_propagate(False)
+
+        self._close_btn = ctk.CTkButton(
+            head, text="✕", width=44, height=32, corner_radius=theme.RADIUS_BTN,
+            font=(FONT, 15), fg_color="transparent",
+            hover_color=theme.DANGER, text_color=theme.TEXT, command=self.close,
+        )
+        self._close_btn.pack(side="right", padx=(0, 8))
+
+        self._title_lbl = ctk.CTkLabel(head, text=title, font=(FONT, 16, "bold"),
+                                       text_color=theme.TEXT, anchor="w")
+        self._title_lbl.pack(side="left", padx=(16, 0))
+
+        for w in (head, self._title_lbl):
+            try:
+                w.bind("<Button-1>", self._drag_start)
+                w.bind("<B1-Motion>", self._drag_move)
+            except Exception:
+                pass
+
+        # ---- 内容区（调用方往 self.body 里放东西）----
+        self.body = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
+        self.body.pack(fill="both", expand=True)
+
+        self.geometry(f"{int(width)}x{int(height)}")
+        self.bind("<Escape>", lambda e: self.close())
+
+    # ---------- 拖动 ----------
+
+    def _drag_start(self, event):
+        try:
+            self._drag_x = event.x_root - self.winfo_x()
+            self._drag_y = event.y_root - self.winfo_y()
+        except Exception:
+            pass
+
+    def _drag_move(self, event):
+        try:
+            self.geometry(f"+{event.x_root - self._drag_x}+{event.y_root - self._drag_y}")
+        except Exception:
+            pass
+
+    # ---------- 显示 / 关闭 ----------
+
+    def show(self):
+        """居中显示在主窗口中间，然后抢焦点"""
+        try:
+            self.update_idletasks()
+            p = self._parent_win
+            p.update_idletasks()
+            w = self.winfo_reqwidth()
+            h = self.winfo_reqheight()
+            px, py = p.winfo_rootx(), p.winfo_rooty()
+            pw, ph = p.winfo_width(), p.winfo_height()
+            self.geometry(f"+{px + max(0, (pw - w) // 2)}+{py + max(0, (ph - h) // 3)}")
+        except Exception:
+            pass
+        try:
+            self.deiconify()
+            self.lift()
+            self.focus_force()
+            if self._modal:
+                self.grab_set()
+        except Exception:
+            pass
+        # 短暂置顶一下再取消：两个都是无边框窗口，只 lift() 会被主窗口压在后面
+        # （主窗口自己 _bring_to_front 用的也是这招）
+        try:
+            self.attributes("-topmost", True)
+            self.after(400, self._drop_topmost)
+        except Exception:
+            pass
+        self._round_corners()
+        return self
+
+    def _drop_topmost(self):
+        try:
+            self.attributes("-topmost", False)
+            self.lift()
+        except Exception:
+            pass
+
+    def _round_corners(self):
+        """Win11 圆角（和主窗口一致）；失败就保持直角，不影响使用"""
+        try:
+            import ctypes
+            from ctypes import wintypes
+            u = ctypes.windll.user32
+            u.GetAncestor.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+            u.GetAncestor.restype = ctypes.c_void_p
+            hwnd = int(u.GetAncestor(int(self.winfo_id()), 2)) or int(self.winfo_id())
+            pref = ctypes.c_int(2)            # DWMWCP_ROUND
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                wintypes.HWND(hwnd), 33, ctypes.byref(pref), ctypes.sizeof(pref))
+        except Exception:
+            pass
+
+    def set_title(self, text):
+        try:
+            self._title_lbl.configure(text=text)
+        except Exception:
+            pass
+
+    def close(self):
+        try:
+            if self._modal:
+                self.grab_release()
+        except Exception:
+            pass
+        try:
+            if self._on_close:
+                self._on_close()
+        except Exception:
+            pass
+        try:
+            self.destroy()
+        except Exception:
+            pass
+
+    def destroy(self):
+        try:
+            if self._modal:
+                self.grab_release()
+        except Exception:
+            pass
+        super().destroy()
 
 
 class FloatingDropdown(ctk.CTkFrame):
