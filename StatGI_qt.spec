@@ -6,7 +6,10 @@
 #   StatGI_qt.spec  打包 app_qt.py（Qt 版，v0.8）← 这个
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('icons', 'icons'), ('models', 'models'), ('app_icon.ico', '.')]
+datas = [('icons', 'icons'), ('models', 'models'), ('app_icon.ico', '.'),
+         # 内置公告：远程（Gitee / GitHub）都拉不到时，用它兜底
+         # 见 statgi_qt/qt_notice.py
+         ('notice.json', '.')]
 binaries = []
 hiddenimports = []
 

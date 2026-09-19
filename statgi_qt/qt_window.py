@@ -275,6 +275,29 @@ class MainWindow(QWidget):
             self.api_server = None
             log_exc("qt_window 直播接口")
 
+        # 公告：后台静默拉一次
+        # 拉到了就更新启动页那张卡片；拉不到什么都不做 ——
+        # 公告是锦上添花，不能因为没网就弹错误打扰人。
+        try:
+            import qt_notice
+            self.notice_fetcher = qt_notice.NoticeFetcher()
+            self.notice_fetcher.done.connect(self._on_notice)
+            self.notice_fetcher.start()
+        except Exception:
+            self.notice_fetcher = None
+            log_exc("qt_window 公告")
+
+    def _on_notice(self, notice):
+        """公告拉回来了（这里已经在主线程 —— 信号跨线程是安全的）"""
+        if not notice:
+            return
+        try:
+            fn = getattr(self.pages[0], "set_notice", None)
+            if callable(fn):
+                fn(notice)
+        except Exception:
+            pass
+
     def _api_data(self):
         snap = self.state.snapshot()
         return {

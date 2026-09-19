@@ -1,0 +1,7 @@
+{
+  "id": "2026-09-20-1",
+  "title": "StatGI v0.8 已发布",
+  "body": "界面整个换成 Qt 重写了，半透明、圆角、毛玻璃都是原生效果，Win10 上也有圆角了。\n\n背景色 / 强调色现在改完立即生效，不用重启。设置页也重新分成 6 类。\n\n详细更新内容见 GitHub Releases 页面。",
+  "url": "https://github.com/Cash-553/stat-genshin-impact/releases",
+  "level": "info"
+}
