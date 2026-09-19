@@ -175,6 +175,23 @@ def main():
     print("✓ 已把分卷地址 + 校验值写进 version.json")
     print()
 
+    # 顺手生成「一键安装.bat」—— 给还没有软件的人用：
+    # 分卷是硬切的 zip，单独一个打不开，得先合并。
+    # 让普通用户敲 copy /b 太难，所以给个小 bat 双击就装好。
+    try:
+        import subprocess
+        r = subprocess.run([sys.executable,
+                            os.path.join(HERE, "make_installer.py")],
+                           cwd=HERE, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace")
+        if r.returncode == 0:
+            print("✓ 已生成「一键安装.bat」（给还没有软件的人用）")
+        else:
+            print("（一键安装.bat 没生成成功，不影响分卷）")
+    except Exception as e:
+        print(f"（一键安装.bat 没生成：{e}）")
+    print()
+
     print("=" * 60)
     print("  接下来你要做的")
     print("=" * 60)
@@ -183,6 +200,7 @@ def main():
     print()
     for p in parts:
         print(f"     {p}")
+    print(f"     {os.path.join(HERE, '一键安装.bat')}   ← 给还没有软件的人")
     print()
     print("   ⚠ 两件重要的事：")
     print("     · 必须传在「发行版附件」里 —— Gitee 仓库里的单文件")
@@ -190,6 +208,11 @@ def main():
     print("     · 传完记得把**上一个版本**的分卷附件删掉！")
     print("       附件总配额只有 1G，一个版本占 143M，不删的话")
     print("       大概 7 个版本就满了，满了就传不上新东西。")
+    print()
+    print("   用户怎么装：")
+    print("     · 已经有软件的 → 软件里点「检测更新 → 立即更新」")
+    print("     · 还没有软件的 → 下载「一键安装.bat」双击，")
+    print("       它会自己下载分卷、合并、解压好")
     print()
     print("② 到 GitHub 建发行版（" + tag + "），传原来的整包：")
     print(f"     {zip_path}")
