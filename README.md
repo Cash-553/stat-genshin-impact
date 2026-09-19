@@ -106,10 +106,21 @@ CustomTkinter 没有真正的透明：每个控件都会用一层纯色盖住自
 ## 📁 目录结构（源码）
 
 ```
-├─ app.py                    主程序（界面 + 控制流）
-├─ ui_widgets.py             自定义 UI 组件（浮动下拉框 / 折叠区）
+├─ app.py                    主程序（主窗口 + 主循环）
+
+│  ── 界面（按功能拆开，运行时通过 mixin 组合成 MainApp）──
+├─ ui_base.py                公共常量与小工具（主题色、字体、热键键名转换）
+├─ win_shell.py              窗口底层（无边框拖动/缩放、任务栏、圆角、热键、托盘）
+├─ ui_glass.py               自定义背景 + 半透明玻璃界面
+├─ ui_pages.py               各页面搭建 + 卡片工厂 + 页面切换
+├─ ui_settings.py            设置读写 + 设置项回调 + 开发者选项
+├─ ui_actions.py             清空 / 记录 / 材料 / 检查更新 / 统计条 / 接口
+├─ ui_monitor.py             主循环 + 监测控制 + 界面刷新
+├─ ui_widgets.py             自定义控件（浮动下拉框 / 折叠区）
 ├─ theme.py                  统一主题配色
 ├─ fonts.py                  字体检测与共享
+
+│  ── 识别与数据 ──
 ├─ detector.py               检测流水线（文字识别 + 拾取提示去重）
 ├─ ocr_engine.py             OCR 引擎（RapidOCR 封装）
 ├─ capture.py                屏幕捕捉（mss 抓取指定区域）
@@ -121,11 +132,14 @@ CustomTkinter 没有真正的透明：每个控件都会用一层纯色盖住自
 ├─ materials_db.py           材料数据库
 ├─ generated_names.py        材料（574）/ 圣遗物（299）名单
 ├─ dataset_collector.py      本地 AI 样本采集（开发者选项，默认关闭）
+
+│  ── 周边 ──
 ├─ overlay_bar.py            横向收益统计条
 ├─ icon_manager.py           统计条图标管理
 ├─ tray.py                   系统托盘
 ├─ api_server.py             直播数据接口（Flask）
 ├─ config_manager.py         设置读写（config/settings.json）
+├─ errlog.py                 出错记录（写 data/error.log）
 └─ paths.py                  路径工具（源码运行 / 打包运行）
 ```
 
