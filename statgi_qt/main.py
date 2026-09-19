@@ -73,6 +73,16 @@ def main():
         pass
 
     from qt_window import MainWindow
+
+    # 清一下上次自动更新留下的临时文件（下载分卷 / 新版本解压出来的东西 /
+    # 备份目录 / 更新.bat）。更新脚本是先启动本程序、再自己退出的，
+    # 所以到这里它已经干完活了，删掉是安全的。
+    try:
+        import qt_updater
+        qt_updater.cleanup()
+    except Exception:
+        pass
+
     win = MainWindow()
     win.show()
     return app.exec()
