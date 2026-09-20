@@ -1289,76 +1289,79 @@ class PageSettings(BasePage):
         self._row(tb, "wrench", "开发者模式",
                   "开启后显示下方样本采集工具", self.dev_enabled)
 
-        self.dev_body = self._make_dev_body(self._inner[tb])
-        self.dev_row = self._row(tb, "flask-conical", "开发者选项",
-                                 "本地 AI 样本采集；截图仅存本地，不上传、不入库",
-                                 self.dev_body, height=None)
-        self.dev_row.setVisible(bool(s.get("developer_mode", False)))
+        # ---- 开发者选项：折叠卡片，每一项一张子卡片 ----
+        self.dev_acc = Accordion(self._inner[tb], "flask-conical", "开发者选项",
+                                 "收集识别样本用于后续优化识别准确度；"
+                                 "截图只存本地，不上传、不入库",
+                                 items=self._make_dev_items(), alpha=self.alpha)
+        self._lay[tb].insertWidget(self._lay[tb].count() - 1, self.dev_acc)
+        self.dev_acc.setVisible(bool(s.get("developer_mode", False)))
+
+        # 折叠卡片里的「保存目录」和「已采集样本」两行要动态更新，
+        # 建完之后按标题把卡片找出来存好
+        for c in self.dev_acc.item_cards:
+            t = c.title_label.text()
+            if t == "样本保存目录":
+                self.dev_path_card = c
+            elif t == "已采集样本":
+                self.dev_stats_card = c
+        self._set_dev_path(self.state.get_setting("dataset_path", ""))
+        self._refresh_dev_stats()
 
     # ---------- 开发者选项 ----------
-    def _make_dev_body(self, parent):
+    def _make_dev_items(self):
+        """开发者选项的每一项（Accordion 会给每项包一张子卡片）"""
         from dataset_collector import DEFAULT_PATH
-        box = QWidget()
-        v = QVBoxLayout(box)
-        v.setContentsMargins(0, 4, 0, 0)
-        v.setSpacing(6)
 
+        items = []
+
+        # 1) 启用样本采集
         # 注意：DatasetCollector 读的键是 dataset_enabled，
         # 不是 dataset_collect —— 键名写错了这个开关就是空的。
-        self.dev_switch = Switch(box, bool(self.state.get_setting("dataset_enabled", False)))
+        self.dev_switch = Switch(self._inner["其它"],
+                                 bool(self.state.get_setting("dataset_enabled", False)))
         self.dev_switch.toggled.connect(
             lambda v: self.state.set_setting("dataset_enabled", bool(v)))
-        r = QHBoxLayout()
-        lb = QLabel("启用样本采集")
-        lb.setStyleSheet(label_qss(T.TEXT, 14))
-        r.addWidget(lb)
-        r.addStretch(1)
-        r.addWidget(self.dev_switch)
-        v.addLayout(r)
+        items.append(("flask-conical", "启用样本采集",
+                      "开启后每次确认拾取都会存一张截图", self.dev_switch))
 
-        p = self.state.get_setting("dataset_path", "") or str(DEFAULT_PATH)
-        self.dev_path_label = QLabel(p)
-        self.dev_path_label.setStyleSheet(label_qss(T.DIM, 12))
-        self.dev_path_label.setWordWrap(True)
-        browse = QPushButton("浏览…")
-        browse.setFixedHeight(28)
-        browse.setCursor(Qt.PointingHandCursor)
-        browse.setStyleSheet(btn_qss("normal", self.alpha))
-        browse.clicked.connect(self._on_choose_dataset_path)
-        r2 = QHBoxLayout()
-        r2.addWidget(self.dev_path_label, 1)
-        r2.addWidget(browse)
-        v.addLayout(r2)
+        # 2) 保存目录（长路径放说明里，太长会省略，完整路径在鼠标提示里）
+        browse = small_button("浏览…", self._on_choose_dataset_path, self.alpha,
+                              icon="folder-open", width=84)
+        items.append(("folder-open", "样本保存目录",
+                      "截图只存在这个文件夹里，不会上传", browse))
 
-        btns = QHBoxLayout()
-        btns.setSpacing(6)
-        for text, cb in (("打开文件夹", self._on_open_dataset),
-                         ("清空样本", self._on_clear_dataset)):
-            b = QPushButton(text)
-            b.setFixedHeight(30)
-            b.setCursor(Qt.PointingHandCursor)
-            b.setStyleSheet(btn_qss("normal", self.alpha))
-            b.clicked.connect(cb)
-            btns.addWidget(b)
-        btns.addStretch(1)
-        v.addLayout(btns)
+        # 3) 已采集样本（统计数字写在说明里）
+        self.dev_stats_label = QLabel("")     # 留着兼容，实际显示在子卡片的说明里
+        self.dev_stats_label.hide()
+        open_btn = small_button("打开", self._on_open_dataset, self.alpha,
+                                icon="image", width=76)
+        items.append(("database", "已采集样本", "", open_btn))
 
-        # 预览用：把「检测到新版本」的提示效果演一遍（侧栏闪红光 + 设置里挂红点）
-        r3 = QHBoxLayout()
-        lb3 = QLabel("模拟检测到新版本（预览提示效果）")
-        lb3.setStyleSheet(label_qss(T.TEXT, 14))
-        r3.addWidget(lb3)
-        r3.addStretch(1)
-        self.sim_update = Switch(box, False)
+        # 4) 清空样本
+        clear_btn = small_button("清空", self._on_clear_dataset, self.alpha,
+                                 kind="danger", icon="trash", width=76)
+        items.append(("trash", "清空样本",
+                      "删掉全部已采集的截图，不影响收益数据", clear_btn))
+
+        # 5) 预览「检测到新版本」的效果
+        self.sim_update = Switch(self._inner["其它"], False)
         self.sim_update.toggled.connect(self._on_sim_update)
-        r3.addWidget(self.sim_update)
-        v.addLayout(r3)
+        items.append(("eye", "模拟检测到新版本",
+                      "预览左下角闪烁与设置红点的提示效果", self.sim_update))
 
-        self.dev_stats_label = QLabel("")
-        self.dev_stats_label.setStyleSheet(label_qss(T.DIM, 12))
-        v.addWidget(self.dev_stats_label)
-        self._refresh_dev_stats()
-        return box
+        return items
+
+    def _set_dev_path(self, path):
+        """把样本目录显示到子卡片的说明上（太长就省略，完整路径放提示气泡）"""
+        from dataset_collector import DEFAULT_PATH
+        full = str(path or "") or str(DEFAULT_PATH)
+        card = getattr(self, "dev_path_card", None)
+        if card is not None:
+            short = full if len(full) <= 32 else full[:15] + "…" + full[-14:]
+            card.desc_label.setText(short)
+            card.desc_label.setToolTip(full)
+            card.setToolTip(full)
 
     def _on_sim_update(self, v):
         """开发者选项：把「检测到新版本」的提示效果开/关（纯粹为了看效果）"""
@@ -1366,7 +1369,7 @@ class PageSettings(BasePage):
 
     def _on_developer_mode(self, v):
         self.state.set_setting("developer_mode", bool(v))
-        self.dev_row.setVisible(bool(v))
+        self.dev_acc.setVisible(bool(v))
         if v:
             self._refresh_dev_stats()
 
@@ -1374,20 +1377,22 @@ class PageSettings(BasePage):
         try:
             from dataset_collector import DatasetCollector
             st = DatasetCollector(self.state.settings).stats()
-            self.dev_stats_label.setText(
-                f"GAMEPLAY：{st.get('gameplay', 0)}    "
-                f"NON_GAMEPLAY：{st.get('non_gameplay', 0)}    "
-                f"总样本：{st.get('total', 0)}\n"
-                f"占用：{st.get('size_mb', 0)} MB / {st.get('max_mb', 100)} MB")
+            txt = (f"共 {st.get('total', 0)} 张"
+                   f"（正面 {st.get('gameplay', 0)} / 反面 {st.get('non_gameplay', 0)}）"
+                   f"　占用 {st.get('size_mb', 0)} / {st.get('max_mb', 100)} MB")
         except Exception:
-            self.dev_stats_label.setText("（无法读取样本统计）")
+            txt = "（无法读取样本统计）"
+        self.dev_stats_label.setText(txt)
+        card = getattr(self, "dev_stats_card", None)
+        if card is not None:
+            card.desc_label.setText(txt)
 
     def _on_choose_dataset_path(self):
         d = QFileDialog.getExistingDirectory(self, "选择样本保存位置")
         if not d:
             return
         self.state.set_setting("dataset_path", d)
-        self.dev_path_label.setText(d)
+        self._set_dev_path(d)
 
     def _on_open_dataset(self):
         import os

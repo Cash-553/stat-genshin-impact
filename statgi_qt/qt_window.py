@@ -209,11 +209,13 @@ class Sidebar(QFrame):
         lay.setSpacing(4)
 
         self.buttons = []
+        self.nav_dots = {}          # 导航名 -> 小红点（检测到新版本时挂在「设置」上）
         for i, (icon, name) in enumerate(items):
             b = NavButton(self, icon, name)
             b.clicked.connect(lambda idx=i: self._on_select(idx))
             lay.addWidget(b)
             self.buttons.append(b)
+            self.nav_dots[name] = RedDot(b)
 
         lay.addStretch(1)
 
@@ -254,6 +256,10 @@ class Sidebar(QFrame):
         """检测到新版本 → 左下角换成「检测到新版本」并一直闪红光"""
         self._upd_on = bool(on)
         self._upd_ver = str(version or "")
+        # 侧栏「设置」那一项也挂个红点（更新是在 设置→其它 里点的）
+        dot = getattr(self, "nav_dots", {}).get("设置")
+        if dot is not None:
+            dot.set_on(self._upd_on)
         if self._upd_on:
             self.ver_label.setText("检测到新版本")
             self.ver_label.setToolTip(
