@@ -69,3 +69,5 @@ _r*.txt
 _e2e*.py
 _upd_e2e/
 _r[0-9]*.py
+_launch*.png
+_p[0-9].png
