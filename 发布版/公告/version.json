@@ -1,6 +1,6 @@
 {
   "version": "0.8",
-  "notes": "修复了打包版托盘和任务栏图标不对的问题；检测更新不再受网络限流影响；新增自动更新（点一下就能升级，不用手动下载）",
+  "notes": "界面图标全部重做，鼠标移到卡片上会轻微放大；收益记录新增收藏夹与批量管理；设置里的折叠菜单改成卡片式；打开软件会自动检查更新，发现新版本会在左下角闪烁提示。",
   "url_github": "https://github.com/Cash-553/stat-genshin-impact/releases",
   "url_gitee": "https://gitee.com/Cash553/stat-genshin-impact/releases",
   "update": {
