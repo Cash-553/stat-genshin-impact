@@ -102,29 +102,34 @@ class PageLaunch(BasePage):
         # 公告不在这儿了 —— 挪到左侧栏做一个独立入口（未读时挂红点），
         # 点一下由 MainWindow.show_notice() 弹窗显示。
 
-        # ---- 开始监测（折叠卡片）----
-        # 平时只显示标题 + 右边那个「开始」按钮；
-        # 点了「开始」之后**自动展开**，里面是四个小框：
-        # 挂机时间 / 摩拉 / 材料 / 狗粮。停了就自动收起来。
+        # ---- 开始监测 ----
+        # 尺寸跟下面的「清空」按钮**完全一致**（都是 110×38），
+        # 而且都贴着卡片的右边距，所以两个按钮上下对齐。
         self.start_btn = QPushButton("开始")
         self.start_btn.setFixedSize(110, 38)
         self.start_btn.setCursor(Qt.PointingHandCursor)
         self.start_btn.setStyleSheet(btn_qss("accent", self.alpha))
         self.start_btn.clicked.connect(self._on_start)
+        self.add(SettingRow(self, "▶", "开始监测",
+                            "自动找到游戏窗口并识别掉落收益",
+                            right_wrap(self.start_btn), alpha=self.alpha))
 
-        self.stat_body = QWidget()
-        sb = QHBoxLayout(self.stat_body)
-        sb.setContentsMargins(0, 8, 0, 2)
-        sb.setSpacing(8)
+        # ---- 本次挂机（独立一张卡片，**只在监测时出现**）----
+        # 四个数字各一个小框：挂机时间 / 摩拉 / 材料 / 狗粮。
+        # 不监测的时候整张卡片藏起来，启动页就只剩上面那几张。
+        self.stat_card = Card(self, alpha=self.alpha)
+        cb = QHBoxLayout(self.stat_card)
+        cb.setContentsMargins(14, 12, 14, 12)
+        cb.setSpacing(8)
         self.stat_labels = {}
         self._stat_txt = {}          # 上次写进去的文字，一样就不重复写
         for key, title in (("time", "挂机时间"), ("mora", "摩拉"),
                            ("materials", "材料"), ("artifact", "狗粮")):
             box = QFrame()           # 每个数字一个小框
+            # 底色浅浅一层就够了；描边太亮会很扎眼（上一版就栽在这儿）
             box.setStyleSheet(
-                f"QFrame {{ background: {rgba('#FFFFFF', 14)};"
-                f" border: 1px solid {rgba('#FFFFFF', 38)};"
-                f" border-radius: 10px; }}")
+                f"QFrame {{ background: {rgba('#FFFFFF', 16)};"
+                f" border: none; border-radius: 10px; }}")
             bl = QVBoxLayout(box)
             bl.setContentsMargins(12, 8, 12, 8)
             bl.setSpacing(3)
@@ -135,14 +140,9 @@ class PageLaunch(BasePage):
             bl.addWidget(lb)
             bl.addWidget(val)
             self.stat_labels[key] = val
-            sb.addWidget(box, 1)
-
-        self.start_acc = Accordion(self, "▶", "开始监测",
-                                   "自动找到游戏窗口并识别掉落收益",
-                                   self.stat_body, alpha=self.alpha,
-                                   on_toggle=self._on_stat_toggle,
-                                   head_right=self.start_btn)
-        self.add(self.start_acc)
+            cb.addWidget(box, 1)
+        self.stat_card.setVisible(False)      # 一开始不显示
+        self.add(self.stat_card)
         self._last_monitoring = False
 
         # 清空
@@ -200,24 +200,14 @@ class PageLaunch(BasePage):
         txt = "停止" if self.state.monitoring else "开始"
         if self.start_btn.text() != txt:       # 只有真的不一样才 setText
             self.start_btn.setText(txt)
-        # 折叠卡片跟着监测状态走：开始 -> 展开四个小框；停止 -> 收起来。
-        # 只在**状态真的变了**的时候动它 —— 否则用户在监测中手动收起，
-        # 下一次刷新又会被自动展开，很烦。
+        # 统计卡片跟着监测状态显示/隐藏：开始 -> 出现；停止 -> 消失。
+        # 只在**状态真的变了**的时候动它，不用每次刷新都算一遍。
         now = bool(self.state.monitoring)
         if now != getattr(self, "_last_monitoring", False):
             self._last_monitoring = now
+            self.stat_card.setVisible(now)
             if now:
-                if not self.start_acc._open:
-                    self.start_acc._toggle()
                 self.refresh_stats()
-            else:
-                if self.start_acc._open:
-                    self.start_acc._toggle()
-
-    # ---------- 折叠卡片里的四个数字 ----------
-    def _on_stat_toggle(self, opened):
-        if opened:
-            self.refresh_stats()
 
     def refresh_stats(self):
         """只改变化的那几个数字，别的控件一个字都不动"""
