@@ -909,24 +909,48 @@ class PageSettings(BasePage):
         self.close_dd.currentTextChanged.connect(self._on_close_behavior)
         self._row(tb, "✖", "点右上角 ✕ 时", "点击关闭按钮时的行为", self.close_dd)
 
-        # 热键可以有多个动作 —— 每个动作一个按钮。
-        # _hotkey_btns 记着「设置里的键名 -> 按钮」，录制的时候按名字找按钮。
+        # ---- 全局热键（收成一张折叠卡片）----
+        # 每个动作一个按钮，点按钮后按下想用的键即可录制。
+        # _hotkey_btns 记着「设置里的键名 -> 按钮」，录制时按名字找按钮。
         self._hotkey_btns = {}
         self._capturing = None
-        for key, icon, title, desc in (
-                ("hotkey", "⌨", "热键：开始 / 停止监测",
-                 "点按钮后按下想用的键（Esc 取消）"),
-                ("hotkey_bar", "⌨", "热键：显示 / 隐藏统计条",
-                 "再次按下收起；不使用则保持「关闭」"),
-                ("hotkey_home", "⌨", "热键：显示主窗口",
-                 "窗口最小化到托盘后，按此键恢复显示")):
+        hk_body = QWidget()
+        hk_lay = QVBoxLayout(hk_body)
+        hk_lay.setContentsMargins(0, 8, 0, 2)
+        hk_lay.setSpacing(8)
+        for key, title, desc in (
+                ("hotkey", "开始 / 停止监测",
+                 "按下即开始监测；再次按下停止"),
+                ("hotkey_bar", "显示 / 隐藏统计条",
+                 "按下显示统计条；再次按下隐藏")):
             btn = QPushButton(str(s.get(key, "关闭")))
             btn.setFixedSize(140, 32)
             btn.setCursor(Qt.PointingHandCursor)
             btn.setStyleSheet(btn_qss("normal", self.alpha))
             btn.clicked.connect(lambda _=False, k=key: self._start_hotkey_capture(k))
             self._hotkey_btns[key] = btn
-            self._row(tb, icon, title, desc, btn)
+
+            r = QHBoxLayout()
+            c = QVBoxLayout()
+            c.setSpacing(1)
+            t = QLabel(title)
+            t.setStyleSheet(label_qss(T.TEXT, 14))
+            d = QLabel(desc)
+            d.setStyleSheet(label_qss(T.DIM, 12))
+            c.addWidget(t)
+            c.addWidget(d)
+            r.addLayout(c, 1)
+            r.addWidget(btn)
+            hk_lay.addLayout(r)
+
+        hk_tip = QLabel("点击右侧按钮后按下目标按键即可设置，Esc 取消；不使用则保持「关闭」")
+        hk_tip.setStyleSheet(label_qss(T.DIM, 12))
+        hk_lay.addWidget(hk_tip)
+
+        self.hotkey_acc = Accordion(self._inner[tb], "⌨", "全局热键",
+                                    "全局生效，游戏内也可触发",
+                                    hk_body, alpha=self.alpha)
+        self._lay[tb].insertWidget(self._lay[tb].count() - 1, self.hotkey_acc)
 
     # ================= 统计 =================
     def _build_stats(self, s):
@@ -949,6 +973,9 @@ class PageSettings(BasePage):
         self.ro_switch.toggled.connect(self._on_rollover_enabled)
         r1.addWidget(self.ro_switch)
         bl.addLayout(r1)
+        e1 = QLabel("关闭后不再自动换日，数据持续累计")
+        e1.setStyleSheet(label_qss(T.DIM, 12))
+        bl.addWidget(e1)
 
         r2 = QHBoxLayout()
         t2 = QLabel("换日时间")
@@ -965,6 +992,9 @@ class PageSettings(BasePage):
         lb.setStyleSheet(label_qss(T.DIM, 13))
         r2.addWidget(lb)
         bl.addLayout(r2)
+        e2 = QLabel("整点取值 0~23；跨零点挂机可适当延后，避免中途重新统计")
+        e2.setStyleSheet(label_qss(T.DIM, 12))
+        bl.addWidget(e2)
 
         self.ro_acc = Accordion(self._inner[tb], "🌅", "换日刷新数据",
                                 "按设定时间归档当日数据并重新开始统计",

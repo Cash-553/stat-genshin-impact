@@ -70,7 +70,6 @@ DEFAULT_SETTINGS = {
     "obs_api_enabled": True,         # 直播数据接口总开关（OBS 那个，改了立刻生效）
     "hotkey": "关闭",                # 全局热键：开始/停止监测
     "hotkey_bar": "关闭",            # 全局热键：显示/隐藏统计条
-    "hotkey_home": "关闭",           # 全局热键：把主窗口叫回来
     "update_channel": "auto",        # 检测更新走哪个渠道：auto / gitee / github
 }
 
