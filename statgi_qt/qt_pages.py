@@ -957,13 +957,17 @@ class PageSettings(BasePage):
         tb = "统计"
 
         # ---- 换日刷新数据（折叠卡片，默认收起）----
-        # 展开里面两行：总开关 + 换日时间。
+        # 展开里面两组：总开关 + 换日时间，每组下面紧跟一句说明。
         # 关掉开关就**完全不换日**，数据一直累着，直到手动清空。
+        #
+        # 排版：说明要跟它那一行贴在一起（组内 2px），两组之间才留大间距（14px）。
+        # 以前每样都是 12px 平铺，说明就飘在两行正中间，看着空隙特别大。
         body = QWidget()
         bl = QVBoxLayout(body)
-        bl.setContentsMargins(0, 8, 0, 2)
-        bl.setSpacing(12)
+        bl.setContentsMargins(0, 6, 0, 2)
+        bl.setSpacing(14)
 
+        # 第 1 组：启用换日刷新
         r1 = QHBoxLayout()
         t1 = QLabel("启用换日刷新")
         t1.setStyleSheet(label_qss(T.TEXT, 14))
@@ -972,11 +976,15 @@ class PageSettings(BasePage):
         self.ro_switch = Switch(body, bool(s.get("rollover_enabled", True)))
         self.ro_switch.toggled.connect(self._on_rollover_enabled)
         r1.addWidget(self.ro_switch)
-        bl.addLayout(r1)
         e1 = QLabel("关闭后不再自动换日，数据持续累计")
         e1.setStyleSheet(label_qss(T.DIM, 12))
-        bl.addWidget(e1)
+        g1 = QVBoxLayout()
+        g1.setSpacing(2)
+        g1.addLayout(r1)
+        g1.addWidget(e1)
+        bl.addLayout(g1)
 
+        # 第 2 组：换日时间
         r2 = QHBoxLayout()
         t2 = QLabel("换日时间")
         t2.setStyleSheet(label_qss(T.TEXT, 14))
@@ -991,10 +999,13 @@ class PageSettings(BasePage):
         lb = QLabel("点")
         lb.setStyleSheet(label_qss(T.DIM, 13))
         r2.addWidget(lb)
-        bl.addLayout(r2)
         e2 = QLabel("整点取值 0~23；跨零点挂机可适当延后，避免中途重新统计")
         e2.setStyleSheet(label_qss(T.DIM, 12))
-        bl.addWidget(e2)
+        g2 = QVBoxLayout()
+        g2.setSpacing(2)
+        g2.addLayout(r2)
+        g2.addWidget(e2)
+        bl.addLayout(g2)
 
         self.ro_acc = Accordion(self._inner[tb], "🌅", "换日刷新数据",
                                 "按设定时间归档当日数据并重新开始统计",
