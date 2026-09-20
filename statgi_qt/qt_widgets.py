@@ -201,7 +201,7 @@ class Accordion(Card):
     """
 
     def __init__(self, parent=None, icon="", title="", desc="",
-                 body_widget=None, alpha=150, on_toggle=None):
+                 body_widget=None, alpha=150, on_toggle=None, head_right=None):
         super().__init__(parent, alpha=alpha)
         self._open = False
         self._on_toggle = on_toggle
@@ -223,6 +223,11 @@ class Accordion(Card):
         mid.addWidget(self.title_label)
         mid.addWidget(self.desc_label)
         head.addLayout(mid, 1)
+        # 标题栏右侧可以塞一个控件（比如「开始」按钮）：它**不参与折叠**，
+        # 收起来的时候也点得到。注意下面那圈 mousePressEvent 故意不包含它，
+        # 否则点按钮会变成展开/收起，而不是真的开始监测。
+        if head_right is not None:
+            head.addWidget(head_right)
         self.arrow = QLabel("▸")
         self.arrow.setStyleSheet(label_qss(T.DIM, 15))
         head.addWidget(self.arrow)
