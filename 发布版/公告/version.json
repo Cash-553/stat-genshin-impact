@@ -1,6 +1,6 @@
 {
   "version": "0.8",
-  "notes": "界面图标全部重做，鼠标移到卡片上会轻微放大；收益记录新增收藏夹与批量管理；设置里的折叠菜单改成卡片式；打开软件会自动检查更新，发现新版本会在左下角闪烁提示。",
+  "notes": "界面图标全部更新；收益记录新增收藏夹；设置界面卡片优化；打开软件会自动检查更新，发现新版本会在左下角提示。",
   "url_github": "https://github.com/Cash-553/stat-genshin-impact/releases",
   "url_gitee": "https://gitee.com/Cash553/stat-genshin-impact/releases",
   "update": {
