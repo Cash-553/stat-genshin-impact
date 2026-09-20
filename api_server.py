@@ -33,7 +33,11 @@ class ApiServer:
 
         @self._app.route("/")
         def index():
-            return _cors(make_response("StatGI API —— 浏览器源地址: /overlay"))
+            return _cors(make_response(
+                "StatGI API\n"
+                "收益条（只显示摩拉/材料/狗粮/监测时间）: /bar\n"
+                "整块竖屏覆盖层（含弹幕区+备注区）: /overlay\n"
+                "数据: /api"))
 
         @self._app.after_request
         def add_cors(resp):
@@ -47,7 +51,17 @@ class ApiServer:
 
         @self._app.route("/overlay")
         def overlay():
+            """整块竖屏覆盖层：弹幕区(上) + 收益2×2(中) + 备注区(下)"""
             return Response(self._overlay_html(), mimetype="text/html")
+
+        @self._app.route("/bar")
+        def bar():
+            """**只有收益条** —— 摩拉/材料/狗粮/监测时间四个格子，没别的。
+
+            跟 /overlay 的区别：那个是整块竖屏覆盖层（上面一半是弹幕区、
+            下面还有备注区），只想显示收益的话用这个 /bar。
+            """
+            return Response(self._bar_html(), mimetype="text/html")
 
     def set_provider(self, fn):
         self._provider = fn
@@ -56,6 +70,68 @@ class ApiServer:
         """设置备注区文字"""
         if text:
             self._note = text
+
+    def _bar_html(self):
+        """**只有收益条**的页面：四个格子，没有弹幕区、没有备注区。
+
+        这就是「直播间美化.html」那个样子的纯净版 —— 只显示
+        摩拉 / 材料 / 狗粮 / 监测时间，背景全透明，适合直接叠在画面上。
+        """
+        return """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>StatGI 收益条</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body {
+    font-family: "Microsoft YaHei UI", "微软雅黑", "PingFang SC", sans-serif;
+    background: transparent;
+    color: #f0f0f0;
+    overflow: hidden;
+  }
+  .stats-2x2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; width:340px; }
+  .stat-cell {
+    background: rgba(20,20,26,0.62);
+    border:1px solid rgba(255,255,255,0.12);
+    border-radius:14px;
+    padding:14px 12px; text-align:center;
+  }
+  .stat-cell .label { font-size:13px; color:#c8ccd4; margin-bottom:6px; }
+  .stat-cell .value { font-size:30px; font-weight:800; color:#f0f0f0; }
+  .stat-cell.mora .value { color:#facc15; }
+  .stat-cell.artifact .value { color:#c4b5fd; }
+  .stat-cell.time .value { color:#67e8f9; font-size:22px; }
+</style>
+</head>
+<body>
+  <div class="stats-2x2">
+    <div class="stat-cell mora"><div class="label">摩 拉</div><div class="value" id="vMora">0</div></div>
+    <div class="stat-cell"><div class="label">材 料</div><div class="value" id="vMat">0</div></div>
+    <div class="stat-cell artifact"><div class="label">狗 粮</div><div class="value" id="vArt">0</div></div>
+    <div class="stat-cell time"><div class="label">监测时间</div><div class="value" id="vTime">00:00:00</div></div>
+  </div>
+<script>
+  const $ = id => document.getElementById(id);
+  const pad = n => String(n).padStart(2,'0');
+  const fmtTime = sec => { sec=Math.max(0,sec|0); return pad(Math.floor(sec/3600))+':'+pad(Math.floor(sec%3600/60))+':'+pad(sec%60); };
+  async function refresh() {
+    try {
+      const r = await fetch('/api', {cache:'no-store'});
+      const d = await r.json();
+      if (d && !d.error) {
+        $('vMora').textContent = Number(d.mora||0).toLocaleString();
+        $('vMat').textContent  = '×' + Number(d.material_total||0).toLocaleString();
+        $('vArt').textContent  = '×' + Number(d.artifact||0).toLocaleString();
+        $('vTime').textContent = fmtTime(d.running_seconds||0);
+      }
+    } catch(e) {}
+  }
+  refresh();
+  setInterval(refresh, 1000);
+</script>
+</body>
+</html>"""
 
     def _overlay_html(self):
         """直播竖屏覆盖层页面：弹幕区(上) + 收益2×2(中) + 备注区(下)"""
@@ -202,15 +278,32 @@ class ApiServer:
 """
 
     def start(self):
+        """在后台线程里把接口跑起来
+
+        为什么不用 app.run()：那个**没法停**（拿不到服务器对象），
+        所以「连接 OBS」开关以前只能存个值、什么也不干。
+        用 werkzeug 的 make_server 拿到对象，才能真的 start / stop。
+        """
+        self._server = None
+
         def _run():
             try:
-                self._app.run(
-                    host="127.0.0.1",
-                    port=self.port,
-                    threaded=True,
-                    use_reloader=False,
-                )
+                from werkzeug.serving import make_server
+                self._server = make_server("127.0.0.1", self.port, self._app,
+                                           threaded=True)
+                self._server.serve_forever()
             except Exception:
-                pass  # 端口被占用等：不崩溃，跳过接口功能
+                self._server = None
+                # 端口被占用等：不崩溃，跳过接口功能
 
         threading.Thread(target=_run, daemon=True).start()
+
+    def stop(self):
+        """关掉接口（「连接 OBS」开关关掉、或者改端口时用）"""
+        srv = getattr(self, "_server", None)
+        if srv is not None:
+            try:
+                srv.shutdown()
+            except Exception:
+                pass
+        self._server = None

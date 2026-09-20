@@ -319,16 +319,11 @@ class MainWindow(QWidget):
         except Exception:
             log_exc("qt_window 托盘/热键")
 
-        # 直播数据接口（跟 Tk 版共用 api_server.py）
-        try:
-            from api_server import ApiServer
-            self.api_server = ApiServer(
-                port=int(self.settings.get("api_port", 8765) or 8765))
-            self.api_server.set_provider(self._api_data)
-            self.api_server.start()
-        except Exception:
-            self.api_server = None
-            log_exc("qt_window 直播接口")
+        # 直播数据接口（跟 api_server.py 共用）
+        # 真正的启动在 apply_api() 里 —— 那里会看设置决定开不开、用哪个端口。
+        self._api_port = None
+        self._api_on = None
+        self.apply_api()
 
         # 公告：先用本地已有的（缓存 / 内置）初始化一次。
         # 这样「还没拉回来」和「拉不到」的时候侧栏红点也是对的 ——
@@ -397,6 +392,38 @@ class MainWindow(QWidget):
             return
         self.show_page(NOTICE_PAGE_INDEX)
 
+    def apply_api(self):
+        """按设置把直播接口开起来 / 关掉 / 换端口
+
+        设置里改了「连接 OBS」开关或者端口，就调这个方法 —— 立刻生效，
+        不用重启程序（以前端口改完必须重启，开关更是个摆设）。
+        """
+        try:
+            st = (self.state.settings if getattr(self, "state", None) else
+                  self.settings) or {}
+            want = bool(st.get("obs_api_enabled", True))
+            port = int(st.get("api_port", 8765) or 8765)
+            if self.api_server is not None:
+                if (getattr(self, "_api_on", None) == want
+                        and getattr(self, "_api_port", None) == port):
+                    return                       # 没变，什么都不做
+                try:
+                    self.api_server.stop()
+                except Exception:
+                    pass
+                self.api_server = None
+                self._api_on = None
+            if want:
+                from api_server import ApiServer
+                self.api_server = ApiServer(port=port)
+                self.api_server.set_provider(self._api_data)
+                self.api_server.start()
+            self._api_on = want
+            self._api_port = port
+        except Exception:
+            self.api_server = None
+            log_exc("qt_window 直播接口")
+
     def _api_data(self):
         """直播接口给出去的数据
 
@@ -425,10 +452,6 @@ class MainWindow(QWidget):
             "material_total": mat_total,    # ← OBS 网页用的老名字
             "monitoring": self.state.monitoring,
         }
-
-    def set_obs(self, on):
-        """OBS 开关：只是记录状态，接口一直在跑"""
-        pass
 
     # ---------- 背景 ----------
     def background(self):
@@ -676,10 +699,6 @@ class MainWindow(QWidget):
         self._sidebar_glass = bool(on)
         if hasattr(self, "sidebar"):
             self.sidebar.set_glass(self._sidebar_glass)
-
-    def set_obs(self, on):
-        """OBS 开关：接口一直在跑，这里不用做什么"""
-        pass
 
     def restore_from_tray(self):
         self.showNormal()
