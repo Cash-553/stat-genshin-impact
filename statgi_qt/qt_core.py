@@ -95,9 +95,12 @@ class AppState(QObject):
                 pass
 
         # 2) 跨过换日时间就自动换日
+        #    设置里可以把「换日刷新数据」关掉 —— 关了就完全不换日，
+        #    数据一直累着，直到手动清空。
         try:
-            if self.stats.check_day():
-                self._last = None
+            if bool((self.settings or {}).get("rollover_enabled", True)):
+                if self.stats.check_day():
+                    self._last = None
         except Exception:
             pass
 

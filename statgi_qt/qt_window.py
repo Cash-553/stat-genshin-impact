@@ -793,9 +793,18 @@ class MainWindow(QWidget):
         self._resize_start = (None, None)
         self.setMouseTracking(True)
 
-        # 状态变了只改标题条那行小字，不重建任何东西
-        self.state.status_changed.connect(
-            lambda text, color: self.titlebar.sub_label.setText(f"● {text}"))
+        # 状态变了只改标题条那行小字，不重建任何东西。
+        # 文字**和颜色**都要跟着走（正在监测=绿、已暂停=红），
+        # 以前这里把 color 丢掉了，所以标题条永远是灰的。
+        self.state.status_changed.connect(self._on_title_status)
+
+    def _on_title_status(self, text, color):
+        """标题条左上角那行状态：跟启动页那张卡片用的是同一套文字和颜色"""
+        try:
+            self.titlebar.sub_label.setText(f"● {text}")
+            self.titlebar.sub_label.setStyleSheet(label_qss(color, 12))
+        except Exception:
+            log_exc("qt_window 标题状态")
 
     def show_page(self, idx):
         self.stack.setCurrentIndex(idx)
