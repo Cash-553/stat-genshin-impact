@@ -140,12 +140,76 @@ class PageLaunch(BasePage):
                              ("📷 诊断截图", self._on_debug_screenshot)], self.alpha),
             alpha=self.alpha)
         self.add(self.reselect)
+
+        # ---- 今日统计（折叠区）----
+        # 原来是一个单独的页面，现在并到启动页里，收成折叠区。
+        # 只放四个数字：挂机时间 / 摩拉 / 材料 / 狗粮。
+        # 材料明细不在这儿（那个去「收益记录」看），免得启动页太乱。
+        self.stat_body = QWidget()
+        sb = QHBoxLayout(self.stat_body)
+        sb.setContentsMargins(2, 8, 2, 4)
+        sb.setSpacing(8)
+        self.stat_labels = {}
+        self._stat_txt = {}          # 上次写进去的文字，一样就不重复写
+        self._stat_stale = True      # 折叠期间漏掉的刷新
+        for key, title in (("time", "⏱ 挂机时间"), ("mora", "💰 摩拉"),
+                           ("materials", "📦 材料"), ("artifact", "💠 狗粮")):
+            col = QVBoxLayout()
+            col.setSpacing(2)
+            lb = QLabel(title)
+            lb.setStyleSheet(label_qss(T.DIM, 12))
+            val = QLabel("—")
+            val.setStyleSheet(label_qss(T.ACCENT, 19, True))
+            col.addWidget(lb)
+            col.addWidget(val)
+            self.stat_labels[key] = val
+            sb.addLayout(col)
+        sb.addStretch(1)
+        self.stat_acc = Accordion(self, "📊", "今日统计",
+                                  "挂机时间 · 摩拉 · 材料 · 狗粮",
+                                  self.stat_body, alpha=self.alpha,
+                                  on_toggle=self._on_stat_toggle)
+        self.add(self.stat_acc)
         self.stretch()
 
         # 订阅状态：文字变了才改，**不重建控件**
         self.state.status_changed.connect(self._on_status)
         self.state.event_happened.connect(self._on_event)
         self.state.stats_changed.connect(self._sync_button)
+        # 今日统计那四个数字：折叠着就不刷，展开时一次性补上
+        self.state.stats_changed.connect(self._on_stats_changed)
+
+    # ---------- 今日统计（折叠区） ----------
+    def _on_stat_toggle(self, opened):
+        if opened:
+            self.refresh_stats()
+
+    def _on_stats_changed(self):
+        if self.stat_acc._open:
+            self.refresh_stats()
+        else:
+            self._stat_stale = True
+
+    def refresh_stats(self):
+        """只改变化的那几个数字，别的控件一个字都不动"""
+        self._stat_stale = False
+        try:
+            snap = self.state.snapshot()
+            mats = snap.get("materials") or {}
+            mat_total = sum(int(v) for v in mats.values())
+            vals = {
+                "time": fmt_seconds(snap["seconds"]),
+                "mora": f"{int(snap['mora']):,}",
+                "materials": f"×{mat_total:,}",
+                "artifact": f"×{int(snap['artifact']):,}",
+            }
+        except Exception:
+            return
+        for k, txt in vals.items():
+            lb = self.stat_labels.get(k)
+            if lb is not None and self._stat_txt.get(k) != txt:
+                self._stat_txt[k] = txt
+                lb.setText(txt)
 
     def _on_status(self, text, color):
         self.status_label.setText(f"● {text}")
@@ -277,221 +341,6 @@ class PageLaunch(BasePage):
 
     def on_show(self):
         pass
-
-
-# ============================================================
-#  今日统计
-# ============================================================
-class PageHome(BasePage):
-    title = "今日统计"
-
-    def __init__(self, win):
-        super().__init__(win)
-
-        # 三个数字卡片
-        row = QHBoxLayout()
-        row.setSpacing(10)
-        self.num_labels = {}
-        for key, title, unit in (("mora", "💰 今日摩拉", ""),
-                                 ("artifact", "💠 狗粮（圣遗物）", "×"),
-                                 ("time", "⏱ 监测时间", "")):
-            c = Card(self, alpha=self.alpha)
-            v = QVBoxLayout(c)
-            v.setContentsMargins(16, 14, 16, 14)
-            v.setSpacing(6)
-            lb = QLabel(title)
-            lb.setStyleSheet(label_qss(T.DIM, 13))
-            val = QLabel("0")
-            val.setStyleSheet(label_qss(T.ACCENT, 26, True))
-            v.addWidget(lb)
-            v.addWidget(val)
-            self.num_labels[key] = val
-            row.addWidget(c)
-        self.v.addLayout(row)
-
-        # 材料列表（滚动）
-        c = Card(self, alpha=self.alpha)
-        v = QVBoxLayout(c)
-        v.setContentsMargins(16, 12, 16, 12)
-        head = QHBoxLayout()
-        t = QLabel("📦 材料")
-        t.setStyleSheet(label_qss(T.TEXT, 15, True))
-        self.detail_btn = QPushButton("查看明细")
-        self.detail_btn.setFixedHeight(28)
-        self.detail_btn.setCursor(Qt.PointingHandCursor)
-        self.detail_btn.setStyleSheet(btn_qss("normal", self.alpha))
-        self.detail_btn.clicked.connect(self._toggle_detail)
-        head.addWidget(t)
-        head.addStretch(1)
-        head.addWidget(self.detail_btn)
-        v.addLayout(head)
-
-        self.mat_scroll = QScrollArea()
-        self.mat_scroll.setWidgetResizable(True)
-        self.mat_scroll.setFrameShape(QFrame.NoFrame)
-        self.mat_scroll.setStyleSheet(scroll_qss())
-        self.mat_scroll.viewport().setAutoFillBackground(False)
-        self.mat_inner = QWidget()
-        self.mat_inner.setStyleSheet("background: transparent;")
-        self.mat_list = QVBoxLayout(self.mat_inner)
-        self.mat_list.setContentsMargins(0, 0, 0, 0)
-        self.mat_list.setSpacing(2)
-        self.mat_scroll.setWidget(self.mat_inner)
-
-        # 明细视图（默认藏起来，点「查看明细」才显示）
-        self.detail_scroll = QScrollArea()
-        self.detail_scroll.setWidgetResizable(True)
-        self.detail_scroll.setFrameShape(QFrame.NoFrame)
-        self.detail_scroll.setStyleSheet(scroll_qss())
-        self.detail_scroll.viewport().setAutoFillBackground(False)
-        d_inner = QWidget()
-        d_inner.setStyleSheet("background: transparent;")
-        self.detail_list = QVBoxLayout(d_inner)
-        self.detail_list.setContentsMargins(0, 0, 0, 0)
-        self.detail_list.setSpacing(2)
-        self.detail_scroll.setWidget(d_inner)
-        self.detail_scroll.hide()
-        self.detail_rows = []
-        self._detail_shown = False
-
-        v.addWidget(self.mat_scroll, 1)
-        v.addWidget(self.detail_scroll, 1)
-        self.add(c, 1)
-
-        # 空状态提示（只有真的没材料时才显示）
-        self.empty_label = QLabel("（暂无，开始监测后自动统计）")
-        self.empty_label.setStyleSheet(label_qss(T.DIM, 14))
-        self.empty_label.setAlignment(Qt.AlignCenter)
-        self.mat_list.addWidget(self.empty_label)
-        self.mat_list.addStretch(1)
-
-        # 增量更新用的缓存：材料名 -> (整行控件, 数量标签)
-        self._rows = {}
-        self._last_txt = {}          # 上一次写进标签的文字，一样就不写
-        self._stale = False          # 不可见期间漏掉的刷新
-
-        self.state = win.state
-        self.state.stats_changed.connect(self.refresh)
-
-    # ---------- 刷新：只改变化的部分 ----------
-    def refresh(self):
-        # **看不见的页面一律不刷** —— 数据在别的页变了也不该动这里的控件。
-        # 记个脏标记，等它重新显示时（showEvent）再补一次。
-        if not self.isVisible():
-            self._stale = True
-            return
-        self._stale = False
-        snap = self.state.snapshot()
-        self._set_num("mora", f"{snap['mora']:,}")
-        self._set_num("artifact", f"×{snap['artifact']}")
-        self._set_num("time", fmt_seconds(snap["seconds"]))
-        self._update_materials(snap["materials"])
-
-    def showEvent(self, e):
-        """重新显示出来时，如果之前有漏刷就补一次"""
-        super().showEvent(e)
-        if getattr(self, "_stale", False):
-            self.refresh()
-
-    def _set_num(self, key, text):
-        lb = self.num_labels.get(key)
-        if lb is None:
-            return
-        if self._last_txt.get(key) == text:      # 文字没变 -> 一个字都不动
-            return
-        self._last_txt[key] = text
-        lb.setText(text)
-
-    def _update_materials(self, merged):
-        """材料列表：只增删改变化的那几行，**绝不整表重建**"""
-        names = set(merged)
-        # 1) 删掉已经没有的
-        for name in list(self._rows):
-            if name not in names:
-                row, _lb = self._rows.pop(name)
-                self.mat_list.removeWidget(row)
-                row.setParent(None)
-                row.deleteLater()
-        # 2) 新增 / 更新数量
-        items = sorted(merged.items(), key=lambda kv: -kv[1])
-        for i, (name, count) in enumerate(items):
-            txt = f"×{count}"
-            item = self._rows.get(name)
-            if item is None:
-                row, lb = self._make_mat_row(name, txt)
-                self._rows[name] = (row, lb)
-            else:
-                row, lb = item
-                if lb.text() != txt:             # 只有数量变了才写
-                    lb.setText(txt)
-            # 顺序变了才挪位置（挪控件很便宜，不重建）
-            if self.mat_list.indexOf(row) != i:
-                self.mat_list.insertWidget(i, row)
-        # 3) 空状态
-        self.empty_label.setVisible(len(items) == 0)
-
-    def _make_mat_row(self, name, txt):
-        row = QWidget()
-        lay = QHBoxLayout(row)
-        lay.setContentsMargins(6, 2, 6, 2)
-        n = QLabel(name)
-        n.setStyleSheet(label_qss(T.TEXT, 14))
-        c = QLabel(txt)
-        c.setStyleSheet(label_qss(T.ACCENT, 14, True))
-        lay.addWidget(n)
-        lay.addStretch(1)
-        lay.addWidget(c)
-        return row, c
-
-    # ---------- 查看明细：简要列表 / 完整明细 就地切换 ----------
-    def _toggle_detail(self):
-        self._detail_shown = not getattr(self, "_detail_shown", False)
-        if self._detail_shown:
-            self.mat_scroll.hide()
-            self.detail_scroll.show()
-            self.detail_btn.setText("收起明细")
-            self._rebuild_detail()
-        else:
-            self.detail_scroll.hide()
-            self.mat_scroll.show()
-            self.detail_btn.setText("查看明细")
-
-    def _rebuild_detail(self):
-        """明细 = 特殊材料 + 普通材料分开列（只在切到明细时重建一次）"""
-        for w in self.detail_rows:
-            self.detail_list.removeWidget(w)
-            w.setParent(None)
-            w.deleteLater()
-        self.detail_rows = []
-        snap = self.state.snapshot()
-        mats = snap["materials"]
-        normal = getattr(self.state.stats, "normal_materials", {}) or {}
-        groups = [("✦ 特殊材料 / 圣遗物", {k: v for k, v in mats.items() if k not in normal}),
-                  ("◆ 普通材料", dict(normal))]
-        for title, data in groups:
-            head = QLabel(f"{title}   共 {sum(data.values())} 个")
-            head.setStyleSheet(label_qss(T.ACCENT, 14, True))
-            self.detail_list.addWidget(head)
-            self.detail_rows.append(head)
-            if not data:
-                lb = QLabel("（无）")
-                lb.setStyleSheet(label_qss(T.DIM, 13))
-                self.detail_list.addWidget(lb)
-                self.detail_rows.append(lb)
-            for name, cnt in sorted(data.items(), key=lambda kv: -kv[1]):
-                r, _c = self._make_mat_row(name, f"×{cnt}")
-                self.detail_list.addWidget(r)
-                self.detail_rows.append(r)
-        self.detail_list.addStretch(1)
-
-    def on_show(self):
-        self.state.force_refresh()
-
-
-
-# ============================================================
-#  收益统计条
-# ============================================================
 class PageBar(BasePage):
     title = "收益统计条"
 
@@ -645,6 +494,25 @@ class PageRecords(BasePage):
             self._cards[idx] = c
             self.rec_list.insertWidget(idx, c)
 
+    @staticmethod
+    def _when_parts(item):
+        """把记录里的时间拆成 (日期, 开始时刻, 结束时刻)
+
+        ⚠ 记录是 sessions.make_record() 写的，字段叫 **start / end**
+          （完整的 "2026-09-20 14:30:00"）。
+          这里以前读的是 date / time —— 那两个字段根本不存在，
+          所以每条记录的日期时间都是空的。顺手兼容一下旧数据。
+        """
+        start = str(item.get("start", "") or "").strip()
+        end = str(item.get("end", "") or "").strip()
+        if not start:
+            d = str(item.get("date", "") or "").strip()
+            t = str(item.get("time", "") or "").strip()
+            start = (d + " " + t).strip()
+        date, t1 = (start.split(" ", 1) + [""])[:2] if start else ("", "")
+        t2 = end.split(" ", 1)[1] if " " in end else ""
+        return date, t1, t2
+
     def _make_card(self, idx, item):
         c = Card(self, alpha=self.alpha)
         v = QVBoxLayout(c)
@@ -653,7 +521,14 @@ class PageRecords(BasePage):
 
         top = QHBoxLayout()
         dur = fmt_duration(item.get("seconds", 0))
-        t = QLabel(f"⏱ {item.get('date', '')}  {item.get('time', '')}   时长 {dur}")
+        date, t1, t2 = self._when_parts(item)
+        # 日期 + 时间段，一眼能看出这段是几点到几点挂的
+        when = f"📅 {date}" if date else "📅 ——"
+        if t1:
+            when += f"　⏱ {t1}"
+            if t2:
+                when += f" → {t2}"
+        t = QLabel(f"{when}　　时长 {dur}")
         t.setStyleSheet(label_qss(T.TEXT, 14, True))
         top.addWidget(t)
         top.addStretch(1)
@@ -1824,11 +1699,12 @@ def right_wrap(*widgets):
 
 def build_pages(win):
     """页面顺序要和侧栏对应：
-       0 启动  1 今日统计  2 收益统计条  3 收益记录  4 设置  5 公告
-       前 5 个是侧栏导航项，「公告」是单独那个入口（在导航下面）"""
-    return [PageLaunch(win), PageHome(win), PageBar(win),
+       0 启动  1 收益统计条  2 收益记录  3 设置  4 公告
+       前 4 个是侧栏导航项，「公告」是单独那个入口（在导航下面）
+       （「今日统计」原来是单独一页，现在并进启动页的折叠区了）"""
+    return [PageLaunch(win), PageBar(win),
             PageRecords(win), PageSettings(win), PageNotice(win)]
 
 
 # 公告页在栈里的下标（侧栏那个「公告」按钮要用）
-NOTICE_PAGE_INDEX = 5
+NOTICE_PAGE_INDEX = 4

@@ -775,7 +775,9 @@ class MainWindow(QWidget):
 
         self.sidebar = Sidebar(
             self,
-            [("🚀", "启动"), ("📊", "今日统计"), ("📶", "收益统计条"),
+            # 「今日统计」不单独一页了 —— 挪到「启动」页那张卡片下面的
+            # 折叠区里（点开就看到时间/摩拉/材料/狗粮四个数）。
+            [("🚀", "启动"), ("📶", "收益统计条"),
              ("📋", "收益记录"), ("⚙", "设置")],
             self.show_page)
         body.addWidget(self.sidebar)
