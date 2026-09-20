@@ -10,6 +10,7 @@ from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QFont, QAction
 from PySide6.QtWidgets import QSystemTrayIcon, QMenu
 
 from qt_theme import ACCENT
+from qt_icon import icon_qicon
 
 
 # ---- 热键字符串解析（从 ui_base.py 搬过来的，这样 Qt 版不依赖任何 Tk 文件）----
@@ -104,17 +105,21 @@ class Tray(QObject):
         self.act_show.triggered.connect(win.restore_from_tray)
         menu.addAction(self.act_show)
         menu.addSeparator()
-        self.act_start = QAction("▶  开始监测", menu)
+        self.act_start = QAction("开始监测", menu)
+        self.act_start.setIcon(icon_qicon("play", 14))
         self.act_start.triggered.connect(lambda: win.state.start())
         menu.addAction(self.act_start)
-        self.act_stop = QAction("⏸  停止监测", menu)
+        self.act_stop = QAction("停止监测", menu)
+        self.act_stop.setIcon(icon_qicon("pause", 14))
         self.act_stop.triggered.connect(lambda: win.state.stop())
         menu.addAction(self.act_stop)
         menu.addSeparator()
-        self.act_data = QAction("📂 打开数据文件夹", menu)
+        self.act_data = QAction("打开数据文件夹", menu)
+        self.act_data.setIcon(icon_qicon("folder-open", 14))
         self.act_data.triggered.connect(win.open_data_dir)
         menu.addAction(self.act_data)
-        self.act_exit = QAction("❌ 退出程序", menu)
+        self.act_exit = QAction("退出程序", menu)
+        self.act_exit.setIcon(icon_qicon("power", 14))
         self.act_exit.triggered.connect(win.really_quit)
         menu.addAction(self.act_exit)
 

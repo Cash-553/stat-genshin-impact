@@ -23,10 +23,16 @@ from qt_theme import (panel_alpha, label_qss, btn_qss, entry_qss, combo_qss,
 import qt_theme as T
 import config_manager
 import qt_notice
-from qt_widgets import (Card, SettingRow, Switch, Accordion, ButtonRow, heading,
-                        level_name, level_value)
+import sessions
+from qt_widgets import (Card, SettingRow, Switch, Accordion, heading,
+                        level_name, level_value, set_btn_icon, small_button,
+                        IconButton, msg_info)
+from qt_icon import IconWidget, attach_hover
 
 VERSION = "0.9"
+
+# 颜色下拉框里那一项「自定义颜色…」（选了会开取色器）
+CUSTOM_COLOR = "自定义颜色…"
 
 
 def fmt_seconds(sec):
@@ -88,15 +94,30 @@ class PageLaunch(BasePage):
         v = QVBoxLayout(c)
         v.setContentsMargins(18, 16, 18, 16)
         v.setSpacing(2)
-        t = QLabel("🍃  StatGI")
+        head = QHBoxLayout()
+        head.setSpacing(8)
+        self.logo_icon = IconWidget(c, name="🍃", size=24, role="ACCENT")
+        head.addWidget(self.logo_icon)
+        t = QLabel("StatGI")
         t.setStyleSheet(label_qss(T.TEXT, 20, True))
+        head.addWidget(t)
+        head.addStretch(1)
+        v.addLayout(head)
+
         self.status_label = QLabel("● 未框选（自动检测游戏窗口）")
         self.status_label.setStyleSheet(label_qss(T.DIM, 13))
-        self.last_label = QLabel("🕐 最后识别：—")
-        self.last_label.setStyleSheet(label_qss(T.DIM, 12))
-        v.addWidget(t)
         v.addWidget(self.status_label)
-        v.addWidget(self.last_label)
+
+        last_row = QHBoxLayout()
+        last_row.setSpacing(7)
+        self.last_icon = IconWidget(c, name="clock", size=15, role="DIM")
+        last_row.addWidget(self.last_icon)
+        self.last_label = QLabel("最后识别：—")
+        self.last_label.setStyleSheet(label_qss(T.DIM, 12))
+        last_row.addWidget(self.last_label)
+        last_row.addStretch(1)
+        v.addLayout(last_row)
+        attach_hover(c, self.logo_icon)
         self.add(c)
 
         # 公告不在这儿了 —— 挪到左侧栏做一个独立入口（未读时挂红点），
@@ -110,7 +131,7 @@ class PageLaunch(BasePage):
         self.start_btn.setCursor(Qt.PointingHandCursor)
         self.start_btn.setStyleSheet(btn_qss("accent", self.alpha))
         self.start_btn.clicked.connect(self._on_start)
-        self.add(SettingRow(self, "▶", "开始监测",
+        self.add(SettingRow(self, "play", "开始监测",
                             "自动找到游戏窗口并识别掉落收益",
                             right_wrap(self.start_btn), alpha=self.alpha))
 
@@ -155,15 +176,21 @@ class PageLaunch(BasePage):
         rl.setSpacing(8)
         rl.addWidget(self.clear_dd)
         rl.addWidget(self.clear_btn)
-        self.add(SettingRow(self, "🧹", "清空",
+        self.add(SettingRow(self, "trash", "清空",
                             "选择清空范围后点击右侧按钮，不影响收益记录",
                             row, alpha=self.alpha))
 
         # 重新框选（折叠区）
         self.reselect = Accordion(
-            self, "🎯", "重新框选", "手动指定识别区域，通常无需设置",
-            ButtonRow(self, [("重新框选区域", self._on_reselect),
-                             ("📷 诊断截图", self._on_debug_screenshot)], self.alpha),
+            self, "crosshair", "重新框选", "手动指定识别区域，通常无需设置",
+            items=[
+                ("crosshair", "重新框选区域", "在屏幕上手动框出掉落提示所在的区域",
+                 small_button("框选", self._on_reselect, self.alpha,
+                              icon="crosshair", width=90)),
+                ("camera", "诊断截图", "存一张识别区域的截图，用来确认框得对不对",
+                 small_button("截图", self._on_debug_screenshot, self.alpha,
+                              icon="camera", width=90)),
+            ],
             alpha=self.alpha)
         self.add(self.reselect)
         # 撑开：把上面几张卡片顶到上面去，多余空间全留在最底下。
@@ -186,7 +213,7 @@ class PageLaunch(BasePage):
 
     def _on_event(self, desc, ts):
         self.last_label.setText(
-            f"🕐 最后识别：{desc}  ({time.strftime('%H:%M:%S', time.localtime(ts))})")
+            f"最后识别：{desc}  ({time.strftime('%H:%M:%S', time.localtime(ts))})")
 
     def _on_start(self):
         # 正在监测 -> 停止；否则 -> 开始
@@ -298,7 +325,7 @@ class PageLaunch(BasePage):
         QMessageBox.information(
             self, "已保存",
             f"识别区域已保存：\n{rect.width()} × {rect.height()}\n\n"
-            "建议点击「📷 诊断截图」确认识别区域是否正确。")
+            "建议点击「诊断截图」确认识别区域是否正确。")
 
     def _on_debug_screenshot(self):
         """截一张识别区域的画面并存下来，顺便 OCR 看看识别到什么"""
@@ -335,12 +362,12 @@ class PageLaunch(BasePage):
                 QMessageBox.information(
                     self, "截图已保存",
                     f"截图已保存：\n{f}\n\n画面里识别到的内容：\n{texts}\n\n"
-                    "💡 若显示掉落提示（如「破损的面具 ×1」），说明区域设置正确。")
+                    "若显示掉落提示（如「破损的面具 ×1」），说明区域设置正确。")
             else:
                 QMessageBox.information(
                     self, "截图已保存",
                     f"截图已保存：\n{f}\n\n画面里没有识别到文字。\n"
-                    "💡 若掉落提示出现时此处仍为空白，说明识别区域设置有误。")
+                    "若掉落提示出现时此处仍为空白，说明识别区域设置有误。")
         except Exception as e:
             QMessageBox.warning(self, "失败", f"截图失败：{e}")
 
@@ -357,13 +384,14 @@ class PageBar(BasePage):
         self.state = win.state
         bar = self.state.settings.get("stat_bar") or {}
 
-        self.open_btn = QPushButton("📶 打开统计条")
+        self.open_btn = QPushButton("打开统计条")
         self.open_btn.setFixedSize(150, 38)
         self.open_btn.setCursor(Qt.PointingHandCursor)
         self.open_btn.setStyleSheet(btn_qss("accent", self.alpha))
+        set_btn_icon(self.open_btn, "chart-column", 15, color="#08222E")
         self.open_btn.clicked.connect(self._toggle_bar)
-        self.add(SettingRow(self, "📶", "直播间小窗口",
-                            "摩拉 / 材料 / 狗粮 三个格子，图标在上、数量在下",
+        self.add(SettingRow(self, "monitor", "桌面悬浮窗",
+                            "常驻桌面的小窗口：摩拉 / 材料 / 狗粮 三个格子，图标在上、数量在下",
                             right_wrap(self.open_btn), alpha=self.alpha))
 
         # 透明度（改完立即生效：直接设统计条窗口的 alpha）
@@ -376,30 +404,24 @@ class PageBar(BasePage):
         self.opacity_label.setFixedWidth(46)
         self.opacity_label.setStyleSheet(label_qss(T.ACCENT, 13))
         self.opacity.valueChanged.connect(self._on_opacity)
-        self.add(SettingRow(self, "🌓", "统计条透明度",
-                            "向左调节透明度更高，减少对直播画面的遮挡",
+        self.add(SettingRow(self, "contrast", "统计条透明度",
+                            "向左调节透明度更高，减少对游戏画面的遮挡",
                             right_wrap(self.opacity, self.opacity_label), alpha=self.alpha))
 
-        # 显示项目：做成折叠区（跟「重新框选」一个样子），点开就地勾选
+        # 显示项目：折叠区，每一项一张子卡片（图标 + 标题 + 说明 + 开关）
         self.slot_switches = {}
-        body = QWidget()
-        bv = QVBoxLayout(body)
-        bv.setContentsMargins(0, 2, 0, 0)
-        bv.setSpacing(4)
-        for key, name in (("slot1", "💰 摩拉"), ("slot2", "⚔ 材料"), ("slot3", "💠 狗粮")):
-            r = QHBoxLayout()
-            lb = QLabel(name)
-            lb.setStyleSheet(label_qss(T.TEXT, 14))
-            sw = Switch(body, bool(bar.get("show_" + key, True)))
+        slot_items = []
+        for key, ic_name, name, desc in (
+                ("slot1", "coins", "摩拉", "统计条上显示摩拉那一格"),
+                ("slot2", "swords", "材料", "统计条上显示材料那一格"),
+                ("slot3", "gem", "狗粮", "统计条上显示圣遗物那一格")):
+            sw = Switch(self, bool(bar.get("show_" + key, True)))
             sw.toggled.connect(lambda v, k=key: self._on_slots_changed())
-            r.addWidget(lb)
-            r.addStretch(1)
-            r.addWidget(sw)
-            bv.addLayout(r)
             self.slot_switches[key] = sw
-        self.slot_acc = Accordion(self, "📶", "显示项目",
+            slot_items.append((ic_name, name, desc, sw))
+        self.slot_acc = Accordion(self, "layout-dashboard", "显示项目",
                                   "勾选统计条显示项，修改后即时生效",
-                                  body, alpha=self.alpha)
+                                  items=slot_items, alpha=self.alpha)
         self.add(self.slot_acc)
         self._sync_slot_desc()
         self.stretch()
@@ -426,7 +448,7 @@ class PageBar(BasePage):
         self._sync_btn()
 
     def _sync_btn(self):
-        txt = "关闭统计条" if self.win.bar_window is not None else "📶 打开统计条"
+        txt = "关闭统计条" if self.win.bar_window is not None else "打开统计条"
         if self.open_btn.text() != txt:
             self.open_btn.setText(txt)
 
@@ -449,19 +471,58 @@ class PageRecords(BasePage):
     def __init__(self, win):
         super().__init__(win)
         self.state = win.state
-        self._open = set()
+        self._open = set()          # 展开了明细的记录 key
         self._cards = {}
+        self._view = "normal"       # normal = 收益记录 / fav = 收藏夹
+        self._edit = False          # 编辑模式（勾选多条批量操作）
+        self._checked = set()       # 编辑模式下勾选的记录 key
 
+        # ---------- 顶部按钮 ----------
         head = QHBoxLayout()
+        head.setSpacing(8)
         head.addStretch(1)
-        self.clear_btn = QPushButton("🗑 清空记录")
-        self.clear_btn.setFixedHeight(32)
-        self.clear_btn.setCursor(Qt.PointingHandCursor)
-        self.clear_btn.setStyleSheet(btn_qss("normal", self.alpha))
+
+        self.edit_btn = IconButton(self, icon="pencil", text="编辑",
+                                   alpha=self.alpha)
+        self.edit_btn.clicked.connect(self._toggle_edit)
+        head.addWidget(self.edit_btn)
+
+        self.fav_btn = IconButton(self, icon="star", text="收藏夹",
+                                  alpha=self.alpha)
+        self.fav_btn.clicked.connect(self._toggle_view)
+        head.addWidget(self.fav_btn)
+
+        self.clear_btn = IconButton(self, icon="trash", text="清空记录",
+                                    alpha=self.alpha, kind="danger")
         self.clear_btn.clicked.connect(self._on_clear)
         head.addWidget(self.clear_btn)
         self.v.addLayout(head)
 
+        # ---------- 编辑模式的批量操作条 ----------
+        self.edit_bar = QWidget()
+        eb = QHBoxLayout(self.edit_bar)
+        eb.setContentsMargins(0, 0, 0, 0)
+        eb.setSpacing(8)
+        self.sel_label = QLabel("已选 0 条")
+        self.sel_label.setStyleSheet(label_qss(T.DIM, 13))
+        eb.addWidget(self.sel_label)
+        eb.addStretch(1)
+        self.all_btn = IconButton(self.edit_bar, icon="square-check", text="全选",
+                                  alpha=self.alpha)
+        self.all_btn.clicked.connect(self._toggle_all)
+        eb.addWidget(self.all_btn)
+        self.batch_fav_btn = IconButton(self.edit_bar, icon="star", text="收藏",
+                                        alpha=self.alpha)
+        self.batch_fav_btn.clicked.connect(self._batch_favorite)
+        eb.addWidget(self.batch_fav_btn)
+        self.batch_del_btn = IconButton(self.edit_bar, icon="trash", text="删除",
+                                        alpha=self.alpha, kind="danger")
+        self.batch_del_btn.clicked.connect(self._batch_delete)
+        eb.addWidget(self.batch_del_btn)
+        self.edit_bar.setVisible(False)
+        self.v.addWidget(self.edit_bar)
+
+        # ---------- 列表 ----------
         sc = QScrollArea()
         sc.setWidgetResizable(True)
         sc.setFrameShape(QFrame.NoFrame)
@@ -481,26 +542,139 @@ class PageRecords(BasePage):
         self.rec_list.addWidget(self.empty_label)
         self.rec_list.addStretch(1)
 
+        self._sync_head()
+
     def on_show(self):
         self.refresh()
 
+    # ================= 顶部状态 =================
+
+    def _sync_head(self):
+        fav = (self._view == "fav")
+        self.fav_btn.set_text("全部记录" if fav else "收藏夹")
+        self.fav_btn.set_active(fav)
+        self.edit_btn.set_text("完成" if self._edit else "编辑")
+        self.edit_btn.set_active(self._edit)
+        self.clear_btn.set_text("清空收藏夹" if fav else "清空记录")
+        self.edit_bar.setVisible(self._edit)
+        n = len(self._checked)
+        self.sel_label.setText(f"已选 {n} 条")
+
+    def _current_items(self):
+        """当前视图要显示的记录（列表顺序：新的在上面）"""
+        if self._view == "fav":
+            return list(reversed(sessions.load_favorites()))
+        return list(reversed(sessions.load_sessions()))
+
     def refresh(self):
-        """重建记录列表 —— 这个只在**切到本页**或**停止监测**时发生，
-        不是每次数据变化都重建（记录条数本来就很少变）。"""
-        import sessions
-        items = sessions.load_sessions()
-        # 先清空旧卡片（只清卡片，不动布局里的空状态和弹簧）
+        """重建列表 —— 只在切页 / 视图切换 / 增删改之后发生"""
+        items = self._current_items()
         for w in list(self._cards.values()):
             self.rec_list.removeWidget(w)
             w.setParent(None)
             w.deleteLater()
         self._cards = {}
-        self._open = set()
+
+        if self._view == "fav":
+            self.empty_label.setText("（收藏夹是空的）\n"
+                                     "在收益记录里点一条记录右边的「收藏」，就会复制到这里。")
+        else:
+            self.empty_label.setText("（暂无记录）\n开始并停止一次监测后，将自动生成一条记录。")
         self.empty_label.setVisible(not items)
-        for idx, item in enumerate(reversed(items)):
-            c = self._make_card(idx, item)
-            self._cards[idx] = c
+
+        for idx, item in enumerate(items):
+            c = self._make_card(item, fav=(self._view == "fav"))
+            self._cards[sessions.record_key(item)] = c
             self.rec_list.insertWidget(idx, c)
+        self._sync_head()
+
+    # ================= 视图 / 编辑模式 =================
+
+    def _toggle_view(self):
+        self._view = "fav" if self._view == "normal" else "normal"
+        self._open.clear()
+        self._checked.clear()
+        self.refresh()
+
+    def _toggle_edit(self):
+        self._edit = not self._edit
+        if not self._edit:
+            self._checked.clear()
+        self.refresh()
+
+    def _toggle_check(self, key):
+        if key in self._checked:
+            self._checked.discard(key)
+        else:
+            self._checked.add(key)
+        self.refresh()
+
+    def _toggle_all(self):
+        keys = {sessions.record_key(i) for i in self._current_items()}
+        if keys and keys <= self._checked:
+            self._checked.clear()
+        else:
+            self._checked |= keys
+        self.refresh()
+
+    # ================= 单条操作 =================
+
+    def _favorite_one(self, item):
+        sessions.add_favorite(item)
+        self.refresh()
+
+    def _unfavorite_one(self, item):
+        sessions.remove_favorite(item)
+        self.refresh()
+
+    def _delete_one(self, item):
+        key = sessions.record_key(item)
+        left = [r for r in sessions.load_sessions()
+                if sessions.record_key(r) != key]
+        sessions.save_sessions(left)
+        self._checked.discard(key)
+        self.refresh()
+
+    # ================= 批量操作 =================
+
+    def _batch_favorite(self):
+        if not self._checked:
+            QMessageBox.information(self, "提示", "先勾选要收藏的记录")
+            return
+        n = 0
+        for item in self._current_items():
+            if sessions.record_key(item) in self._checked:
+                sessions.add_favorite(item)
+                n += 1
+        self._checked.clear()
+        self.refresh()
+        QMessageBox.information(self, "已收藏", f"{n} 条记录已复制到收藏夹")
+
+    def _batch_delete(self):
+        if not self._checked:
+            QMessageBox.information(self, "提示", "先勾选要删除的记录")
+            return
+        if self._view == "fav":
+            if QMessageBox.question(self, "确认",
+                                    f"从收藏夹移除选中的 {len(self._checked)} 条？"
+                                    ) != QMessageBox.Yes:
+                return
+            for key in list(self._checked):
+                sessions.remove_favorite(key)
+        else:
+            if QMessageBox.question(
+                    self, "确认",
+                    f"删除选中的 {len(self._checked)} 条收益记录？\n"
+                    "（已收藏的副本会留在收藏夹里，不受影响）"
+            ) != QMessageBox.Yes:
+                return
+            left = [r for r in sessions.load_sessions()
+                    if sessions.record_key(r) not in self._checked]
+            sessions.save_sessions(left)
+        self._checked.clear()
+        self.refresh()
+
+    # ================= 卡片 =================
 
     @staticmethod
     def _when_parts(item):
@@ -521,42 +695,38 @@ class PageRecords(BasePage):
         t2 = end.split(" ", 1)[1] if " " in end else ""
         return date, t1, t2
 
-    def _make_card(self, idx, item):
+    def _make_card(self, item, fav=False):
+        key = sessions.record_key(item)
         c = Card(self, alpha=self.alpha)
         v = QVBoxLayout(c)
         v.setContentsMargins(16, 12, 16, 12)
         v.setSpacing(6)
 
         top = QHBoxLayout()
+        top.setSpacing(8)
+
+        # 编辑模式：最左边一个勾选框
+        if self._edit:
+            sel = IconButton(c, height=28, icon_size=17,
+                             icon="square-check" if key in self._checked else "square",
+                             alpha=self.alpha)
+            sel.clicked.connect(lambda _=None, k=key: self._toggle_check(k))
+            top.addWidget(sel)
+
         dur = fmt_duration(item.get("seconds", 0))
         date, t1, t2 = self._when_parts(item)
-        # 日期 + 时间段，一眼能看出这段是几点到几点挂的
-        when = f"📅 {date}" if date else "📅 ——"
+        when = date if date else "——"
         if t1:
-            when += f"　⏱ {t1}"
+            when += f"　{t1}"
             if t2:
                 when += f" → {t2}"
+        top.addWidget(IconWidget(c, name="calendar", size=16, role="DIM"))
         t = QLabel(f"{when}　　时长 {dur}")
         t.setStyleSheet(label_qss(T.TEXT, 14, True))
         top.addWidget(t)
         top.addStretch(1)
-        btn = QPushButton("查看明细 ▾")
-        btn.setFixedHeight(26)
-        btn.setCursor(Qt.PointingHandCursor)
-        btn.setStyleSheet(btn_qss("normal", self.alpha))
-        top.addWidget(btn)
-        v.addLayout(top)
 
-        nums = QHBoxLayout()
-        for label, val, color in (("摩拉", f"{item.get('mora', 0):,}", T.ACCENT),
-                                  ("狗粮", f"×{item.get('artifact', 0)}", T.ACCENT)):
-            lb = QLabel(f"{label} {val}")
-            lb.setStyleSheet(label_qss(color, 15, True))
-            nums.addWidget(lb)
-            nums.addSpacing(20)
-        nums.addStretch(1)
-        v.addLayout(nums)
-
+        # 「查看明细」
         detail = QWidget()
         dl = QVBoxLayout(detail)
         dl.setContentsMargins(0, 4, 0, 0)
@@ -576,29 +746,83 @@ class PageRecords(BasePage):
             lb = QLabel("（这条记录没有材料）")
             lb.setStyleSheet(label_qss(T.DIM, 13))
             dl.addWidget(lb)
-        detail.setVisible(False)
+        detail.setVisible(key in self._open)
+
+        det_btn = IconButton(c, icon="file-text", text="查看明细",
+                             alpha=self.alpha, height=28, icon_size=15)
+        top.addWidget(det_btn)
+
+        # 「收藏 / 取消收藏」（纯图标，鼠标悬停会弹）
+        is_fav = sessions.is_favorite(item)
+        fav_btn = IconButton(c, icon="star", alpha=self.alpha, height=28,
+                             icon_size=16, active=is_fav)
+        if fav:
+            fav_btn.setToolTip("从收藏夹移出（不影响原来的收益记录）")
+            fav_btn.clicked.connect(
+                lambda _=None, it=item: self._unfavorite_one(it))
+        else:
+            fav_btn.setToolTip("已收藏，点击移出" if is_fav else "收藏到收藏夹")
+            fav_btn.clicked.connect(
+                lambda _=None, it=item, f=is_fav:
+                (self._unfavorite_one(it) if f else self._favorite_one(it)))
+        top.addWidget(fav_btn)
+
+        # 「删除」（纯图标；收藏夹里不提供，用上面的星星移出）
+        if not fav:
+            del_btn = IconButton(c, icon="trash", kind="danger",
+                                 alpha=self.alpha, height=28, icon_size=16)
+            del_btn.setToolTip("删除这条收益记录（收藏夹里的副本不受影响）")
+            del_btn.clicked.connect(
+                lambda _=None, it=item: self._delete_one(it))
+            top.addWidget(del_btn)
+
+        v.addLayout(top)
+
+        nums = QHBoxLayout()
+        for label, val in (("摩拉", f"{item.get('mora', 0):,}"),
+                           ("狗粮", f"×{item.get('artifact', 0)}")):
+            lb = QLabel(f"{label} {val}")
+            lb.setStyleSheet(label_qss(T.ACCENT, 15, True))
+            nums.addWidget(lb)
+            nums.addSpacing(20)
+        nums.addStretch(1)
+        v.addLayout(nums)
         v.addWidget(detail)
 
-        def _toggle(_=False, i=idx, d=detail, b=btn):
-            if i in self._open:
-                self._open.discard(i)
+        def _toggle(_=None, k=key, d=detail, b=det_btn):
+            if k in self._open:
+                self._open.discard(k)
                 d.setVisible(False)
-                b.setText("查看明细 ▾")
+                b.set_text("查看明细")
             else:
-                self._open.add(i)
+                self._open.add(k)
                 d.setVisible(True)
-                b.setText("收起明细 ▴")
-        btn.clicked.connect(_toggle)
+                b.set_text("收起明细")
+
+        det_btn.clicked.connect(_toggle)
+        if key in self._open:
+            det_btn.set_text("收起明细")
         return c
 
     def _on_clear(self):
-        import sessions
+        if self._view == "fav":
+            if QMessageBox.question(self, "确认",
+                                    "确定清空整个收藏夹吗？") != QMessageBox.Yes:
+                return
+            sessions.clear_favorites()
+            self._checked.clear()
+            self.refresh()
+            QMessageBox.information(self, "已清空", "收藏夹已清空")
+            return
         if QMessageBox.question(self, "确认",
-                                "确定清空所有收益记录吗？\n（今日的统计数据不受影响）") != QMessageBox.Yes:
+                                "确定清空所有收益记录吗？\n"
+                                "（今日的统计数据不受影响；收藏夹也不受影响）"
+                                ) != QMessageBox.Yes:
             return
         sessions.clear_sessions()
+        self._checked.clear()
         self.refresh()
-        QMessageBox.information(self, "已清空", "收益记录已清空")
+        QMessageBox.information(self, "已清空", "收益记录已清空，收藏夹未受影响")
 
 
 def fmt_duration(sec):
@@ -725,7 +949,7 @@ class PageSettings(BasePage):
         self.alpha_label.setFixedWidth(46)
         self.alpha_label.setStyleSheet(label_qss(T.ACCENT, 13))
         self.alpha_slider.valueChanged.connect(self._on_alpha)
-        self._row(tb, "🌓", "卡片透明度",
+        self._row(tb, "contrast", "卡片透明度",
                   "卡片、侧边栏与按钮的统一不透明度（0% 为全透明）",
                   right_wrap(self.alpha_slider, self.alpha_label))
 
@@ -739,41 +963,44 @@ class PageSettings(BasePage):
         self.dim_label.setFixedWidth(46)
         self.dim_label.setStyleSheet(label_qss(T.ACCENT, 13))
         self.dim_slider.valueChanged.connect(self._on_dim)
-        self._row(tb, "🌑", "背景压暗",
+        self._row(tb, "moon", "背景压暗",
                   "背景图对比度过高时调高，提升文字可读性（0% 不压暗）",
                   right_wrap(self.dim_slider, self.dim_label))
 
-        pic = QPushButton("🖼 选择图片")
-        clr = QPushButton("✖ 清除")
+        pic = set_btn_icon(QPushButton("选择图片"), "image", 15)
+        clr = set_btn_icon(QPushButton("清除"), "x", 15)
         for b, kind, cb in ((pic, "normal", self._choose_bg), (clr, "danger", self._clear_bg)):
             b.setFixedHeight(32)
             b.setCursor(Qt.PointingHandCursor)
             b.setStyleSheet(btn_qss(kind, self.alpha))
             b.clicked.connect(cb)
-        import os as _os
         cur = s.get("bg_image") or ""
-        self.bg_name = QLabel(_os.path.basename(cur) if cur else "未设置（纯色背景）")
+        self.bg_name = QLabel("")
         self.bg_name.setStyleSheet(label_qss(T.DIM, 12))
-        self._row(tb, "🖼", "自定义背景图片",
+        # 长文件名会把整张卡片撑宽 —— 限宽 + 中间省略，完整名字放提示气泡里
+        self.bg_name.setMaximumWidth(150)
+        self._set_bg_name(cur)
+        self._row(tb, "image", "自定义背景图片",
                   "设为窗口背景图，卡片区域转为半透明",
                   right_wrap(pic, clr, self.bg_name))
 
         import theme as _theme_mod      # 只为了取预设名字列表
         bg_items = list(getattr(_theme_mod, "BG_PRESETS", {"经典深黑": "#1C1C1C"}).keys())
         ac_items = list(getattr(_theme_mod, "ACCENT_PRESETS", {"经典蓝": "#4CC2FF"}).keys())
-        self.bg_dd = self._dd(bg_items)
-        self.accent_dd = self._dd(ac_items)
-        self.bg_dd.setCurrentText(str(s.get("bg_color", "经典深黑")))
-        self.accent_dd.setCurrentText(str(s.get("accent_color", "经典蓝")))
+        self.bg_dd = self._dd(bg_items + [CUSTOM_COLOR])
+        self.accent_dd = self._dd(ac_items + [CUSTOM_COLOR])
+        self._set_combo_silently(self.bg_dd, s.get("bg_color", "经典深黑"))
+        self._set_combo_silently(self.accent_dd, s.get("accent_color", "经典蓝"))
         self.bg_dd.currentTextChanged.connect(self._on_bg_color)
         self.accent_dd.currentTextChanged.connect(self._on_accent_color)
-        self._row(tb, "🎨", "背景颜色", "窗口背景色，修改后即时生效", self.bg_dd)
-        self._row(tb, "🌈", "强调色",
-                  "按钮、选中项与数值高亮色，修改后即时生效", self.accent_dd)
+        self._row(tb, "palette", "背景颜色",
+                  "窗口背景色；可选预设，也可以自己调一个颜色", self.bg_dd)
+        self._row(tb, "rainbow", "强调色",
+                  "按钮、选中项与数值高亮色；可选预设，也可以自己调", self.accent_dd)
 
         self.sidebar_glass = Switch(self._inner[tb], bool(s.get("sidebar_glass", True)))
         self.sidebar_glass.toggled.connect(self._on_sidebar_glass)
-        self._row(tb, "🌫", "左侧栏毛玻璃效果",
+        self._row(tb, "eye-off", "左侧栏毛玻璃效果",
                   "需先设置背景图；对侧边栏做模糊与压暗处理", self.sidebar_glass)
 
         # 「统计条图标」放在这里（从「直播」挪过来的）
@@ -782,7 +1009,7 @@ class PageSettings(BasePage):
         icon_btn.setCursor(Qt.PointingHandCursor)
         icon_btn.setStyleSheet(btn_qss("normal", self.alpha))
         icon_btn.clicked.connect(self.win.open_icon_manager)
-        self._row(tb, "🖼", "统计条图标",
+        self._row(tb, "image", "统计条图标",
                   "自定义统计条各格图标（摩拉 / 材料 / 狗粮）", icon_btn)
 
     # ================= 识别 =================
@@ -793,7 +1020,7 @@ class PageSettings(BasePage):
         self.tick_entry.setAlignment(Qt.AlignCenter)
         self.tick_entry.setStyleSheet(entry_qss())
         self.tick_entry.editingFinished.connect(self._on_tick)
-        self._row(tb, "⏱", "检测间隔",
+        self._row(tb, "timer", "检测间隔",
                   "画面检测间隔，单位毫秒（10~5000，默认 50）", self.tick_entry)
 
         # 文字识别频率：性能 / 标准 / 省电 / 极致省电（越小越频繁）
@@ -802,7 +1029,7 @@ class PageSettings(BasePage):
             level_name(config_manager.OCR_LEVELS,
                        int(s.get("ocr_interval", 150) or 150), config_manager.DEFAULT_OCR_LEVEL))
         self.ocr_dd.currentTextChanged.connect(self._on_ocr_interval)
-        self._row(tb, "🔍", "文字识别频率",
+        self._row(tb, "search", "文字识别频率",
                   "文字识别间隔，越快响应越及时、越慢越省电", self.ocr_dd)
 
         # 画面变化灵敏度：同一套名字，数值是变化阈值（越小越灵敏）
@@ -820,7 +1047,7 @@ class PageSettings(BasePage):
             level_name(config_manager.CHANGE_LEVELS, _cur_thr,
                        config_manager.DEFAULT_CHANGE_LEVEL))
         self.change_dd.currentTextChanged.connect(self._on_change_level)
-        self._row(tb, "🎚", "画面变化灵敏度",
+        self._row(tb, "sliders-horizontal", "画面变化灵敏度",
                   "画面变化判定阈值，越灵敏响应越快、耗电越高", self.change_dd)
 
         ev = str(s.get("event_end_window", 1.5)).replace("秒", "").strip()
@@ -828,31 +1055,23 @@ class PageSettings(BasePage):
         self.event_dd.setCurrentText((f"{ev} 秒" if f"{ev} 秒" in ("1.0 秒", "1.5 秒", "2.5 秒")
                                       else "1.5 秒"))
         self.event_dd.currentTextChanged.connect(self._on_event_window)
-        self._row(tb, "🔁", "防重复窗口",
+        self._row(tb, "repeat", "防重复窗口",
                   "同一提示消失超过该时长后再次出现，计为新掉落", self.event_dd)
 
-        # 识别哪几样：折叠区（跟「重新框选」一个样子）
-        box = QWidget()
-        bl2 = QVBoxLayout(box)
-        bl2.setContentsMargins(0, 2, 0, 0)
-        bl2.setSpacing(4)
+        # 识别哪几样：折叠区，每一项一张子卡片
         self.kind_switches = {}
-        for key, name in (("enable_mora", "💰 摩拉"),
-                          ("enable_material", "⚔ 材料"),
-                          ("enable_artifact", "💠 狗粮")):
-            r = QHBoxLayout()
-            lb = QLabel(name)
-            lb.setStyleSheet(label_qss(T.TEXT, 14))
-            sw = Switch(box, bool(s.get(key, True)))
+        kind_items = []
+        for key, ic_name, name, desc in (
+                ("enable_mora", "coins", "摩拉", "识别并统计拾取到的摩拉"),
+                ("enable_material", "swords", "材料", "识别并统计怪物掉落的素材"),
+                ("enable_artifact", "gem", "狗粮", "识别并统计拾取的圣遗物")):
+            sw = Switch(self._inner[tb], bool(s.get(key, True)))
             sw.toggled.connect(lambda v, k=key: self._on_kinds_changed(k, v))
-            r.addWidget(lb)
-            r.addStretch(1)
-            r.addWidget(sw)
-            bl2.addLayout(r)
             self.kind_switches[key] = sw
-        self.kind_acc = Accordion(self._inner[tb], "🎯", "识别哪几样",
+            kind_items.append((ic_name, name, desc, sw))
+        self.kind_acc = Accordion(self._inner[tb], "target", "识别哪几样",
                                   "勾选需要识别的物品种类",
-                                  box, alpha=self.alpha)
+                                  items=kind_items, alpha=self.alpha)
         self._lay[tb].insertWidget(self._lay[tb].count() - 1, self.kind_acc)
         self._sync_kind_desc()
 
@@ -899,7 +1118,7 @@ class PageSettings(BasePage):
         self.only_fg = Switch(self._inner[tb], bool(s.get("only_foreground", True)))
         self.only_fg.toggled.connect(
             lambda v: self.state.set_setting("only_foreground", bool(v)))
-        self._row(tb, "🎯", "只在原神前台时识别",
+        self._row(tb, "crosshair", "只在原神前台时识别",
                   "仅原神处于前台时识别，切出后自动暂停", self.only_fg)
 
         self.close_dd = self._dd(["每次询问", "最小化到托盘", "直接退出"])
@@ -907,49 +1126,33 @@ class PageSettings(BasePage):
             "ask": "每次询问", "tray": "最小化到托盘", "exit": "直接退出"
         }.get(str(s.get("close_behavior", "ask")), "每次询问"))
         self.close_dd.currentTextChanged.connect(self._on_close_behavior)
-        self._row(tb, "✖", "点右上角 ✕ 时", "点击关闭按钮时的行为", self.close_dd)
+        self._row(tb, "x", "点右上角 ✕ 时", "点击关闭按钮时的行为", self.close_dd)
 
         # ---- 全局热键（收成一张折叠卡片）----
         # 每个动作一个按钮，点按钮后按下想用的键即可录制。
         # _hotkey_btns 记着「设置里的键名 -> 按钮」，录制时按名字找按钮。
         self._hotkey_btns = {}
         self._capturing = None
-        hk_body = QWidget()
-        hk_lay = QVBoxLayout(hk_body)
-        hk_lay.setContentsMargins(0, 8, 0, 2)
-        hk_lay.setSpacing(8)
-        for key, title, desc in (
-                ("hotkey", "开始 / 停止监测",
+        hk_items = []
+        for key, ic_name, title, desc in (
+                ("hotkey", "play", "开始 / 停止监测",
                  "按下即开始监测；再次按下停止"),
-                ("hotkey_bar", "显示 / 隐藏统计条",
+                ("hotkey_bar", "chart-column", "显示 / 隐藏统计条",
                  "按下显示统计条；再次按下隐藏")):
-            btn = QPushButton(str(s.get(key, "关闭")))
-            btn.setFixedSize(140, 32)
-            btn.setCursor(Qt.PointingHandCursor)
-            btn.setStyleSheet(btn_qss("normal", self.alpha))
+            btn = small_button(str(s.get(key, "关闭")), None, self.alpha,
+                               width=120, height=30)
             btn.clicked.connect(lambda _=False, k=key: self._start_hotkey_capture(k))
             self._hotkey_btns[key] = btn
-
-            r = QHBoxLayout()
-            c = QVBoxLayout()
-            c.setSpacing(1)
-            t = QLabel(title)
-            t.setStyleSheet(label_qss(T.TEXT, 14))
-            d = QLabel(desc)
-            d.setStyleSheet(label_qss(T.DIM, 12))
-            c.addWidget(t)
-            c.addWidget(d)
-            r.addLayout(c, 1)
-            r.addWidget(btn)
-            hk_lay.addLayout(r)
+            hk_items.append((ic_name, title, desc, btn))
 
         hk_tip = QLabel("点击右侧按钮后按下目标按键即可设置，Esc 取消；不使用则保持「关闭」")
         hk_tip.setStyleSheet(label_qss(T.DIM, 12))
-        hk_lay.addWidget(hk_tip)
+        hk_tip.setWordWrap(True)
 
-        self.hotkey_acc = Accordion(self._inner[tb], "⌨", "全局热键",
+        self.hotkey_acc = Accordion(self._inner[tb], "keyboard", "全局热键",
                                     "全局生效，游戏内也可触发",
-                                    hk_body, alpha=self.alpha)
+                                    items=hk_items, footer=hk_tip,
+                                    alpha=self.alpha)
         self._lay[tb].insertWidget(self._lay[tb].count() - 1, self.hotkey_acc)
 
     # ================= 统计 =================
@@ -962,61 +1165,40 @@ class PageSettings(BasePage):
         #
         # 排版：说明要跟它那一行贴在一起（组内 2px），两组之间才留大间距（14px）。
         # 以前每样都是 12px 平铺，说明就飘在两行正中间，看着空隙特别大。
-        body = QWidget()
-        bl = QVBoxLayout(body)
-        bl.setContentsMargins(0, 6, 0, 2)
-        bl.setSpacing(14)
-
-        # 第 1 组：启用换日刷新
-        r1 = QHBoxLayout()
-        t1 = QLabel("启用换日刷新")
-        t1.setStyleSheet(label_qss(T.TEXT, 14))
-        r1.addWidget(t1)
-        r1.addStretch(1)
-        self.ro_switch = Switch(body, bool(s.get("rollover_enabled", True)))
+        self.ro_switch = Switch(self._inner[tb],
+                                bool(s.get("rollover_enabled", True)))
         self.ro_switch.toggled.connect(self._on_rollover_enabled)
-        r1.addWidget(self.ro_switch)
-        e1 = QLabel("关闭后不再自动换日，数据持续累计")
-        e1.setStyleSheet(label_qss(T.DIM, 12))
-        g1 = QVBoxLayout()
-        g1.setSpacing(2)
-        g1.addLayout(r1)
-        g1.addWidget(e1)
-        bl.addLayout(g1)
 
-        # 第 2 组：换日时间
-        r2 = QHBoxLayout()
-        t2 = QLabel("换日时间")
-        t2.setStyleSheet(label_qss(T.TEXT, 14))
-        r2.addWidget(t2)
-        r2.addStretch(1)
         self.ro_entry = QLineEdit(str(int(s.get("rollover_hour", 0) or 0)))
         self.ro_entry.setFixedWidth(70)
         self.ro_entry.setAlignment(Qt.AlignCenter)
         self.ro_entry.setStyleSheet(entry_qss())
         self.ro_entry.editingFinished.connect(self._on_rollover)
-        r2.addWidget(self.ro_entry)
-        lb = QLabel("点")
-        lb.setStyleSheet(label_qss(T.DIM, 13))
-        r2.addWidget(lb)
-        e2 = QLabel("整点取值 0~23；跨零点挂机可适当延后，避免中途重新统计")
-        e2.setStyleSheet(label_qss(T.DIM, 12))
-        g2 = QVBoxLayout()
-        g2.setSpacing(2)
-        g2.addLayout(r2)
-        g2.addWidget(e2)
-        bl.addLayout(g2)
+        hour_box = QWidget()
+        hl = QHBoxLayout(hour_box)
+        hl.setContentsMargins(0, 0, 0, 0)
+        hl.setSpacing(6)
+        hl.addWidget(self.ro_entry)
+        unit = QLabel("点")
+        unit.setStyleSheet(label_qss(T.DIM, 13))
+        hl.addWidget(unit)
 
-        self.ro_acc = Accordion(self._inner[tb], "🌅", "换日刷新数据",
+        ro_items = [
+            ("refresh-cw", "启用换日刷新",
+             "关闭后不再自动换日，数据持续累计", self.ro_switch),
+            ("clock", "换日时间（整点 0~23）",
+             "跨零点挂机可适当延后，避免中途重新统计", hour_box),
+        ]
+        self.ro_acc = Accordion(self._inner[tb], "sunrise", "换日刷新数据",
                                 "按设定时间归档当日数据并重新开始统计",
-                                body, alpha=self.alpha)
+                                items=ro_items, alpha=self.alpha)
         self._lay[tb].insertWidget(self._lay[tb].count() - 1, self.ro_acc)
 
         # 「自动登记新材料」放在这里（从「识别」挪过来的）
         self.auto_reg = Switch(self._inner[tb], bool(s.get("auto_register_material", True)))
         self.auto_reg.toggled.connect(
             lambda v: self.state.set_setting("auto_register_material", bool(v)))
-        self._row(tb, "➕", "自动登记新材料",
+        self._row(tb, "plus", "自动登记新材料",
                   "识别到材料库中不存在的名称时自动登记", self.auto_reg)
 
     # ================= 直播 =================
@@ -1028,7 +1210,7 @@ class PageSettings(BasePage):
         # 打开就重新起来。以前它只存了个值、什么都不干。
         self.obs_sw = Switch(self._inner[tb], bool(s.get("obs_api_enabled", True)))
         self.obs_sw.toggled.connect(self._on_obs)
-        self._row(tb, "📡", "直播数据接口",
+        self._row(tb, "radio", "直播数据接口",
                   "为 OBS 及直播页面提供数据；关闭后直播端无数据",
                   self.obs_sw)
 
@@ -1043,7 +1225,7 @@ class PageSettings(BasePage):
         copy_btn.setCursor(Qt.PointingHandCursor)
         copy_btn.setStyleSheet(btn_qss("normal", self.alpha))
         copy_btn.clicked.connect(self._copy_obs)
-        self._row(tb, "📺", "收益条地址",
+        self._row(tb, "monitor", "收益条地址",
                   "在 OBS 中添加「浏览器源」并粘贴该地址（建议 340×200）",
                   right_wrap(self.obs_addr, copy_btn))
 
@@ -1053,7 +1235,7 @@ class PageSettings(BasePage):
         self.api_entry.setAlignment(Qt.AlignCenter)
         self.api_entry.setStyleSheet(entry_qss())
         self.api_entry.editingFinished.connect(self._on_api_port)
-        self._row(tb, "🔌", "接口端口",
+        self._row(tb, "plug", "接口端口",
                   "修改后即时生效；OBS 端地址需同步更新", self.api_entry)
 
     @staticmethod
@@ -1074,7 +1256,7 @@ class PageSettings(BasePage):
             {"auto": "自动", "gitee": "Gitee（国内快）",
              "github": "GitHub"}.get(_cur, "自动"))
         self.channel_dd.currentTextChanged.connect(self._on_update_channel)
-        self._row(tb, "🌐", "更新渠道",
+        self._row(tb, "globe", "更新渠道",
                   "更新检测与下载页来源（国内推荐 Gitee）",
                   self.channel_dd)
 
@@ -1083,27 +1265,28 @@ class PageSettings(BasePage):
         ul = QHBoxLayout(upd_row)
         ul.setContentsMargins(0, 0, 0, 0)
         ul.setSpacing(8)
-        self.update_btn = QPushButton("🔍 检测更新")
+        self.update_btn = QPushButton("检测更新")
         self.update_btn.setFixedSize(130, 32)
         self.update_btn.setCursor(Qt.PointingHandCursor)
         self.update_btn.setStyleSheet(btn_qss("normal", self.alpha))
+        set_btn_icon(self.update_btn, "search", 15)
         self.update_btn.clicked.connect(self._on_check_update)
         self.update_status = QLabel("")
         self.update_status.setStyleSheet(label_qss(T.DIM, 12))
         ul.addWidget(self.update_btn)
         ul.addWidget(self.update_status)
-        self._row(tb, "🔄", "版本更新",
+        self._row(tb, "refresh-cw", "版本更新",
                   f"当前版本 v{VERSION}，检测需联网", upd_row)
 
         self.dev_enabled = Switch(self._inner[tb], bool(s.get("developer_mode", False)))
         self.dev_enabled.toggled.connect(self._on_developer_mode)
-        self._row(tb, "🛠", "开发者模式",
+        self._row(tb, "wrench", "开发者模式",
                   "开启后显示下方样本采集工具", self.dev_enabled)
 
         self.dev_body = self._make_dev_body(self._inner[tb])
-        self.dev_row = self._row(tb, "🧪", "开发者选项",
+        self.dev_row = self._row(tb, "flask-conical", "开发者选项",
                                  "本地 AI 样本采集；截图仅存本地，不上传、不入库",
-                                 self.dev_body, height=200)
+                                 self.dev_body, height=None)
         self.dev_row.setVisible(bool(s.get("developer_mode", False)))
 
     # ---------- 开发者选项 ----------
@@ -1445,6 +1628,23 @@ class PageSettings(BasePage):
         self.state.set_setting("bg_dim", v / 100.0)
         self.win.apply_bg_dim()
 
+    def _set_bg_name(self, path):
+        """显示背景图文件名。
+
+        这个标签在卡片的右边，**文件名太长会把整张卡片撑宽** —— 撑宽之后
+        外观栏看着就像被"拉长"了。所以限宽 + 中间省略，
+        完整文件名放进鼠标提示里。
+        """
+        import os as _os
+        name = _os.path.basename(path) if path else ""
+        if not name:
+            self.bg_name.setText("未设置（纯色背景）")
+            self.bg_name.setToolTip("")
+            return
+        short = name if len(name) <= 16 else name[:7] + "…" + name[-6:]
+        self.bg_name.setText(short)
+        self.bg_name.setToolTip(name)
+
     def _choose_bg(self):
         p, _ = QFileDialog.getOpenFileName(
             self, "选择背景图片", "", "图片文件 (*.png *.jpg *.jpeg *.bmp *.webp)")
@@ -1454,17 +1654,17 @@ class PageSettings(BasePage):
             from PIL import Image
             Image.open(p).verify()
         except Exception:
-            QMessageBox.warning(self, "失败", "该文件不是有效的图片，请重新选择。")
+            msg_info(self, "失败", "该文件不是有效的图片，请重新选择。",
+                     icon=QMessageBox.Warning)
             return
         self.state.set_setting("bg_image", p)
-        import os as _os
-        self.bg_name.setText(_os.path.basename(p))
+        self._set_bg_name(p)
         self.win.set_background_image(p)
-        QMessageBox.information(self, "成功", "背景图片已应用。")
+        msg_info(self, "成功", "背景图片已应用。")
 
     def _clear_bg(self):
         self.state.set_setting("bg_image", "")
-        self.bg_name.setText("未设置（纯色背景）")
+        self._set_bg_name("")
         self.win.set_background_image(None)
 
     def _on_tick(self):
@@ -1527,17 +1727,76 @@ class PageSettings(BasePage):
         self.win.set_sidebar_glass(bool(v))
 
     # ---------- 背景色 / 强调色：改完立即生效 ----------
-    def _apply_colors(self, key, value):
+
+    @staticmethod
+    def _combo_show_color(combo, value):
+        """把设置里存的颜色显示到下拉框上。
+
+        预设存的是名字（"经典深黑"），自定义存的是 "#RRGGBB" —— 后者
+        下拉框里本来没有，得先插一项再选上，否则会显示成空白。
+        """
+        v = str(value or "")
+        if v.startswith("#"):
+            label = f"自定义 {v}"
+            if combo.findText(label) < 0:
+                combo.insertItem(max(0, combo.count() - 1), label)
+            combo.setCurrentText(label)
+        else:
+            combo.setCurrentText(v)
+
+    def _set_combo_silently(self, combo, value):
+        """改下拉框，但**不触发** currentTextChanged。
+
+        ⚠ 不加这个会出事：setCurrentText 会发信号 → 又走一遍「应用颜色」
+          → 把下拉框上显示的**标签文字**当成颜色存进去，还会重复重建界面
+          （重建会把控件删掉，紧跟着访问就崩）。
+        """
+        self._color_busy = True
+        try:
+            self._combo_show_color(combo, value)
+        finally:
+            self._color_busy = False
+
+    def _pick_custom_color(self, key, combo):
+        """开取色器选一个自定义颜色"""
+        from PySide6.QtGui import QColor
+        from PySide6.QtWidgets import QColorDialog
+
+        cur = str(self.state.settings.get(key, "") or "")
+        init = QColor(cur) if QColor.isValidColorName(cur) else QColor(T.ACCENT)
+        col = QColorDialog.getColor(init, self.win, "选择颜色")
+        if not col.isValid():
+            # 取消了 → 下拉框回到当前实际值，别停在「自定义颜色…」上
+            self._set_combo_silently(combo, self.state.settings.get(key, ""))
+            return
+        hexv = col.name()
+        self._set_combo_silently(combo, hexv)
+        self._apply_colors(key, hexv, display=f"自定义 {hexv}")
+
+    def _apply_colors(self, key, value, display=None):
         self.state.set_setting(key, value)
         T.reload_colors(self.state.settings)
-        self.win.rebuild_ui()
-        QMessageBox.information(self, "已应用", f"颜色已切换为「{value}」。")
+        # ⚠ 先把主窗口记下来：rebuild_ui() 会把旧页面从窗口上摘掉，
+        #   之后就找不到主窗口了，弹窗会跑到屏幕角落去。
+        win = self.win
+        win.rebuild_ui()
+        msg_info(win, "已应用", f"颜色已切换为「{display or value}」。")
 
     def _on_bg_color(self, v):
+        if getattr(self, "_color_busy", False):
+            return
+        if v == CUSTOM_COLOR:
+            self._pick_custom_color("bg_color", self.bg_dd)
+            return
         if getattr(self, "_colors_ready", False):
             self._apply_colors("bg_color", v)
 
     def _on_accent_color(self, v):
+        if getattr(self, "_color_busy", False):
+            return
+        if v == CUSTOM_COLOR:
+            self._pick_custom_color("accent_color", self.accent_dd)
+            return
         if getattr(self, "_colors_ready", False):
             self._apply_colors("accent_color", v)
 
@@ -1655,10 +1914,11 @@ class PageNotice(BasePage):
         self.read_all_btn.setStyleSheet(btn_qss("normal", self.alpha))
         self.read_all_btn.clicked.connect(self._mark_all)
         bar.addWidget(self.read_all_btn)
-        self.refresh_btn = QPushButton("↻ 刷新")
+        self.refresh_btn = QPushButton("刷新")
         self.refresh_btn.setFixedHeight(30)
         self.refresh_btn.setCursor(Qt.PointingHandCursor)
         self.refresh_btn.setStyleSheet(btn_qss("normal", self.alpha))
+        set_btn_icon(self.refresh_btn, "refresh-cw", 15)
         self.refresh_btn.clicked.connect(self._refresh_online)
         bar.addWidget(self.refresh_btn)
         self.v.addLayout(bar)
@@ -1729,7 +1989,7 @@ class PageNotice(BasePage):
         tm = str(n.get("time", "") or "").strip()
         desc = (f"{tm}　" if tm else "") + (
             "● 未读" if qt_notice.is_unread(n, self.state.settings) else "已读")
-        acc = Accordion(self, "📢", str(n.get("title", "")), desc, body,
+        acc = Accordion(self, "megaphone", str(n.get("title", "")), desc, body,
                         alpha=self.alpha)
 
         # 展开就算读过了
@@ -1778,7 +2038,7 @@ class PageNotice(BasePage):
         为空列表 = 拉到了，远端确实一条公告都没有（要把本地的也清掉）。
         """
         self.refresh_btn.setEnabled(True)
-        self.refresh_btn.setText("↻ 刷新")
+        self.refresh_btn.setText("刷新")
         if notices is None:
             QMessageBox.information(self, "刷新失败", "没拉到公告（可能是网络问题）。\n"
                                                       "显示的还是上次缓存的内容。")
