@@ -66,6 +66,9 @@ cookie.txt
 ledger_raw.json
 札记测试结果.txt
 
+# morphicons 图标变形实验（定稿后会移进 statgi_qt/，暂时本地放着）
+_morph/
+
 # 自动更新的分卷（几十兆的二进制，不进仓库 —— Gitee 仓库单文件限 50M）
 发布版/公告/更新包分卷/
 # 自动更新生成的更新脚本（运行时产物）

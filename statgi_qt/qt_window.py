@@ -11,7 +11,7 @@ config/settings.json —— 跟 Tk 版共用同一份设置。
 """
 import os
 
-from PySide6.QtCore import Qt, QRectF, QRect, QPoint, QTimer
+from PySide6.QtCore import Qt, QRectF, QRect, QPoint, QTimer, Signal
 from PySide6.QtGui import QPainter, QPainterPath, QPixmap, QColor, QIcon
 from PySide6.QtWidgets import (QWidget, QFrame, QLabel, QPushButton, QVBoxLayout,
                                QHBoxLayout, QStackedWidget, QMessageBox)
@@ -22,6 +22,7 @@ from qt_pages import NOTICE_PAGE_INDEX
 from qt_theme import (HEADER, RADIUS_WINDOW, panel_alpha, label_qss, rgba,
                       btn_qss)
 import qt_theme as T
+from qt_icon import IconWidget, HoverHelper, attach_hover
 
 
 # ---------- 背景图工具 ----------
@@ -74,8 +75,8 @@ class TitleBar(QFrame):
         lay.setContentsMargins(16, 0, 8, 0)
         lay.setSpacing(0)
 
-        ico = QLabel("🍃")
-        ico.setStyleSheet("font-size:16px;")
+        # 应用图标用 emoji（叶子），其余图标仍是矢量图标
+        ico = IconWidget(self, name="🍃", size=20, role="ACCENT")
         lay.addWidget(ico)
         lay.addSpacing(8)
         self.title_label = QLabel(title)
@@ -87,6 +88,7 @@ class TitleBar(QFrame):
         lay.addWidget(self.sub_label)
         lay.addStretch(1)
 
+        # 标题栏这两个按钮用文字符号，不用矢量图标 —— 试过图标，显示效果不好
         for text, cb, danger in (("—", self.win.showMinimized, False),
                                  ("✕", self.win.close, True)):
             b = QPushButton(text)
@@ -116,6 +118,71 @@ class TitleBar(QFrame):
 
 
 # ============================================================
+#  侧栏的一项
+# ============================================================
+class NavButton(QFrame):
+    """侧栏的一项：图标 + 名字。
+
+    鼠标放到整项上 → 图标弹一下；选中时底色高亮、文字和图标转成强调色。
+    """
+
+    clicked = Signal()
+
+    def __init__(self, parent, icon, text, height=40):
+        super().__init__(parent)
+        self.setFixedHeight(height)
+        self.setCursor(Qt.PointingHandCursor)
+        self._active = False
+        self._hover = False
+
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(14, 0, 12, 0)
+        lay.setSpacing(10)
+
+        self.icon_widget = IconWidget(self, name=icon, size=18, role="TEXT")
+        lay.addWidget(self.icon_widget)
+
+        self.label = QLabel(text)
+        self.label.setStyleSheet(label_qss(T.TEXT, 14))
+        self.label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        lay.addWidget(self.label)
+        lay.addStretch(1)
+
+        self._hh = HoverHelper(self, self._on_hover)
+
+    def _on_hover(self, on):
+        self._hover = on
+        self.icon_widget.set_hover(on)
+        self.update()
+
+    def set_active(self, active):
+        self._active = bool(active)
+        self.label.setStyleSheet(
+            label_qss(T.ACCENT if self._active else T.TEXT, 14))
+        self.icon_widget.set_color(role="ACCENT" if self._active else "TEXT")
+        self.update()
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self.clicked.emit()
+            e.accept()
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setPen(Qt.NoPen)
+        if self._active:
+            c = QColor(T.ACCENT)
+            c.setAlpha(45)
+            p.setBrush(c)
+            p.drawRoundedRect(self.rect(), 8, 8)
+        elif self._hover:
+            p.setBrush(QColor(255, 255, 255, 28))
+            p.drawRoundedRect(self.rect(), 8, 8)
+        p.end()
+
+
+# ============================================================
 #  左侧栏（磨砂玻璃）
 # ============================================================
 class Sidebar(QFrame):
@@ -134,10 +201,8 @@ class Sidebar(QFrame):
 
         self.buttons = []
         for i, (icon, name) in enumerate(items):
-            b = QPushButton(f"  {icon}   {name}")
-            b.setFixedHeight(40)
-            b.setCursor(Qt.PointingHandCursor)
-            b.clicked.connect(lambda _=False, idx=i: self._on_select(idx))
+            b = NavButton(self, icon, name)
+            b.clicked.connect(lambda idx=i: self._on_select(idx))
             lay.addWidget(b)
             self.buttons.append(b)
 
@@ -145,14 +210,7 @@ class Sidebar(QFrame):
 
         # ---- 公告（放在导航和版本号之间，做一个独立入口）----
         # 它不是"页面"，点一下是弹窗 —— 所以不参与 set_active 的高亮
-        self.notice_btn = QPushButton("  📢   公告")
-        self.notice_btn.setFixedHeight(40)
-        self.notice_btn.setCursor(Qt.PointingHandCursor)
-        self.notice_btn.setStyleSheet(
-            f"QPushButton {{ background:transparent; color:{T.TEXT}; border:none;"
-            f" border-radius:8px; text-align:left; padding-left:14px;"
-            f" font-family:'Microsoft YaHei UI'; font-size:14px; }}"
-            f"QPushButton:hover {{ background: rgba(255,255,255,28); }}")
+        self.notice_btn = NavButton(self, "megaphone", "公告")
         self.notice_btn.clicked.connect(self._on_notice_click)
         lay.addWidget(self.notice_btn)
 
@@ -198,14 +256,7 @@ class Sidebar(QFrame):
 
     def set_active(self, idx):
         for i, b in enumerate(self.buttons):
-            active = (i == idx)
-            bg = rgba(T.ACCENT, 45) if active else "transparent"
-            fg = T.ACCENT if active else T.TEXT
-            b.setStyleSheet(
-                f"QPushButton {{ background:{bg}; color:{fg}; border:none;"
-                f" border-radius:8px; text-align:left; padding-left:14px;"
-                f" font-family:'Microsoft YaHei UI'; font-size:14px; }}"
-                f"QPushButton:hover {{ background: rgba(255,255,255,28); }}")
+            b.set_active(i == idx)
 
     def set_glass(self, on):
         """毛玻璃开关：关掉就不模糊背景图，只压暗"""
@@ -716,8 +767,8 @@ class MainWindow(QWidget):
         box.setWindowTitle("退出")
         box.setText("要关闭程序，还是最小化到托盘？")
         box.setInformativeText("最小化后监测会继续运行，想彻底退出就选「关闭程序」。")
-        b_exit = box.addButton("🗑 关闭程序", QMessageBox.DestructiveRole)
-        b_tray = box.addButton("📌 最小化到托盘", QMessageBox.AcceptRole)
+        b_exit = box.addButton("关闭程序", QMessageBox.DestructiveRole)
+        b_tray = box.addButton("最小化到托盘", QMessageBox.AcceptRole)
         box.addButton("取消", QMessageBox.RejectRole)
         box.exec()
         clicked = box.clickedButton()
@@ -786,8 +837,8 @@ class MainWindow(QWidget):
             self,
             # 「今日统计」不单独一页了 —— 挪到「启动」页那张卡片下面的
             # 折叠区里（点开就看到时间/摩拉/材料/狗粮四个数）。
-            [("🚀", "启动"), ("📶", "收益统计条"),
-             ("📋", "收益记录"), ("⚙", "设置")],
+            [("rocket", "启动"), ("chart-column", "收益统计条"),
+             ("clipboard-list", "收益记录"), ("settings", "设置")],
             self.show_page)
         body.addWidget(self.sidebar)
         body.addWidget(self.stack, 1)

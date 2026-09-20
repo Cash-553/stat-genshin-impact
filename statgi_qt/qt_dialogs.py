@@ -16,7 +16,8 @@ import config_manager
 import paths
 from qt_theme import (TEXT, DIM, ACCENT, CARD, panel_alpha, label_qss,
                       btn_qss)
-from qt_widgets import Card
+from qt_widgets import Card, set_btn_icon
+from qt_icon import IconWidget
 
 ICONS_DIR = paths.icons_dir()
 
@@ -110,7 +111,7 @@ class IconManagerDialog(QDialog):
         right.addWidget(st)
         row = QHBoxLayout()
         row.setSpacing(6)
-        b1 = QPushButton("📷 截取")
+        b1 = set_btn_icon(QPushButton("截取"), "camera", 14)
         b2 = QPushButton("更换")
         for b, kind, cb in ((b1, "normal", lambda _=False, k=key, n=name: self.on_capture(k, n)),
                             (b2, "accent", lambda _=False, k=key, n=name: self.on_replace(k, n))):
@@ -130,11 +131,16 @@ class IconManagerDialog(QDialog):
         v = QVBoxLayout(card)
         v.setContentsMargins(16, 14, 16, 14)
         v.setSpacing(4)
-        t = QLabel("↺  全部重置")
+        title_row = QHBoxLayout()
+        title_row.setSpacing(8)
+        title_row.addWidget(IconWidget(card, name="rotate-ccw", size=18, role="TEXT"))
+        t = QLabel("全部重置")
         t.setStyleSheet(label_qss(TEXT, 16, True))
+        title_row.addWidget(t)
+        title_row.addStretch(1)
         d = QLabel("把三个格子都恢复成程序内置的图标，\n并删掉你自己换的那些。")
         d.setStyleSheet(label_qss(DIM, 12))
-        v.addWidget(t)
+        v.addLayout(title_row)
         v.addWidget(d)
         v.addStretch(1)
         b = QPushButton("重置为内置图标")
