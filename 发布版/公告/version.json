@@ -1,23 +1,23 @@
 {
-  "version": "0.8",
+  "version": "0.9",
   "notes": "界面图标全部更新；收益记录新增收藏夹；设置界面卡片优化；\n打开软件会自动检查更新，更新渠道更加稳定",
   "url_github": "https://github.com/Cash-553/stat-genshin-impact/releases",
   "url_gitee": "https://gitee.com/Cash553/stat-genshin-impact/releases",
   "update": {
-    "size": 150157221,
-    "sha256": "b902cab1d667258ce541133d13cb22a852d61d84e140530545c6a87d8e83ab76",
+    "size": 123526660,
+    "sha256": "444858aef94782ac1a1c79a762b6b7b6dadb6290c02d1236c0df86f15cf745b9",
     "sources": [
       {
         "label": "Gitee（国内快）",
         "parts": [
-          "https://gitee.com/Cash553/stat-genshin-impact/releases/download/v0.8/StatGI_v0.8.part1",
-          "https://gitee.com/Cash553/stat-genshin-impact/releases/download/v0.8/StatGI_v0.8.part2"
+          "https://gitee.com/Cash553/stat-genshin-impact/releases/download/v0.9/StatGI_v0.9.part1",
+          "https://gitee.com/Cash553/stat-genshin-impact/releases/download/v0.9/StatGI_v0.9.part2"
         ]
       },
       {
         "label": "GitHub",
         "parts": [
-          "https://github.com/Cash-553/stat-genshin-impact/releases/download/v0.8/StatGI_v0.8.zip"
+          "https://github.com/Cash-553/stat-genshin-impact/releases/download/v0.9/StatGI_v0.9.zip"
         ]
       }
     ]
