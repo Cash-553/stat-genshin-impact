@@ -156,12 +156,12 @@ class PageLaunch(BasePage):
         rl.addWidget(self.clear_dd)
         rl.addWidget(self.clear_btn)
         self.add(SettingRow(self, "🧹", "清空",
-                            "选好要清空的内容，再点右边按钮（收益记录不受影响）",
+                            "选择清空范围后点击右侧按钮，不影响收益记录",
                             row, alpha=self.alpha))
 
         # 重新框选（折叠区）
         self.reselect = Accordion(
-            self, "🎯", "重新框选", "手动指定要识别的屏幕区域（一般都不用）",
+            self, "🎯", "重新框选", "手动指定识别区域，通常无需设置",
             ButtonRow(self, [("重新框选区域", self._on_reselect),
                              ("📷 诊断截图", self._on_debug_screenshot)], self.alpha),
             alpha=self.alpha)
@@ -246,13 +246,13 @@ class PageLaunch(BasePage):
         kind = self.clear_dd.currentText()
         st = self.state.stats
         if kind.startswith("清空今日"):
-            if QMessageBox.question(self, "确认", "确定清空今天的所有收益吗？\n（历史记录不受影响）"
+            if QMessageBox.question(self, "确认", "确定清空今日全部收益数据？\n（历史记录不受影响）"
                                     ) != QMessageBox.Yes:
                 return
             st.clear_today()
             msg = "今天的收益已清空"
         elif kind.startswith("清空监测时间"):
-            if QMessageBox.question(self, "确认", "确定清空监测时间吗？\n（摩拉、材料等收益不受影响）"
+            if QMessageBox.question(self, "确认", "确定清空今日监测时间？\n（摩拉、材料等收益不受影响）"
                                     ) != QMessageBox.Yes:
                 return
             st.clear_running_seconds()
@@ -260,7 +260,7 @@ class PageLaunch(BasePage):
                 self.state.reset_monitor_start()
             msg = "监测时间已清空"
         else:
-            if QMessageBox.question(self, "确认", "确定清空今天的收益数据和监测时间吗？\n（收益记录不受影响）"
+            if QMessageBox.question(self, "确认", "确定清空今日收益数据与监测时间？\n（收益记录不受影响）"
                                     ) != QMessageBox.Yes:
                 return
             st.clear_today()
@@ -279,9 +279,9 @@ class PageLaunch(BasePage):
         import time as _t
         QMessageBox.information(
             self, "重新框选",
-            "接下来会全屏变暗。\n\n"
+            "屏幕将暂时变暗。\n\n"
             "· 用鼠标在游戏画面的「掉落提示」区域拖一个框\n"
-            "· 松手即完成；按 Esc 取消\n"
+            "· 松开鼠标完成框选；按 Esc 取消\n"
             "· 框得越贴近提示文字越好")
         self.win.hide()
         _A.processEvents()
@@ -298,7 +298,7 @@ class PageLaunch(BasePage):
         QMessageBox.information(
             self, "已保存",
             f"识别区域已保存：\n{rect.width()} × {rect.height()}\n\n"
-            "建议点「📷 诊断截图」确认框对了没有。")
+            "建议点击「📷 诊断截图」确认识别区域是否正确。")
 
     def _on_debug_screenshot(self):
         """截一张识别区域的画面并存下来，顺便 OCR 看看识别到什么"""
@@ -306,8 +306,8 @@ class PageLaunch(BasePage):
         if not region:
             QMessageBox.information(
                 self, "提示",
-                "还没有手动框选区域。\n\n程序默认会自动检测游戏窗口；\n"
-                "如果想手动指定，请先点「重新框选区域」。")
+                "尚未手动指定识别区域。\n\n程序默认自动检测游戏窗口；\n"
+                "如需手动指定，请先点击「重新框选区域」。")
             return
         try:
             from capture import ScreenCapture
@@ -335,12 +335,12 @@ class PageLaunch(BasePage):
                 QMessageBox.information(
                     self, "截图已保存",
                     f"截图已保存：\n{f}\n\n画面里识别到的内容：\n{texts}\n\n"
-                    "💡 如果显示的是掉落提示（如「破损的面具 ×1」），说明框对了。")
+                    "💡 若显示掉落提示（如「破损的面具 ×1」），说明区域设置正确。")
             else:
                 QMessageBox.information(
                     self, "截图已保存",
                     f"截图已保存：\n{f}\n\n画面里没有识别到文字。\n"
-                    "💡 如果掉落提示出现时这里仍是空白，说明区域没框对。")
+                    "💡 若掉落提示出现时此处仍为空白，说明识别区域设置有误。")
         except Exception as e:
             QMessageBox.warning(self, "失败", f"截图失败：{e}")
 
@@ -377,7 +377,7 @@ class PageBar(BasePage):
         self.opacity_label.setStyleSheet(label_qss(T.ACCENT, 13))
         self.opacity.valueChanged.connect(self._on_opacity)
         self.add(SettingRow(self, "🌓", "统计条透明度",
-                            "往左拉更透明，直播画面上不容易挡到游戏画面",
+                            "向左调节透明度更高，减少对直播画面的遮挡",
                             right_wrap(self.opacity, self.opacity_label), alpha=self.alpha))
 
         # 显示项目：做成折叠区（跟「重新框选」一个样子），点开就地勾选
@@ -398,7 +398,7 @@ class PageBar(BasePage):
             bv.addLayout(r)
             self.slot_switches[key] = sw
         self.slot_acc = Accordion(self, "📶", "显示项目",
-                                  "点开勾选要显示的格子（改完立即生效）",
+                                  "勾选统计条显示项，修改后即时生效",
                                   body, alpha=self.alpha)
         self.add(self.slot_acc)
         self._sync_slot_desc()
@@ -475,7 +475,7 @@ class PageRecords(BasePage):
         sc.setWidget(inner)
         self.add(sc, 1)
 
-        self.empty_label = QLabel("（还没有记录）\n点「开始监测」跑一段时间，再点「停止监测」，就会生成一条。")
+        self.empty_label = QLabel("（暂无记录）\n开始并停止一次监测后，将自动生成一条记录。")
         self.empty_label.setStyleSheet(label_qss(T.DIM, 14))
         self.empty_label.setAlignment(Qt.AlignCenter)
         self.rec_list.addWidget(self.empty_label)
@@ -726,7 +726,7 @@ class PageSettings(BasePage):
         self.alpha_label.setStyleSheet(label_qss(T.ACCENT, 13))
         self.alpha_slider.valueChanged.connect(self._on_alpha)
         self._row(tb, "🌓", "卡片透明度",
-                  "卡片 / 侧边栏 / 按钮统一用这个（0% = 全透明）",
+                  "卡片、侧边栏与按钮的统一不透明度（0% 为全透明）",
                   right_wrap(self.alpha_slider, self.alpha_label))
 
         dim = int(float(s.get("bg_dim", 0.0) or 0.0) * 100)
@@ -740,7 +740,7 @@ class PageSettings(BasePage):
         self.dim_label.setStyleSheet(label_qss(T.ACCENT, 13))
         self.dim_slider.valueChanged.connect(self._on_dim)
         self._row(tb, "🌑", "背景压暗",
-                  "背景图太花、字看不清时往右拉（0% = 不压暗）",
+                  "背景图对比度过高时调高，提升文字可读性（0% 不压暗）",
                   right_wrap(self.dim_slider, self.dim_label))
 
         pic = QPushButton("🖼 选择图片")
@@ -755,7 +755,7 @@ class PageSettings(BasePage):
         self.bg_name = QLabel(_os.path.basename(cur) if cur else "未设置（纯色背景）")
         self.bg_name.setStyleSheet(label_qss(T.DIM, 12))
         self._row(tb, "🖼", "自定义背景图片",
-                  "选一张图当窗口背景，卡片会变成半透明玻璃",
+                  "设为窗口背景图，卡片区域转为半透明",
                   right_wrap(pic, clr, self.bg_name))
 
         import theme as _theme_mod      # 只为了取预设名字列表
@@ -767,14 +767,14 @@ class PageSettings(BasePage):
         self.accent_dd.setCurrentText(str(s.get("accent_color", "经典蓝")))
         self.bg_dd.currentTextChanged.connect(self._on_bg_color)
         self.accent_dd.currentTextChanged.connect(self._on_accent_color)
-        self._row(tb, "🎨", "背景颜色", "窗口背景色（改完立即生效）", self.bg_dd)
+        self._row(tb, "🎨", "背景颜色", "窗口背景色，修改后即时生效", self.bg_dd)
         self._row(tb, "🌈", "强调色",
-                  "按钮、选中项、数字高亮的颜色（改完立即生效）", self.accent_dd)
+                  "按钮、选中项与数值高亮色，修改后即时生效", self.accent_dd)
 
         self.sidebar_glass = Switch(self._inner[tb], bool(s.get("sidebar_glass", True)))
         self.sidebar_glass.toggled.connect(self._on_sidebar_glass)
         self._row(tb, "🌫", "左侧栏毛玻璃效果",
-                  "需要先设置背景图片（模糊+压暗，模拟磨砂质感）", self.sidebar_glass)
+                  "需先设置背景图；对侧边栏做模糊与压暗处理", self.sidebar_glass)
 
         # 「统计条图标」放在这里（从「直播」挪过来的）
         icon_btn = QPushButton("打开图标管理")
@@ -783,7 +783,7 @@ class PageSettings(BasePage):
         icon_btn.setStyleSheet(btn_qss("normal", self.alpha))
         icon_btn.clicked.connect(self.win.open_icon_manager)
         self._row(tb, "🖼", "统计条图标",
-                  "换收益统计条三个格子的图标（摩拉/材料/狗粮）", icon_btn)
+                  "自定义统计条各格图标（摩拉 / 材料 / 狗粮）", icon_btn)
 
     # ================= 识别 =================
     def _build_recognize(self, s):
@@ -794,7 +794,7 @@ class PageSettings(BasePage):
         self.tick_entry.setStyleSheet(entry_qss())
         self.tick_entry.editingFinished.connect(self._on_tick)
         self._row(tb, "⏱", "检测间隔",
-                  "每多少毫秒检查一次画面（10~5000，默认 50）", self.tick_entry)
+                  "画面检测间隔，单位毫秒（10~5000，默认 50）", self.tick_entry)
 
         # 文字识别频率：性能 / 标准 / 省电 / 极致省电（越小越频繁）
         self.ocr_dd = self._dd([name for name, _v in config_manager.OCR_LEVELS])
@@ -803,7 +803,7 @@ class PageSettings(BasePage):
                        int(s.get("ocr_interval", 150) or 150), config_manager.DEFAULT_OCR_LEVEL))
         self.ocr_dd.currentTextChanged.connect(self._on_ocr_interval)
         self._row(tb, "🔍", "文字识别频率",
-                  "越快响应越及时，越慢越省电（默认「标准」）", self.ocr_dd)
+                  "文字识别间隔，越快响应越及时、越慢越省电", self.ocr_dd)
 
         # 画面变化灵敏度：同一套名字，数值是变化阈值（越小越灵敏）
         #
@@ -821,7 +821,7 @@ class PageSettings(BasePage):
                        config_manager.DEFAULT_CHANGE_LEVEL))
         self.change_dd.currentTextChanged.connect(self._on_change_level)
         self._row(tb, "🎚", "画面变化灵敏度",
-                  "越灵敏识别越快，越灵敏也越耗电（默认「标准」）", self.change_dd)
+                  "画面变化判定阈值，越灵敏响应越快、耗电越高", self.change_dd)
 
         ev = str(s.get("event_end_window", 1.5)).replace("秒", "").strip()
         self.event_dd = self._dd(["1.0 秒", "1.5 秒", "2.5 秒"])
@@ -829,7 +829,7 @@ class PageSettings(BasePage):
                                       else "1.5 秒"))
         self.event_dd.currentTextChanged.connect(self._on_event_window)
         self._row(tb, "🔁", "防重复窗口",
-                  "同一提示消失多久后再出现才算新掉落（默认 1.5 秒）", self.event_dd)
+                  "同一提示消失超过该时长后再次出现，计为新掉落", self.event_dd)
 
         # 识别哪几样：折叠区（跟「重新框选」一个样子）
         box = QWidget()
@@ -851,7 +851,8 @@ class PageSettings(BasePage):
             bl2.addLayout(r)
             self.kind_switches[key] = sw
         self.kind_acc = Accordion(self._inner[tb], "🎯", "识别哪几样",
-                                  "", box, alpha=self.alpha)
+                                  "勾选需要识别的物品种类",
+                                  box, alpha=self.alpha)
         self._lay[tb].insertWidget(self._lay[tb].count() - 1, self.kind_acc)
         self._sync_kind_desc()
 
@@ -861,7 +862,7 @@ class PageSettings(BasePage):
                  if self.kind_switches[k].isChecked()]
         self.kind_acc.desc_label.setText(
             f"当前识别：{'、'.join(names) if names else '（都不识别）'}"
-            "　·　点开勾选，不想统计的直接关掉")
+            "　·　展开后勾选；不需要统计的取消勾选")
 
     def _on_kinds_changed(self, key, val):
         self.state.set_setting(key, bool(val))
@@ -899,14 +900,14 @@ class PageSettings(BasePage):
         self.only_fg.toggled.connect(
             lambda v: self.state.set_setting("only_foreground", bool(v)))
         self._row(tb, "🎯", "只在原神前台时识别",
-                  "切到别的应用就暂停，回到原神自动继续", self.only_fg)
+                  "仅原神处于前台时识别，切出后自动暂停", self.only_fg)
 
         self.close_dd = self._dd(["每次询问", "最小化到托盘", "直接退出"])
         self.close_dd.setCurrentText({
             "ask": "每次询问", "tray": "最小化到托盘", "exit": "直接退出"
         }.get(str(s.get("close_behavior", "ask")), "每次询问"))
         self.close_dd.currentTextChanged.connect(self._on_close_behavior)
-        self._row(tb, "✖", "点右上角 ✕ 时", "关闭窗口时的行为", self.close_dd)
+        self._row(tb, "✖", "点右上角 ✕ 时", "点击关闭按钮时的行为", self.close_dd)
 
         # 热键可以有多个动作 —— 每个动作一个按钮。
         # _hotkey_btns 记着「设置里的键名 -> 按钮」，录制的时候按名字找按钮。
@@ -916,9 +917,9 @@ class PageSettings(BasePage):
                 ("hotkey", "⌨", "热键：开始 / 停止监测",
                  "点按钮后按下想用的键（Esc 取消）"),
                 ("hotkey_bar", "⌨", "热键：显示 / 隐藏统计条",
-                 "再按一次就收起。不想用就留「关闭」"),
+                 "再次按下收起；不使用则保持「关闭」"),
                 ("hotkey_home", "⌨", "热键：显示主窗口",
-                 "窗口最小化到托盘后，按一下叫回来")):
+                 "窗口最小化到托盘后，按此键恢复显示")):
             btn = QPushButton(str(s.get(key, "关闭")))
             btn.setFixedSize(140, 32)
             btn.setCursor(Qt.PointingHandCursor)
@@ -966,7 +967,8 @@ class PageSettings(BasePage):
         bl.addLayout(r2)
 
         self.ro_acc = Accordion(self._inner[tb], "🌅", "换日刷新数据",
-                                "", body, alpha=self.alpha)
+                                "按设定时间归档当日数据并重新开始统计",
+                                body, alpha=self.alpha)
         self._lay[tb].insertWidget(self._lay[tb].count() - 1, self.ro_acc)
 
         # 「自动登记新材料」放在这里（从「识别」挪过来的）
@@ -974,7 +976,7 @@ class PageSettings(BasePage):
         self.auto_reg.toggled.connect(
             lambda v: self.state.set_setting("auto_register_material", bool(v)))
         self._row(tb, "➕", "自动登记新材料",
-                  "遇到材料库里没有的名字时自动加进材料库", self.auto_reg)
+                  "识别到材料库中不存在的名称时自动登记", self.auto_reg)
 
     # ================= 直播 =================
     def _build_live(self, s):
@@ -986,7 +988,7 @@ class PageSettings(BasePage):
         self.obs_sw = Switch(self._inner[tb], bool(s.get("obs_api_enabled", True)))
         self.obs_sw.toggled.connect(self._on_obs)
         self._row(tb, "📡", "直播数据接口",
-                  "给 OBS / 直播页面提供数据。关掉的话直播那边会没数据",
+                  "为 OBS 及直播页面提供数据；关闭后直播端无数据",
                   self.obs_sw)
 
         # ---- 收益条地址 ----
@@ -1001,7 +1003,7 @@ class PageSettings(BasePage):
         copy_btn.setStyleSheet(btn_qss("normal", self.alpha))
         copy_btn.clicked.connect(self._copy_obs)
         self._row(tb, "📺", "收益条地址",
-                  "在 OBS 里添加「浏览器源」，把右边地址粘进去（宽 340、高 200 左右）",
+                  "在 OBS 中添加「浏览器源」并粘贴该地址（建议 340×200）",
                   right_wrap(self.obs_addr, copy_btn))
 
         # ---- 端口 ----
@@ -1011,7 +1013,7 @@ class PageSettings(BasePage):
         self.api_entry.setStyleSheet(entry_qss())
         self.api_entry.editingFinished.connect(self._on_api_port)
         self._row(tb, "🔌", "接口端口",
-                  "改完立刻生效，不用重启（OBS 那边地址也要跟着改）", self.api_entry)
+                  "修改后即时生效；OBS 端地址需同步更新", self.api_entry)
 
     @staticmethod
     def _bar_url(port):
@@ -1032,7 +1034,7 @@ class PageSettings(BasePage):
              "github": "GitHub"}.get(_cur, "自动"))
         self.channel_dd.currentTextChanged.connect(self._on_update_channel)
         self._row(tb, "🌐", "更新渠道",
-                  "从哪个渠道查更新和打开下载页（国内选 Gitee 更快）",
+                  "更新检测与下载页来源（国内推荐 Gitee）",
                   self.channel_dd)
 
         # ---- 检测更新 ----
@@ -1050,16 +1052,16 @@ class PageSettings(BasePage):
         ul.addWidget(self.update_btn)
         ul.addWidget(self.update_status)
         self._row(tb, "🔄", "版本更新",
-                  f"当前版本 v{VERSION}（检测需要联网）", upd_row)
+                  f"当前版本 v{VERSION}，检测需联网", upd_row)
 
         self.dev_enabled = Switch(self._inner[tb], bool(s.get("developer_mode", False)))
         self.dev_enabled.toggled.connect(self._on_developer_mode)
         self._row(tb, "🛠", "开发者模式",
-                  "打开后才显示下面的样本采集工具", self.dev_enabled)
+                  "开启后显示下方样本采集工具", self.dev_enabled)
 
         self.dev_body = self._make_dev_body(self._inner[tb])
         self.dev_row = self._row(tb, "🧪", "开发者选项",
-                                 "本地 AI 样本采集（截图只存本地，不上传、不进 Git）",
+                                 "本地 AI 样本采集；截图仅存本地，不上传、不入库",
                                  self.dev_body, height=200)
         self.dev_row.setVisible(bool(s.get("developer_mode", False)))
 
@@ -1236,9 +1238,9 @@ class PageSettings(BasePage):
         v.addWidget(body)
 
         if up:
-            tip = QLabel("点「立即更新」会自动下载并替换好，全程不用管：\n"
-                         "软件先自己关掉 → 自动替换 → 自动重新打开。\n"
-                         "你的设置和收益数据不会被覆盖。")
+            tip = QLabel("点击「立即更新」将自动下载并完成替换：\n"
+                         "程序自动退出 → 完成替换 → 自动重新启动。\n"
+                         "设置与收益数据不会被覆盖。")
             tip.setWordWrap(True)
             tip.setStyleSheet(label_qss(T.DIM, 12))
             v.addWidget(tip)
@@ -1337,8 +1339,8 @@ class PageSettings(BasePage):
         def on_fin(ok, err):
             if not ok:
                 QMessageBox.warning(self, "更新没做成",
-                                    f"{err}\n\n不影响现在这个版本，可以稍后再试，"
-                                    "或者点「打开下载页」手动下载。")
+                                    f"{err}\n\n当前版本不受影响，可稍后重试，"
+                                    "或点击「打开下载页」手动下载。")
                 dlg.reject()
                 return
             try:
@@ -1352,9 +1354,9 @@ class PageSettings(BasePage):
                     f"新版本 {ver} 已经下载好了。\n\n"
                     "点「确定」后：\n"
                     "  · 软件会自动关闭\n"
-                    "  · 自动完成替换（会弹一个黑窗口，**别关它**）\n"
+                    "  · 自动完成替换（将弹出命令行窗口，请勿关闭）\n"
                     "  · 更新完自动重新打开\n\n"
-                    "你的设置和收益数据不会被覆盖。\n\n现在就开始更新吗？"
+                    "设置与收益数据不会被覆盖。\n\n现在开始更新？"
             ) != QMessageBox.Yes:
                 dlg.reject()
                 return
@@ -1411,7 +1413,7 @@ class PageSettings(BasePage):
             from PIL import Image
             Image.open(p).verify()
         except Exception:
-            QMessageBox.warning(self, "失败", "这个文件不是有效的图片，请重新选择。")
+            QMessageBox.warning(self, "失败", "该文件不是有效的图片，请重新选择。")
             return
         self.state.set_setting("bg_image", p)
         import os as _os
@@ -1532,7 +1534,7 @@ class PageSettings(BasePage):
             if other != which and str(self.state.settings.get(other, "关闭")) == name:
                 QMessageBox.information(
                     self, "这个键已经用过了",
-                    f"「{name}」已经分配给另一个动作了，换一个键吧。")
+                    f"「{name}」已分配给其他动作，请更换按键。")
                 btn.setText(cur)
                 return
         self.state.set_setting(which, name)
