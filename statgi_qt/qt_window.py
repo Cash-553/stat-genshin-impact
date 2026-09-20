@@ -10,6 +10,7 @@
 config/settings.json —— 跟 Tk 版共用同一份设置。
 """
 import os
+import math
 
 from PySide6.QtCore import Qt, QRectF, QRect, QPoint, QTimer, Signal
 from PySide6.QtGui import QPainter, QPainterPath, QPixmap, QColor, QIcon
@@ -23,6 +24,14 @@ from qt_theme import (HEADER, RADIUS_WINDOW, panel_alpha, label_qss, rgba,
                       btn_qss)
 import qt_theme as T
 from qt_icon import IconWidget, HoverHelper, attach_hover
+from qt_widgets import RedDot
+
+# 左下角「检测到新版本」闪烁：一帧 33ms（约 30fps），一个来回 1200ms
+_BLINK_MS = 33
+_BLINK_PERIOD_MS = 1200.0
+# ⚠ 不要用 T.DANGER —— 那是「背景色的浅色版」（深灰），闪出来是白↔深灰不是白↔红。
+#   跟侧栏公告红点用同一个红。
+_BLINK_RED = "#E06C5A"
 
 
 # ---------- 背景图工具 ----------
@@ -222,12 +231,59 @@ class Sidebar(QFrame):
         self.notice_dot.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.notice_dot.hide()
 
-        v = QLabel("V0.9")
-        v.setStyleSheet(label_qss(T.DIM, 12))
-        v.setAlignment(Qt.AlignCenter)
-        lay.addWidget(v)
+        # 左下角版本号。检测到新版本时会变成「检测到新版本」并闪红光
+        self.ver_label = QLabel("V0.9")
+        self.ver_label.setStyleSheet(label_qss(T.DIM, 12))
+        self.ver_label.setAlignment(Qt.AlignCenter)
+        self.ver_label.setCursor(Qt.PointingHandCursor)
+        self.ver_label.mousePressEvent = self._on_ver_click
+        lay.addWidget(self.ver_label)
+
+        self._upd_on = False
+        self._upd_ver = ""
+        self._upd_t = 0.0
+        self._upd_timer = QTimer(self)
+        self._upd_timer.setInterval(_BLINK_MS)
+        self._upd_timer.timeout.connect(self._blink_tick)
 
         self.set_active(0)
+
+    # ---- 检测到新版本：闪烁提示 ----
+
+    def set_update_available(self, on, version=""):
+        """检测到新版本 → 左下角换成「检测到新版本」并一直闪红光"""
+        self._upd_on = bool(on)
+        self._upd_ver = str(version or "")
+        if self._upd_on:
+            self.ver_label.setText("检测到新版本")
+            self.ver_label.setToolTip(
+                (f"发现新版本 {self._upd_ver}" if self._upd_ver else "发现新版本")
+                + "，点这里去更新")
+            self._upd_t = 0.0
+            self._blink_tick()
+            self._upd_timer.start()
+        else:
+            self._upd_timer.stop()
+            self.ver_label.setText("V0.9")
+            self.ver_label.setStyleSheet(label_qss(T.DIM, 12))
+            self.ver_label.setToolTip("")
+
+    def _blink_tick(self):
+        """白 → 红 → 白 平滑来回，一个来回约 1.2 秒（不会太快晃眼）"""
+        self._upd_t += _BLINK_MS / _BLINK_PERIOD_MS
+        k = 0.5 - 0.5 * math.cos(2 * math.pi * self._upd_t)     # 0~1 平滑
+        white, red = QColor("#FFFFFF"), QColor(_BLINK_RED)
+        cur = QColor(int(white.red() + (red.red() - white.red()) * k),
+                     int(white.green() + (red.green() - white.green()) * k),
+                     int(white.blue() + (red.blue() - white.blue()) * k))
+        self.ver_label.setStyleSheet(
+            f"color:{cur.name()}; font-size:12px; font-weight:700;")
+
+    def _on_ver_click(self, _e=None):
+        if self._upd_on:
+            fn = getattr(self.win, "show_update_settings", None)
+            if callable(fn):
+                fn()
 
     def _on_notice_click(self):
         fn = getattr(self.win, "show_notice_page", None)
@@ -310,6 +366,9 @@ class Sidebar(QFrame):
 #  主窗口
 # ============================================================
 class MainWindow(QWidget):
+    # 后台线程检测到新版本时发这个（参数是 qt_update.check 返回的 dict）
+    update_found = Signal(object)
+
     def __init__(self):
         super().__init__()
         self.settings = config_manager.load_settings()
@@ -841,6 +900,10 @@ class MainWindow(QWidget):
              ("clipboard-list", "收益记录"), ("settings", "设置")],
             self.show_page)
         body.addWidget(self.sidebar)
+
+        # 后台线程查到的更新结果 → 主线程刷新提示
+        self.update_found.connect(
+            lambda info: self.set_update_available(True, info.get("version", "")))
         body.addWidget(self.stack, 1)
 
         holder = QWidget()
@@ -876,3 +939,48 @@ class MainWindow(QWidget):
         fn = getattr(page, "on_show", None)
         if callable(fn):
             fn()
+
+    # ============================================================
+    #  检测到新版本
+    # ============================================================
+    def set_update_available(self, on, version=""):
+        """检测到新版本 → 侧栏左下角闪红光 + 设置里挂红点"""
+        try:
+            self.sidebar.set_update_available(on, version)
+        except Exception:
+            pass
+        for p in self.pages:
+            fn = getattr(p, "set_update_badge", None)
+            if callable(fn):
+                try:
+                    fn(on)
+                except Exception:
+                    pass
+
+    def show_update_settings(self):
+        """点侧栏那个闪烁的「检测到新版本」→ 跳到 设置→其它→版本更新"""
+        self.show_page(3)
+        p = self.pages[3] if len(self.pages) > 3 else None
+        fn = getattr(p, "goto_update", None)
+        if callable(fn):
+            fn()
+
+    def start_update_check(self):
+        """启动后自动查一次更新。
+
+        两个渠道都试（Gitee + GitHub）—— 只试一个的话，那个渠道被墙/被限流
+        就永远检测不到更新了。整个过程在后台线程跑，不卡界面。
+        """
+        import threading
+
+        def work():
+            try:
+                import qt_update
+                info, ch, reason = qt_update.check("auto", bust_cache=True)
+                if info and info.get("is_newer"):
+                    # 信号会自动排到主线程执行（Qt 跨线程发信号是安全的）
+                    self.update_found.emit(info)
+            except Exception:
+                pass
+
+        threading.Thread(target=work, daemon=True, name="update-check").start()

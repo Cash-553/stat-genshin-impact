@@ -108,6 +108,11 @@ def main():
     except Exception:
         pass
 
+    # 启动后自动查一次更新（后台线程，两个渠道都试）。
+    # 放到 show() 之后、延后 1.5 秒再开始 —— 让界面先画出来，别抢启动那几秒。
+    from PySide6.QtCore import QTimer
+    QTimer.singleShot(1500, win.start_update_check)
+
     return app.exec()
 
 
