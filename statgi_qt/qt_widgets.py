@@ -396,6 +396,13 @@ class Accordion(QWidget):
                  body_widget=None, alpha=150, on_toggle=None, footer=None,
                  item_alpha=None):
         super().__init__(parent)
+        # 兼容旧写法：有人把「内容控件」当成第 5 个位置参数传进来
+        # （以前 body_widget 就在那个位置）。自动认出来，
+        # 否则会被当成 items 去遍历 → TypeError 崩溃。
+        if isinstance(items, QWidget):
+            if body_widget is None:
+                body_widget = items
+            items = None
         self._open = False
         self._on_toggle = on_toggle
         self._alpha = alpha

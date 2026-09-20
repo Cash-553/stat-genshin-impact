@@ -1989,8 +1989,10 @@ class PageNotice(BasePage):
         tm = str(n.get("time", "") or "").strip()
         desc = (f"{tm}　" if tm else "") + (
             "● 未读" if qt_notice.is_unread(n, self.state.settings) else "已读")
-        acc = Accordion(self, "megaphone", str(n.get("title", "")), desc, body,
-                        alpha=self.alpha)
+        # ⚠ 必须用关键字传 body_widget：Accordion 第 5 个位置参数现在是 items
+        #   （一项一张子卡片那个），位置传会把 QWidget 当成 items → 崩
+        acc = Accordion(self, "megaphone", str(n.get("title", "")), desc,
+                        body_widget=body, alpha=self.alpha)
 
         # 展开就算读过了
         def _toggle(opened, notice=n):
