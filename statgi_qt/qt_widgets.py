@@ -8,7 +8,7 @@
   - Accordion   折叠区
   - Heading     页面大标题
 """
-from PySide6.QtCore import Qt, Signal, QRectF, QSize, QVariantAnimation
+from PySide6.QtCore import Qt, Signal, QRectF, QSize, QEvent, QVariantAnimation
 from PySide6.QtGui import QPainter, QColor
 from PySide6.QtWidgets import (QFrame, QLabel, QPushButton, QHBoxLayout,
                                QVBoxLayout, QWidget)
@@ -87,6 +87,45 @@ def msg_info(parent, title, text, icon=None):
         QTimer.singleShot(delay, place)
     box.exec()
     return box
+
+
+class RedDot(QLabel):
+    """浮在宿主控件右上角的小红点。
+
+    宿主尺寸变了会自己跟着挪（装了事件过滤器），所以窗口缩放也不跑偏。
+
+    ⚠ 颜色别用 T.DANGER —— 那个是「背景色的浅色版」（深灰），不是红。
+      侧栏公告那个红点用的就是 #E06C5A，这里保持一致。
+    """
+
+    DEFAULT_COLOR = "#E06C5A"
+
+    def __init__(self, host, size=9, color=None):
+        super().__init__("●", host)
+        self._host = host
+        c = color or self.DEFAULT_COLOR
+        self.setStyleSheet(f"color:{c}; font-size:{size + 5}px; background:transparent;")
+        self.setFixedSize(size + 7, size + 7)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        host.installEventFilter(self)
+        self.hide()
+
+    def eventFilter(self, obj, ev):
+        if obj is self._host and ev.type() in (QEvent.Resize, QEvent.Show,
+                                               QEvent.Move):
+            self.reposition()
+        return False
+
+    def reposition(self):
+        h = self._host
+        self.move(max(0, h.width() - self.width() - 1), 1)
+
+    def set_on(self, on):
+        on = bool(on)
+        self.setVisible(on)
+        if on:
+            self.reposition()
+            self.raise_()
 
 
 def set_btn_icon(button, icon, size=15, role="TEXT", color=None):

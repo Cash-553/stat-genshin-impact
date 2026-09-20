@@ -26,7 +26,7 @@ import qt_notice
 import sessions
 from qt_widgets import (Card, SettingRow, Switch, Accordion, heading,
                         level_name, level_value, set_btn_icon, small_button,
-                        IconButton, msg_info)
+                        IconButton, msg_info, RedDot)
 from qt_icon import IconWidget, attach_hover
 
 VERSION = "0.9"
@@ -862,6 +862,7 @@ class PageSettings(BasePage):
         bl.setContentsMargins(0, 0, 0, 6)
         bl.setSpacing(6)
         self._tab_btns = []
+        self._tab_dots = {}          # 标签名 -> 小红点（检测到新版本时挂在「其它」上）
         for i, name in enumerate(self.TABS):
             b = QPushButton(name)
             b.setFixedHeight(34)
@@ -870,6 +871,7 @@ class PageSettings(BasePage):
             b.clicked.connect(lambda _=False, x=i: self._on_tab(x))
             bl.addWidget(b)
             self._tab_btns.append(b)
+            self._tab_dots[name] = RedDot(b)
         bl.addStretch(1)
         self.add(bar)
 
@@ -877,6 +879,7 @@ class PageSettings(BasePage):
         self.tabs = QStackedWidget()
         self._inner = {}
         self._lay = {}
+        self._scroll = {}
         for name in self.TABS:
             sc = QScrollArea()
             sc.setWidgetResizable(True)
@@ -893,6 +896,7 @@ class PageSettings(BasePage):
             self.tabs.addWidget(sc)
             self._inner[name] = inner
             self._lay[name] = lay
+            self._scroll[name] = sc
         self.add(self.tabs, 1)
 
         # ---------- 各标签的内容 ----------
@@ -1275,8 +1279,10 @@ class PageSettings(BasePage):
         self.update_status.setStyleSheet(label_qss(T.DIM, 12))
         ul.addWidget(self.update_btn)
         ul.addWidget(self.update_status)
-        self._row(tb, "refresh-cw", "版本更新",
-                  f"当前版本 v{VERSION}，检测需联网", upd_row)
+        self.update_row = self._row(tb, "refresh-cw", "版本更新",
+                                    f"当前版本 v{VERSION}，检测需联网", upd_row)
+        # 检测到新版本时，这一行右上角也挂个红点
+        self.update_dot = RedDot(self.update_row)
 
         self.dev_enabled = Switch(self._inner[tb], bool(s.get("developer_mode", False)))
         self.dev_enabled.toggled.connect(self._on_developer_mode)
@@ -1337,11 +1343,26 @@ class PageSettings(BasePage):
         btns.addStretch(1)
         v.addLayout(btns)
 
+        # 预览用：把「检测到新版本」的提示效果演一遍（侧栏闪红光 + 设置里挂红点）
+        r3 = QHBoxLayout()
+        lb3 = QLabel("模拟检测到新版本（预览提示效果）")
+        lb3.setStyleSheet(label_qss(T.TEXT, 14))
+        r3.addWidget(lb3)
+        r3.addStretch(1)
+        self.sim_update = Switch(box, False)
+        self.sim_update.toggled.connect(self._on_sim_update)
+        r3.addWidget(self.sim_update)
+        v.addLayout(r3)
+
         self.dev_stats_label = QLabel("")
         self.dev_stats_label.setStyleSheet(label_qss(T.DIM, 12))
         v.addWidget(self.dev_stats_label)
         self._refresh_dev_stats()
         return box
+
+    def _on_sim_update(self, v):
+        """开发者选项：把「检测到新版本」的提示效果开/关（纯粹为了看效果）"""
+        self.win.set_update_available(bool(v), "9.9")
 
     def _on_developer_mode(self, v):
         self.state.set_setting("developer_mode", bool(v))
@@ -1616,6 +1637,28 @@ class PageSettings(BasePage):
         self.update_status.setText("")
 
     # ---------- 各项回调 ----------
+    # ---------- 检测到新版本的提示 ----------
+
+    def set_update_badge(self, on):
+        """检测到新版本：「其它」标签 + 「版本更新」那一行都挂红点"""
+        dot = self._tab_dots.get("其它")
+        if dot is not None:
+            dot.set_on(on)
+        dot2 = getattr(self, "update_dot", None)
+        if dot2 is not None:
+            dot2.set_on(on)
+
+    def goto_update(self):
+        """跳到「其它」标签，并滚到「版本更新」那一行"""
+        try:
+            self._on_tab(self.TABS.index("其它"))
+        except Exception:
+            return
+        sc = self._scroll.get("其它")
+        row = getattr(self, "update_row", None)
+        if sc is not None and row is not None:
+            sc.ensureWidgetVisible(row, 0, 90)
+
     def _on_alpha(self, v):
         self.alpha_label.setText(f"{v}%")
         self.state.set_setting("panel_opacity", v / 100.0)
