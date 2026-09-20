@@ -115,32 +115,26 @@ class PageLaunch(BasePage):
                             right_wrap(self.start_btn), alpha=self.alpha))
 
         # ---- 本次挂机（独立一张卡片，**只在监测时出现**）----
-        # 四个数字各一个小框：挂机时间 / 摩拉 / 材料 / 狗粮。
-        # 不监测的时候整张卡片藏起来，启动页就只剩上面那几张。
+        # 四个数字**直接摆在这张卡片里**，里面不再套小框了 ——
+        # 卡片本身就是那个框（上一版里外两层框，又丑又挤）。
         self.stat_card = Card(self, alpha=self.alpha)
         cb = QHBoxLayout(self.stat_card)
-        cb.setContentsMargins(14, 12, 14, 12)
+        cb.setContentsMargins(18, 14, 18, 14)
         cb.setSpacing(8)
         self.stat_labels = {}
         self._stat_txt = {}          # 上次写进去的文字，一样就不重复写
         for key, title in (("time", "挂机时间"), ("mora", "摩拉"),
                            ("materials", "材料"), ("artifact", "狗粮")):
-            box = QFrame()           # 每个数字一个小框
-            # 底色浅浅一层就够了；描边太亮会很扎眼（上一版就栽在这儿）
-            box.setStyleSheet(
-                f"QFrame {{ background: {rgba('#FFFFFF', 16)};"
-                f" border: none; border-radius: 10px; }}")
-            bl = QVBoxLayout(box)
-            bl.setContentsMargins(12, 8, 12, 8)
-            bl.setSpacing(3)
+            col = QVBoxLayout()
+            col.setSpacing(3)
             lb = QLabel(title)
             lb.setStyleSheet(label_qss(T.DIM, 12))
             val = QLabel("—")
-            val.setStyleSheet(label_qss(T.ACCENT, 18, True))
-            bl.addWidget(lb)
-            bl.addWidget(val)
+            val.setStyleSheet(label_qss(T.ACCENT, 19, True))
+            col.addWidget(lb)
+            col.addWidget(val)
             self.stat_labels[key] = val
-            cb.addWidget(box, 1)
+            cb.addLayout(col, 1)
         self.stat_card.setVisible(False)      # 一开始不显示
         self.add(self.stat_card)
         self._last_monitoring = False
@@ -172,6 +166,10 @@ class PageLaunch(BasePage):
                              ("📷 诊断截图", self._on_debug_screenshot)], self.alpha),
             alpha=self.alpha)
         self.add(self.reselect)
+        # 撑开：把上面几张卡片顶到上面去，多余空间全留在最底下。
+        # 少了这一行，布局会把多余空间摊到每张卡片上 ——
+        # 表现就是「重新框选那张卡莫名其妙变高了」。
+        self.stretch()
 
         # 订阅状态：文字变了才改，**不重建控件**
         self.state.status_changed.connect(self._on_status)
