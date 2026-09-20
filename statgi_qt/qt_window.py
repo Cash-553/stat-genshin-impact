@@ -310,11 +310,10 @@ class MainWindow(QWidget):
             if not icon.isNull():
                 self.setWindowIcon(icon)     # 任务栏 / Alt+Tab 用这个
             self.tray = Tray(self, ico, icon)
-            # 全局热键可以有多个动作，每个动作一条设置（都默认「关闭」）
+            # 全局热键：两个动作，各一条设置（都默认「关闭」）
             self.hotkey = HotkeyManager(self, [
                 ("hotkey", self.state.toggle),           # 开始 / 停止监测
                 ("hotkey_bar", self.toggle_stat_bar),    # 显示 / 隐藏统计条
-                ("hotkey_home", self.hotkey_show_home),  # 把主窗口叫回来
             ])
         except Exception:
             log_exc("qt_window 托盘/热键")
@@ -651,15 +650,6 @@ class MainWindow(QWidget):
                 self.open_stat_bar()
         except Exception:
             log_exc("qt_window 切换统计条")
-
-    def hotkey_show_home(self):
-        """热键用：把主窗口叫回来（从托盘/最小化状态恢复并置顶）"""
-        try:
-            self.showNormal()
-            self.raise_()
-            self.activateWindow()
-        except Exception:
-            log_exc("qt_window 显示主窗口")
 
     def open_icon_manager(self):
         """图标管理：只能开一个，已经开着就拎到前面来"""
