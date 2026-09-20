@@ -60,6 +60,12 @@ dataset_stats.json
 _run*.py
 _r*.txt
 
+# 米游社札记抓取测试脚本（本地自用，涉及 cookie，绝不提交）
+ledger_test.py
+cookie.txt
+ledger_raw.json
+札记测试结果.txt
+
 # 自动更新的分卷（几十兆的二进制，不进仓库 —— Gitee 仓库单文件限 50M）
 发布版/公告/更新包分卷/
 # 自动更新生成的更新脚本（运行时产物）
