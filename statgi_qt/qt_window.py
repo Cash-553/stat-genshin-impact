@@ -222,7 +222,7 @@ class Sidebar(QFrame):
         self.notice_dot.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.notice_dot.hide()
 
-        v = QLabel("V0.9 · Qt 版")
+        v = QLabel("V0.9")
         v.setStyleSheet(label_qss(T.DIM, 12))
         v.setAlignment(Qt.AlignCenter)
         lay.addWidget(v)
