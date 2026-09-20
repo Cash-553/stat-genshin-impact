@@ -548,6 +548,15 @@ class Editor(QWidget):
             QMessageBox.warning(self, "提示", "有两条公告的 ID 重复了，改一下再发布。")
             return
 
+        # ⚠ 先把现有的 version.json 读出来 —— 后面几个防呆检查都要用
+        old = {}
+        try:
+            with open(VERSION_FILE, "r", encoding="utf-8") as f:
+                old = json.load(f) or {}
+        except Exception:
+            old = {}
+        old_ver = str(old.get("version", "") or "").strip()
+
         ver = self.version_edit.text().strip()
         if not ver:
             if QMessageBox.question(
@@ -558,25 +567,41 @@ class Editor(QWidget):
                     "仍然要发布吗？") != QMessageBox.Yes:
                 return
 
+        # ⚠ 防呆 1：版本号跟文件里现有的不一样
+        #   典型翻车：先用「发布工具」发好了 0.9（它写了版本号 + 分卷地址），
+        #   再来这里发公告，而这里框里还写着 0.8 → 一发布就把版本号改回 0.8，
+        #   用户那边再也收不到更新提醒。
+        if old_ver and ver and ver != old_ver:
+            if QMessageBox.question(
+                    self, "版本号跟现有文件不一样",
+                    f"version.json 里现在是：{old_ver}\n"
+                    f"你这里填的是：{ver}\n\n"
+                    "如果这里是旧的（比如发布工具已经写成新版本了），\n"
+                    "发布之后用户就收不到新版本提醒了。\n\n"
+                    f"确定要把版本号改成 {ver} 吗？") != QMessageBox.Yes:
+                return
+
+        # ⚠ 防呆 2：已经准备好自动更新包（有分卷地址）但更新说明是空的
+        #   用户点「检测更新」会看到「更新内容：」后面什么都没有。
+        notes_now = self.ver_notes_edit.toPlainText().strip()
+        if isinstance(old.get("update"), dict) and not notes_now:
+            if QMessageBox.question(
+                    self, "更新说明是空的",
+                    "version.json 里已经有自动更新包的信息了（发布工具写好的），\n"
+                    "但「更新说明」是空的 —— 用户点检测更新会看不到更新内容。\n\n"
+                    "仍然要发布吗？") != QMessageBox.Yes:
+                return
+
         newest = self.notices[0].get('title', '') if self.notices else '（一条都没有）'
         if QMessageBox.question(
                 self, "确认发布",
                 f"将要发布到 GitHub + Gitee：\n\n"
                 f"  · 最新版本号：{ver or '（空）'}\n"
+                f"  · 更新说明：{notes_now[:40] + ('…' if len(notes_now) > 40 else '') or '（空）'}\n"
                 f"  · 公告 {len(self.notices)} 条，最新一条是：\n"
                 f"      {newest}\n\n确定吗？"
         ) != QMessageBox.Yes:
             return
-
-        # ⚠ 要**保留** version.json 里原有的 update 段！
-        #   那里面是自动更新用的分卷地址和校验值，是「发布工具」写进去的。
-        #   这里如果整个覆盖掉，用户那边就再也收不到自动更新了。
-        old = {}
-        try:
-            with open(VERSION_FILE, "r", encoding="utf-8") as f:
-                old = json.load(f) or {}
-        except Exception:
-            old = {}
         vinfo = {
             "version": ver,
             "notes": self.ver_notes_edit.toPlainText().strip(),
