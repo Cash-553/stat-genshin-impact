@@ -67,6 +67,7 @@ DEFAULT_SETTINGS = {
     },
     "rollover_hour": 0,              # 换日时间（0=自然日；4=凌晨4点换日）
     "rollover_enabled": True,        # 换日刷新数据总开关（关掉就一直累着，不换日）
+    "obs_api_enabled": True,         # 直播数据接口总开关（OBS 那个，改了立刻生效）
     "hotkey": "关闭",                # 全局热键：开始/停止监测
     "hotkey_bar": "关闭",            # 全局热键：显示/隐藏统计条
     "hotkey_home": "关闭",           # 全局热键：把主窗口叫回来

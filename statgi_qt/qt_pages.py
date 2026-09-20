@@ -942,13 +942,8 @@ class PageSettings(BasePage):
         r1 = QHBoxLayout()
         t1 = QLabel("启用换日刷新")
         t1.setStyleSheet(label_qss(T.TEXT, 14))
-        d1 = QLabel("关掉就一直累着，不自动换日")
-        d1.setStyleSheet(label_qss(T.DIM, 12))
-        c1 = QVBoxLayout()
-        c1.setSpacing(1)
-        c1.addWidget(t1)
-        c1.addWidget(d1)
-        r1.addLayout(c1, 1)
+        r1.addWidget(t1)
+        r1.addStretch(1)
         self.ro_switch = Switch(body, bool(s.get("rollover_enabled", True)))
         self.ro_switch.toggled.connect(self._on_rollover_enabled)
         r1.addWidget(self.ro_switch)
@@ -957,13 +952,8 @@ class PageSettings(BasePage):
         r2 = QHBoxLayout()
         t2 = QLabel("换日时间")
         t2.setStyleSheet(label_qss(T.TEXT, 14))
-        d2 = QLabel("填 0~23。挂过零点的话，往后填几小时就不会中途归零")
-        d2.setStyleSheet(label_qss(T.DIM, 12))
-        c2 = QVBoxLayout()
-        c2.setSpacing(1)
-        c2.addWidget(t2)
-        c2.addWidget(d2)
-        r2.addLayout(c2, 1)
+        r2.addWidget(t2)
+        r2.addStretch(1)
         self.ro_entry = QLineEdit(str(int(s.get("rollover_hour", 0) or 0)))
         self.ro_entry.setFixedWidth(70)
         self.ro_entry.setAlignment(Qt.AlignCenter)
@@ -976,8 +966,7 @@ class PageSettings(BasePage):
         bl.addLayout(r2)
 
         self.ro_acc = Accordion(self._inner[tb], "🌅", "换日刷新数据",
-                                "过了设定时间就把当天数据归档、重新开始统计",
-                                body, alpha=self.alpha)
+                                "", body, alpha=self.alpha)
         self._lay[tb].insertWidget(self._lay[tb].count() - 1, self.ro_acc)
 
         # 「自动登记新材料」放在这里（从「识别」挪过来的）
@@ -990,28 +979,43 @@ class PageSettings(BasePage):
     # ================= 直播 =================
     def _build_live(self, s):
         tb = "直播"
-        self.obs_sw = Switch(self._inner[tb], bool(s.get("obs_browser_source", False)))
+
+        # ---- 直播数据接口总开关 ----
+        # 这个是**真的开关**：关掉就把接口停掉（OBS 那个浏览器源会没数据），
+        # 打开就重新起来。以前它只存了个值、什么都不干。
+        self.obs_sw = Switch(self._inner[tb], bool(s.get("obs_api_enabled", True)))
         self.obs_sw.toggled.connect(self._on_obs)
+        self._row(tb, "📡", "直播数据接口",
+                  "给 OBS / 直播页面提供数据。关掉的话直播那边会没数据",
+                  self.obs_sw)
+
+        # ---- 收益条地址 ----
+        # 注意给的是 /bar（**只有收益条**：摩拉/材料/狗粮/监测时间）。
+        # /overlay 那个是整块竖屏覆盖层，上面一半是弹幕区，不是纯收益条。
         api_port = int(s.get("api_port", 8765) or 8765)
-        self.obs_addr = QLabel(f"http://127.0.0.1:{api_port}/overlay")
+        self.obs_addr = QLabel(self._bar_url(api_port))
         self.obs_addr.setStyleSheet(label_qss(T.TEXT, 13))
         copy_btn = QPushButton("复制")
         copy_btn.setFixedSize(60, 28)
         copy_btn.setCursor(Qt.PointingHandCursor)
         copy_btn.setStyleSheet(btn_qss("normal", self.alpha))
         copy_btn.clicked.connect(self._copy_obs)
-        self._row(tb, "📺", "连接 OBS 直播覆盖",
-                  "在 OBS 里添加「浏览器源」，粘贴右边地址",
-                  right_wrap(self.obs_sw, self.obs_addr, copy_btn))
+        self._row(tb, "📺", "收益条地址",
+                  "在 OBS 里添加「浏览器源」，把右边地址粘进去（宽 340、高 200 左右）",
+                  right_wrap(self.obs_addr, copy_btn))
 
-        # 「直播接口端口」放在这里（从「统计」挪过来的）
+        # ---- 端口 ----
         self.api_entry = QLineEdit(str(api_port))
         self.api_entry.setFixedWidth(90)
         self.api_entry.setAlignment(Qt.AlignCenter)
         self.api_entry.setStyleSheet(entry_qss())
         self.api_entry.editingFinished.connect(self._on_api_port)
-        self._row(tb, "🔌", "直播接口端口",
-                  "OBS 用这个端口取数据（改完要重启程序才生效）", self.api_entry)
+        self._row(tb, "🔌", "接口端口",
+                  "改完立刻生效，不用重启（OBS 那边地址也要跟着改）", self.api_entry)
+
+    @staticmethod
+    def _bar_url(port):
+        return f"http://127.0.0.1:{int(port)}/bar"
 
     # ================= 其它 =================
     def _build_other(self, s):
@@ -1447,14 +1451,27 @@ class PageSettings(BasePage):
             v = 8765
         self.api_entry.setText(str(v))
         self.state.set_setting("api_port", v)
+        # 地址显示跟着改，并且**立刻**把接口换到新端口（以前要重启）
+        try:
+            self.obs_addr.setText(self._bar_url(v))
+        except Exception:
+            pass
+        try:
+            self.win.apply_api()
+        except Exception:
+            pass
 
     def _on_close_behavior(self, text):
         self.state.set_setting("close_behavior", {
             "每次询问": "ask", "最小化到托盘": "tray", "直接退出": "exit"}.get(text, "ask"))
 
     def _on_obs(self, v):
-        self.state.set_setting("obs_browser_source", bool(v))
-        self.win.set_obs(bool(v))
+        """直播数据接口总开关：立刻开 / 关接口"""
+        self.state.set_setting("obs_api_enabled", bool(v))
+        try:
+            self.win.apply_api()
+        except Exception:
+            pass
 
     def _copy_obs(self):
         from PySide6.QtWidgets import QApplication as _A
