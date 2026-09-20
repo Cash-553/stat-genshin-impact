@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """StatGI Qt 版 · 五个页面
 
-启动 / 今日统计 / 收益统计条 / 收益记录 / 设置。
+启动 / 收益统计条 / 收益记录 / 设置 / 公告。
+（今日统计不单独一页了，收在启动页「开始监测」那张折叠卡片里。）
 
 刷新原则（很重要）：
   · 页面只订阅 state 的信号，数据真变了才动
@@ -101,17 +102,48 @@ class PageLaunch(BasePage):
         # 公告不在这儿了 —— 挪到左侧栏做一个独立入口（未读时挂红点），
         # 点一下由 MainWindow.show_notice() 弹窗显示。
 
-        # 开始监测
-        # 尺寸跟下面的「清空」按钮**完全一致**（都是 110×38），
-        # 而且都贴着卡片的右边距，所以两个按钮上下对齐。
+        # ---- 开始监测（折叠卡片）----
+        # 平时只显示标题 + 右边那个「开始」按钮；
+        # 点了「开始」之后**自动展开**，里面是四个小框：
+        # 挂机时间 / 摩拉 / 材料 / 狗粮。停了就自动收起来。
         self.start_btn = QPushButton("开始")
         self.start_btn.setFixedSize(110, 38)
         self.start_btn.setCursor(Qt.PointingHandCursor)
         self.start_btn.setStyleSheet(btn_qss("accent", self.alpha))
         self.start_btn.clicked.connect(self._on_start)
-        self.add(SettingRow(self, "▶", "开始监测",
-                            "自动找到游戏窗口并识别掉落收益",
-                            right_wrap(self.start_btn), alpha=self.alpha))
+
+        self.stat_body = QWidget()
+        sb = QHBoxLayout(self.stat_body)
+        sb.setContentsMargins(0, 8, 0, 2)
+        sb.setSpacing(8)
+        self.stat_labels = {}
+        self._stat_txt = {}          # 上次写进去的文字，一样就不重复写
+        for key, title in (("time", "挂机时间"), ("mora", "摩拉"),
+                           ("materials", "材料"), ("artifact", "狗粮")):
+            box = QFrame()           # 每个数字一个小框
+            box.setStyleSheet(
+                f"QFrame {{ background: {rgba('#FFFFFF', 14)};"
+                f" border: 1px solid {rgba('#FFFFFF', 38)};"
+                f" border-radius: 10px; }}")
+            bl = QVBoxLayout(box)
+            bl.setContentsMargins(12, 8, 12, 8)
+            bl.setSpacing(3)
+            lb = QLabel(title)
+            lb.setStyleSheet(label_qss(T.DIM, 12))
+            val = QLabel("—")
+            val.setStyleSheet(label_qss(T.ACCENT, 18, True))
+            bl.addWidget(lb)
+            bl.addWidget(val)
+            self.stat_labels[key] = val
+            sb.addWidget(box, 1)
+
+        self.start_acc = Accordion(self, "▶", "开始监测",
+                                   "自动找到游戏窗口并识别掉落收益",
+                                   self.stat_body, alpha=self.alpha,
+                                   on_toggle=self._on_stat_toggle,
+                                   head_right=self.start_btn)
+        self.add(self.start_acc)
+        self._last_monitoring = False
 
         # 清空
         self.clear_dd = QComboBox()
@@ -141,75 +173,10 @@ class PageLaunch(BasePage):
             alpha=self.alpha)
         self.add(self.reselect)
 
-        # ---- 今日统计（折叠区）----
-        # 原来是一个单独的页面，现在并到启动页里，收成折叠区。
-        # 只放四个数字：挂机时间 / 摩拉 / 材料 / 狗粮。
-        # 材料明细不在这儿（那个去「收益记录」看），免得启动页太乱。
-        self.stat_body = QWidget()
-        sb = QHBoxLayout(self.stat_body)
-        sb.setContentsMargins(2, 8, 2, 4)
-        sb.setSpacing(8)
-        self.stat_labels = {}
-        self._stat_txt = {}          # 上次写进去的文字，一样就不重复写
-        self._stat_stale = True      # 折叠期间漏掉的刷新
-        for key, title in (("time", "⏱ 挂机时间"), ("mora", "💰 摩拉"),
-                           ("materials", "📦 材料"), ("artifact", "💠 狗粮")):
-            col = QVBoxLayout()
-            col.setSpacing(2)
-            lb = QLabel(title)
-            lb.setStyleSheet(label_qss(T.DIM, 12))
-            val = QLabel("—")
-            val.setStyleSheet(label_qss(T.ACCENT, 19, True))
-            col.addWidget(lb)
-            col.addWidget(val)
-            self.stat_labels[key] = val
-            sb.addLayout(col)
-        sb.addStretch(1)
-        self.stat_acc = Accordion(self, "📊", "今日统计",
-                                  "挂机时间 · 摩拉 · 材料 · 狗粮",
-                                  self.stat_body, alpha=self.alpha,
-                                  on_toggle=self._on_stat_toggle)
-        self.add(self.stat_acc)
-        self.stretch()
-
         # 订阅状态：文字变了才改，**不重建控件**
         self.state.status_changed.connect(self._on_status)
         self.state.event_happened.connect(self._on_event)
         self.state.stats_changed.connect(self._sync_button)
-        # 今日统计那四个数字：折叠着就不刷，展开时一次性补上
-        self.state.stats_changed.connect(self._on_stats_changed)
-
-    # ---------- 今日统计（折叠区） ----------
-    def _on_stat_toggle(self, opened):
-        if opened:
-            self.refresh_stats()
-
-    def _on_stats_changed(self):
-        if self.stat_acc._open:
-            self.refresh_stats()
-        else:
-            self._stat_stale = True
-
-    def refresh_stats(self):
-        """只改变化的那几个数字，别的控件一个字都不动"""
-        self._stat_stale = False
-        try:
-            snap = self.state.snapshot()
-            mats = snap.get("materials") or {}
-            mat_total = sum(int(v) for v in mats.values())
-            vals = {
-                "time": fmt_seconds(snap["seconds"]),
-                "mora": f"{int(snap['mora']):,}",
-                "materials": f"×{mat_total:,}",
-                "artifact": f"×{int(snap['artifact']):,}",
-            }
-        except Exception:
-            return
-        for k, txt in vals.items():
-            lb = self.stat_labels.get(k)
-            if lb is not None and self._stat_txt.get(k) != txt:
-                self._stat_txt[k] = txt
-                lb.setText(txt)
 
     def _on_status(self, text, color):
         self.status_label.setText(f"● {text}")
@@ -233,6 +200,44 @@ class PageLaunch(BasePage):
         txt = "停止" if self.state.monitoring else "开始"
         if self.start_btn.text() != txt:       # 只有真的不一样才 setText
             self.start_btn.setText(txt)
+        # 折叠卡片跟着监测状态走：开始 -> 展开四个小框；停止 -> 收起来。
+        # 只在**状态真的变了**的时候动它 —— 否则用户在监测中手动收起，
+        # 下一次刷新又会被自动展开，很烦。
+        now = bool(self.state.monitoring)
+        if now != getattr(self, "_last_monitoring", False):
+            self._last_monitoring = now
+            if now:
+                if not self.start_acc._open:
+                    self.start_acc._toggle()
+                self.refresh_stats()
+            else:
+                if self.start_acc._open:
+                    self.start_acc._toggle()
+
+    # ---------- 折叠卡片里的四个数字 ----------
+    def _on_stat_toggle(self, opened):
+        if opened:
+            self.refresh_stats()
+
+    def refresh_stats(self):
+        """只改变化的那几个数字，别的控件一个字都不动"""
+        try:
+            snap = self.state.snapshot()
+            mats = snap.get("materials") or {}
+            mat_total = sum(int(v) for v in mats.values())
+            vals = {
+                "time": fmt_seconds(snap["seconds"]),
+                "mora": f"{int(snap['mora']):,}",
+                "materials": f"×{mat_total:,}",
+                "artifact": f"×{int(snap['artifact']):,}",
+            }
+        except Exception:
+            return
+        for k, txt in vals.items():
+            lb = self.stat_labels.get(k)
+            if lb is not None and self._stat_txt.get(k) != txt:
+                self._stat_txt[k] = txt
+                lb.setText(txt)
 
     def _on_clear(self):
         kind = self.clear_dd.currentText()
@@ -586,7 +591,7 @@ class PageRecords(BasePage):
     def _on_clear(self):
         import sessions
         if QMessageBox.question(self, "确认",
-                                "确定清空所有收益记录吗？\n（今日统计的数据不受影响）") != QMessageBox.Yes:
+                                "确定清空所有收益记录吗？\n（今日的统计数据不受影响）") != QMessageBox.Yes:
             return
         sessions.clear_sessions()
         self.refresh()
@@ -1701,7 +1706,7 @@ def build_pages(win):
     """页面顺序要和侧栏对应：
        0 启动  1 收益统计条  2 收益记录  3 设置  4 公告
        前 4 个是侧栏导航项，「公告」是单独那个入口（在导航下面）
-       （「今日统计」原来是单独一页，现在并进启动页的折叠区了）"""
+       （「今日统计」原来是单独一页，现在收在启动页「开始监测」的折叠卡片里）"""
     return [PageLaunch(win), PageBar(win),
             PageRecords(win), PageSettings(win), PageNotice(win)]
 
