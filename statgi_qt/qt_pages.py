@@ -123,7 +123,7 @@ class PageLaunch(BasePage):
         cb.setSpacing(8)
         self.stat_labels = {}
         self._stat_txt = {}          # 上次写进去的文字，一样就不重复写
-        for key, title in (("time", "挂机时间"), ("mora", "摩拉"),
+        for key, title in (("time", "监测时间"), ("mora", "摩拉"),
                            ("materials", "材料"), ("artifact", "狗粮")):
             col = QVBoxLayout()
             col.setSpacing(3)
@@ -175,6 +175,10 @@ class PageLaunch(BasePage):
         self.state.status_changed.connect(self._on_status)
         self.state.event_happened.connect(self._on_event)
         self.state.stats_changed.connect(self._sync_button)
+        # 统计卡片里的四个数字要**实时**跟着走。
+        # （之前只在「开始/停止」那一下刷一次，所以监测过程中数字是死的 ——
+        #   得停了再开才会更新。）
+        self.state.stats_changed.connect(self._on_stats_tick)
 
     def _on_status(self, text, color):
         self.status_label.setText(f"● {text}")
@@ -203,9 +207,20 @@ class PageLaunch(BasePage):
         now = bool(self.state.monitoring)
         if now != getattr(self, "_last_monitoring", False):
             self._last_monitoring = now
+            self._stat_shown = now
             self.stat_card.setVisible(now)
             if now:
                 self.refresh_stats()
+
+    def _on_stats_tick(self):
+        """数据变了 —— 卡片正显示着就更一下那四个数字
+
+        看的是 _stat_shown（自己记的开关状态），不是 isVisible()：
+        窗口最小化时 isVisible() 会是 False，那段时间就不刷了，
+        等恢复出来数字还是旧的。
+        """
+        if getattr(self, "_stat_shown", False):
+            self.refresh_stats()
 
     def refresh_stats(self):
         """只改变化的那几个数字，别的控件一个字都不动"""
@@ -915,17 +930,55 @@ class PageSettings(BasePage):
     # ================= 统计 =================
     def _build_stats(self, s):
         tb = "统计"
+
+        # ---- 换日刷新数据（折叠卡片，默认收起）----
+        # 展开里面两行：总开关 + 换日时间。
+        # 关掉开关就**完全不换日**，数据一直累着，直到手动清空。
+        body = QWidget()
+        bl = QVBoxLayout(body)
+        bl.setContentsMargins(0, 8, 0, 2)
+        bl.setSpacing(12)
+
+        r1 = QHBoxLayout()
+        t1 = QLabel("启用换日刷新")
+        t1.setStyleSheet(label_qss(T.TEXT, 14))
+        d1 = QLabel("关掉就一直累着，不自动换日")
+        d1.setStyleSheet(label_qss(T.DIM, 12))
+        c1 = QVBoxLayout()
+        c1.setSpacing(1)
+        c1.addWidget(t1)
+        c1.addWidget(d1)
+        r1.addLayout(c1, 1)
+        self.ro_switch = Switch(body, bool(s.get("rollover_enabled", True)))
+        self.ro_switch.toggled.connect(self._on_rollover_enabled)
+        r1.addWidget(self.ro_switch)
+        bl.addLayout(r1)
+
+        r2 = QHBoxLayout()
+        t2 = QLabel("换日时间")
+        t2.setStyleSheet(label_qss(T.TEXT, 14))
+        d2 = QLabel("填 0~23。挂过零点的话，往后填几小时就不会中途归零")
+        d2.setStyleSheet(label_qss(T.DIM, 12))
+        c2 = QVBoxLayout()
+        c2.setSpacing(1)
+        c2.addWidget(t2)
+        c2.addWidget(d2)
+        r2.addLayout(c2, 1)
         self.ro_entry = QLineEdit(str(int(s.get("rollover_hour", 0) or 0)))
         self.ro_entry.setFixedWidth(70)
         self.ro_entry.setAlignment(Qt.AlignCenter)
         self.ro_entry.setStyleSheet(entry_qss())
         self.ro_entry.editingFinished.connect(self._on_rollover)
-        ro = right_wrap(self.ro_entry)
+        r2.addWidget(self.ro_entry)
         lb = QLabel("点")
         lb.setStyleSheet(label_qss(T.DIM, 13))
-        ro.layout().addWidget(lb)
-        self._row(tb, "🌅", "换日时间",
-                  "填 0~23。挂机挂过零点的话，往后填几小时就不会中途归零", ro)
+        r2.addWidget(lb)
+        bl.addLayout(r2)
+
+        self.ro_acc = Accordion(self._inner[tb], "🌅", "换日刷新数据",
+                                "过了设定时间就把当天数据归档、重新开始统计",
+                                body, alpha=self.alpha)
+        self._lay[tb].insertWidget(self._lay[tb].count() - 1, self.ro_acc)
 
         # 「自动登记新材料」放在这里（从「识别」挪过来的）
         self.auto_reg = Switch(self._inner[tb], bool(s.get("auto_register_material", True)))
@@ -1382,6 +1435,10 @@ class PageSettings(BasePage):
             h = 0
         self.ro_entry.setText(str(h))
         self.state.set_setting("rollover_hour", h)
+
+    def _on_rollover_enabled(self, v):
+        """换日刷新数据的总开关"""
+        self.state.set_setting("rollover_enabled", bool(v))
 
     def _on_api_port(self):
         try:
