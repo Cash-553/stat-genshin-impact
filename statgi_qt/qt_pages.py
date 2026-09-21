@@ -1199,6 +1199,16 @@ class PageSettings(BasePage):
                                 items=ro_items, alpha=self.alpha)
         self._lay[tb].insertWidget(self._lay[tb].count() - 1, self.ro_acc)
 
+        # ---- 材料库 ----
+        # 放「统计」里（不放「开发」）—— 这个是日常要用的：
+        # 识别到什么材料都按这个名单分类，名字错了要能随时改。
+        self.mat_acc = Accordion(
+            self._inner[tb], "database", "材料库",
+            "识别到的材料名单；不在库里的名字会当成新材料",
+            items=self._make_mat_items(), alpha=self.alpha)
+        self._lay[tb].insertWidget(self._lay[tb].count() - 1, self.mat_acc)
+        self._refresh_mat_count()
+
     # ================= 直播 =================
     def _build_live(self, s):
         tb = "直播"
@@ -1295,14 +1305,6 @@ class PageSettings(BasePage):
         self._lay[tb].insertWidget(self._lay[tb].count() - 1, self.dev_acc)
         self.dev_acc.setVisible(bool(s.get("developer_mode", False)))
 
-        # ---- 材料库 ----
-        self.mat_acc = Accordion(
-            self._inner[tb], "database", "材料库",
-            "识别到的材料名单；不在库里的名字会当成新材料",
-            items=self._make_mat_items(), alpha=self.alpha)
-        self._lay[tb].insertWidget(self._lay[tb].count() - 1, self.mat_acc)
-        self.mat_acc.setVisible(bool(s.get("developer_mode", False)))
-
         # 折叠卡片里的「保存目录」和「已采集样本」两行要动态更新，
         # 建完之后按标题把卡片找出来存好
         for c in self.dev_acc.item_cards:
@@ -1313,15 +1315,14 @@ class PageSettings(BasePage):
                 self.dev_stats_card = c
         self._set_dev_path(self.state.get_setting("dataset_path", ""))
         self._refresh_dev_stats()
-        self._refresh_mat_count()
 
     # ---------- 材料库 ----------
     def _make_mat_items(self):
-        """材料库那一组子卡片"""
+        """材料库那一组子卡片（挂在「统计」页）"""
         items = []
 
-        # 1) 自动登记新材料（从「统计」搬过来的）
-        self.auto_reg = Switch(self._inner["开发"],
+        # 1) 自动登记新材料
+        self.auto_reg = Switch(self._inner["统计"],
                                bool(self.state.get_setting("auto_register_material", True)))
         self.auto_reg.toggled.connect(
             lambda v: self.state.set_setting("auto_register_material", bool(v)))
@@ -1445,12 +1446,11 @@ class PageSettings(BasePage):
 
     def _on_developer_mode(self, v):
         self.state.set_setting("developer_mode", bool(v))
-        for acc in (getattr(self, "dev_acc", None), getattr(self, "mat_acc", None)):
-            if acc is not None:
-                acc.setVisible(bool(v))
+        acc = getattr(self, "dev_acc", None)
+        if acc is not None:
+            acc.setVisible(bool(v))
         if v:
             self._refresh_dev_stats()
-            self._refresh_mat_count()
 
     def _refresh_dev_stats(self):
         try:
