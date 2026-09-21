@@ -1199,13 +1199,17 @@ class PageSettings(BasePage):
                                 items=ro_items, alpha=self.alpha)
         self._lay[tb].insertWidget(self._lay[tb].count() - 1, self.ro_acc)
 
-        # ---- 材料库 ----
+        # ---- 识别名单 ----
         # 放「统计」里（不放「开发」）—— 这个是日常要用的：
-        # 识别到什么材料都按这个名单分类，名字错了要能随时改。
+        # 识别到什么材料都按这个名单判定，名字错了或者漏了要能随时改。
+        warn = QLabel("⚠ 名单里的名字才会被统计。全删光了就什么都识别不到，"
+                      "点「恢复默认名单」可以还原。")
+        warn.setWordWrap(True)
+        warn.setStyleSheet(label_qss("#E06C5A", 12, True))
         self.mat_acc = Accordion(
-            self._inner[tb], "database", "材料库",
-            "识别到的材料名单；不在库里的名字会当成新材料",
-            items=self._make_mat_items(), alpha=self.alpha)
+            self._inner[tb], "clipboard-list", "识别名单",
+            "认得出什么由这份名单决定；不在名单里的不记账（只写进识别日志）",
+            items=self._make_mat_items(), alpha=self.alpha, footer=warn)
         self._lay[tb].insertWidget(self._lay[tb].count() - 1, self.mat_acc)
         self._refresh_mat_count()
 
@@ -1316,74 +1320,113 @@ class PageSettings(BasePage):
         self._set_dev_path(self.state.get_setting("dataset_path", ""))
         self._refresh_dev_stats()
 
-    # ---------- 材料库 ----------
+    # ---------- 识别名单 ----------
     def _make_mat_items(self):
-        """材料库那一组子卡片（挂在「统计」页）"""
+        """识别名单那一组子卡片（挂在「统计」页）"""
         items = []
 
-        # 1) 自动登记新材料
-        self.auto_reg = Switch(self._inner["统计"],
-                               bool(self.state.get_setting("auto_register_material", True)))
-        self.auto_reg.toggled.connect(
-            lambda v: self.state.set_setting("auto_register_material", bool(v)))
-        items.append(("plus", "自动登记新材料",
-                      "识别到材料库里没有的名字时，自动加进去", self.auto_reg))
+        # 1) 管理识别名单
+        self.name_count_label = QLabel("")
+        self.name_count_label.hide()
+        edit_btn = small_button("管理…", self._open_material_editor, self.alpha,
+                                icon="clipboard-list", width=84)
+        items.append(("clipboard-list", "管理识别名单",
+                      "查看、增删名单里的名字", edit_btn))
 
-        # 2) 编辑材料库
-        self.mat_count_label = QLabel("")
-        self.mat_count_label.hide()
-        edit_btn = small_button("编辑…", self._open_material_editor, self.alpha,
-                                icon="file-text", width=84)
-        items.append(("list", "材料名单", "查看、修改、删除材料名", edit_btn))
-
-        # 3) 恢复默认
-        reset_btn = small_button("恢复默认", self._reset_materials, self.alpha,
+        # 2) 恢复默认名单
+        reset_btn = small_button("恢复默认", self._reset_names, self.alpha,
                                  kind="danger", icon="refresh-cw", width=96)
-        items.append(("refresh-cw", "恢复默认材料库",
-                      "只保留内置材料，清掉自动登记的", reset_btn))
+        items.append(("refresh-cw", "恢复默认名单",
+                      "改乱了可以一键还原成内置名单", reset_btn))
+
+        # 3) 识别日志开关
+        self.log_switch = Switch(self._inner["统计"],
+                                 bool(self.state.get_setting("log_detections", True)))
+        self.log_switch.toggled.connect(
+            lambda v: self.state.set_setting("log_detections", bool(v)))
+        items.append(("file-text", "记录识别日志",
+                      "每统计一笔都记下来，包含原始识别文字，方便查错",
+                      self.log_switch))
+
+        # 4) 打开日志
+        open_log = small_button("打开日志", self._open_detect_log, self.alpha,
+                                icon="file-text", width=96)
+        items.append(("file-text", "识别日志",
+                      "每笔统计的时间、名字、数量和原始文字", open_log))
 
         return items
 
+    def _open_detect_log(self):
+        """打开识别日志（没有就提示一句）"""
+        import os
+        try:
+            import detect_log
+            p = detect_log.LOG_FILE
+        except Exception:
+            QMessageBox.warning(self, "失败", "找不到日志模块。")
+            return
+        if not p.exists():
+            msg_info(self, "还没有日志",
+                     "还没有记录过。先点「开始监测」跑一会儿，\n"
+                     "统计到东西之后这里就会有日志了。")
+            return
+        try:
+            os.startfile(str(p))                     # noqa  Windows 专用
+        except Exception as e:
+            QMessageBox.warning(self, "打不开", f"打不开日志文件：{e}\n\n位置：\n{p}")
+
+    def _reset_names(self):
+        """恢复默认识别名单"""
+        import names_db
+        try:
+            cur = names_db.load()
+            n = len(cur["materials"]) + len(cur["artifacts"])
+        except Exception:
+            n = 0
+        if QMessageBox.question(
+                self, "恢复默认名单",
+                "会把识别名单还原成内置的那份。\n\n"
+                "你自己加过或删过的名字都会没掉。\n"
+                f"当前名单 {n} 个。确定吗？") != QMessageBox.Yes:
+            return
+        try:
+            names_db.reset_to_default()
+            reload_names()
+            self._refresh_mat_count()
+            msg_info(self, "已恢复", "识别名单已还原成内置的。")
+        except Exception as e:
+            QMessageBox.warning(self, "失败", f"恢复失败：{e}")
+
     def _refresh_mat_count(self):
         try:
-            import materials_db
-            mats = materials_db.load_materials()
-            builtin = len(materials_db.INITIAL_MATERIALS)
-            extra = max(0, len(mats) - builtin)
-            txt = f"共 {len(mats)} 个（内置 {builtin}　自动登记 {extra}）"
+            import names_db
+            d = names_db.load()
+            txt = (f"材料 {len(d['materials'])} 个　"
+                   f"圣遗物 {len(d['artifacts'])} 个")
         except Exception:
             txt = "（读取失败）"
-        self.mat_count_label.setText(txt)
+        self.name_count_label.setText(txt)
         acc = getattr(self, "mat_acc", None)
         if acc is not None:
             for c in acc.item_cards:
-                if c.title_label.text() == "材料名单":
-                    c.desc_label.setText(txt)
+                if c.title_label.text() == "管理识别名单":
+                    c.desc_label.setText(txt + "　点右边可以增删")
 
     def _open_material_editor(self):
         from qt_dialogs import MaterialDialog
         dlg = MaterialDialog(self.win, self.alpha)
         dlg.exec()
+        # 改完名单立刻生效（detector 里的集合是原地更新的）
+        try:
+            from detector import reload_names
+            reload_names()
+        except Exception:
+            pass
         self._refresh_mat_count()
 
     def _reset_materials(self):
-        import materials_db
-        n = 0
-        try:
-            n = len(materials_db.load_materials())
-        except Exception:
-            pass
-        if QMessageBox.question(
-                self, "恢复默认材料库",
-                f"会清掉后加进去的材料名，只留内置的那 {len(materials_db.INITIAL_MATERIALS)} 个。\n\n"
-                f"当前一共 {n} 个。确定吗？") != QMessageBox.Yes:
-            return
-        try:
-            materials_db.reset_to_default()
-            self._refresh_mat_count()
-            msg_info(self, "已恢复", "材料库已恢复成内置列表。")
-        except Exception as e:
-            QMessageBox.warning(self, "失败", f"恢复失败：{e}")
+        """旧名字，保留兼容（现在的入口是「恢复默认名单」）"""
+        self._reset_names()
 
     # ---------- 开发者选项 ----------
     def _make_dev_items(self):

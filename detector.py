@@ -40,6 +40,35 @@ _MAT_INDEX = {}
 for _n in MATERIAL_NAME_SET:
     _MAT_INDEX.setdefault(len(_n), []).append(_n)
 
+
+def reload_names():
+    """从 names_db 重新载入识别名单（用户在界面上改完名单后调它）。
+
+    名单是可以编辑的（``data/names.json``），内置那份是默认值。
+    这里直接改模块级的三个变量 —— 别处都是 `from detector import xxx` 引用的，
+    所以要在原地改，不能重新赋值成新对象。
+    """
+    try:
+        import names_db
+        mats = set(names_db.materials())
+        arts = set(names_db.artifacts())
+    except Exception:
+        return
+    MATERIAL_NAME_SET.clear()
+    MATERIAL_NAME_SET.update(mats)
+    ARTIFACT_NAME_SET.clear()
+    ARTIFACT_NAME_SET.update(arts)
+    _MAT_INDEX.clear()
+    for n in MATERIAL_NAME_SET:
+        _MAT_INDEX.setdefault(len(n), []).append(n)
+    _ART_INDEX.clear()
+    for n in ARTIFACT_NAME_SET:
+        _ART_INDEX.setdefault(len(n), []).append(n)
+
+
+# 启动时就按用户名单覆盖一次（names.json 不存在会自动从内置生成）
+reload_names()
+
 # 圣遗物套装关键词（用于把拾取物分为"狗粮"，来源：B站Wiki圣遗物套装清单）
 ARTIFACT_KEYWORDS = (
     # 基础套
@@ -708,6 +737,17 @@ class Detector:
         return added
 
     def _parse_pickup_text(self, text):
+        """包一层：把**原始 OCR 文字**塞进结果里。
+
+        为什么要：识别日志要记"这一笔是被哪段文字骗出来的"，
+        但内部有十几个 return，逐个加字段容易漏。包一层最省事。
+        """
+        ev = self._parse_pickup_text_inner(text)
+        if ev is not None:
+            ev.setdefault("raw", (text or "").strip())
+        return ev
+
+    def _parse_pickup_text_inner(self, text):
         """
         解析一行拾取提示："名称 × 数量"（原神里 × 符号偏小，OCR 可能读丢或读错）。
         支持 "名称×2" / "名称 × 2" / "名称 2" / 纯"名称"（数量=1）。
@@ -744,7 +784,7 @@ class Detector:
                 return None
             return {"type": "artifact", "count": count}
         # 2) 材料库已知材料
-        if name in MATERIAL_NAME_SET or name in self.known_names:
+        if name in MATERIAL_NAME_SET:
             if not self.settings.get("enable_material", True):
                 return None
             return {"type": "material", "name": name, "count": count, "category": "monster"}
@@ -768,17 +808,13 @@ class Detector:
         if count >= 20:
             if self.settings.get("enable_mora", True):
                 return {"type": "mora", "name": "摩拉", "amount": count, "count": 1}
-        # 4) 其它材料（不在名单里的未知文本）：
-        # 原版对任何 1-10 字中文都无条件入账，导致地图地名、UI按钮文字、
-        # 元素反应字（如"华光林""角色""扩散"）被误当成掉落材料。
-        # 收紧：未知文本必须带数量且数量 ≥2 才入账。
-        # - 真实掉落提示几乎都带数量（"破损的面具×3"）
-        # - 地名/UI/状态字都是单个词、无数量的（"华光林""角色""扩散"）
-        # 这样既能防漏记（带数量的采集物仍统计），又能挡住无数量的地名/UI误读。
-        if not self.settings.get("enable_material", True):
-            return None
-        if count >= 2:
-            return {"type": "material", "name": name, "count": count, "category": "monster"}
+        # 4) 不在任何名单里的 → **不登记**（只记日志）
+        #
+        #    以前这里是"带数量（≥2）就入账"，结果 OCR 认错的名字
+        #    （编编花蜜 / 适 / 塑等化形 …）全都进了统计和材料库。
+        #    现在一律不登记 —— 名单已经是完整的（574 材料 + 299 圣遗物），
+        #    认不出来的基本就是读错了。
+        self._log_rejected(name, count, t)
         return None
 
     def _scan_full(self, frame_bgr):
@@ -851,9 +887,32 @@ class Detector:
                 self.dataset.capture_gameplay(frame, str(ev.get("name", "")))
             except Exception:
                 pass
+            # 识别日志：记下这一笔 + 原始 OCR 文字，方便事后查错
+            try:
+                import detect_log
+                if ev["type"] == "mora":
+                    kind, nm, cnt, amt = "摩拉", "", 1, ev.get("amount", 0)
+                elif ev["type"] == "artifact":
+                    kind, nm, cnt, amt = "狗粮", "", 1, 0
+                else:
+                    kind, nm = "材料", ev.get("name", "")
+                    cnt, amt = ev.get("count", 1), 0
+                detect_log.log_event(
+                    kind, nm, cnt, amt, ev.get("raw", ""),
+                    "行队列" if not use_tracker else "区域扫描",
+                    self.settings)
+            except Exception:
+                pass
         return added
 
     def _parse_text_event(self, text):
+        """包一层：同样把原始 OCR 文字塞进结果里（给识别日志用）"""
+        ev = self._parse_text_event_inner(text)
+        if ev is not None:
+            ev.setdefault("raw", (text or "").strip())
+        return ev
+
+    def _parse_text_event_inner(self, text):
         """
         从一行文字里解析掉落事件。
         返回 {"type": "mora"|"material"|"artifact", ...} 或 None
@@ -880,10 +939,13 @@ class Detector:
             name = m.group(1)
             count = int(m.group(2)) if m.group(2) else 1
             # 1. 经验书等：不算收益
-            if any(k in name for k in IGNORE_NAMES):
+            if any(k in name for k in IGNORE_NAMES) or "经验" in name:
                 return None
-            # 2. 材料库里已知的材料
-            if name in self.known_names:
+            # 2. 名单里已知的材料
+            #    MATERIAL_NAME_SET = 识别名单（generated_names.py，574 个）
+            #    self.known_names   = 材料库（data/materials.json）
+            #    两个都查 —— 只查材料库的话，名单里有但库里的会漏认
+            if name in MATERIAL_NAME_SET:
                 if not self.settings.get("enable_material", True):
                     return None
                 return {"type": "material", "key": "material:" + name, "name": name, "count": count}
@@ -892,14 +954,35 @@ class Detector:
                 if not self.settings.get("enable_artifact", True):
                     return None
                 return {"type": "artifact", "key": "artifact", "count": 1}
-            # 4. 未知名字 → 自动注册为新材料（方便材料库持续增长）
-            if m.group(2) is not None:
-                if not self.settings.get("enable_material", True):
-                    return None
-                self._register_material(name)
-                return {"type": "material", "key": "material:" + name, "name": name, "count": count}
+            # 3.5 名单纠错：OCR 读错字时，从名单里找最像的纠正
+            if self.settings.get("enable_material", True):
+                corr = self._fuzzy_match(name, MATERIAL_NAME_SET, _MAT_INDEX)
+                if corr:
+                    return {"type": "material", "key": "material:" + corr,
+                            "name": corr, "count": count}
+                corr = self._fuzzy_match(name, ARTIFACT_NAME_SET, _ART_INDEX)
+                if corr:
+                    return {"type": "artifact", "key": "artifact", "count": 1}
+            # 4. 不在任何名单里的 → **不登记**
+            #
+            #    以前这里是"未知名字就自动登记进材料库"，结果 OCR 认错的
+            #    也全被记进去（编编花蜜 / 适 / 塑等化形 …）。现在只记进
+            #    识别日志，方便你事后看"漏掉了什么"，但不进统计、不入库。
+            self._log_rejected(name, count, text)
             return None
         return None
+
+    def _log_rejected(self, name, count, raw):
+        """识别到但不在名单里的 —— 记进日志，但不统计、不登记。
+
+        这样你翻日志能看出"哪些名字被丢掉了"，需要的话再手动加进名单。
+        """
+        try:
+            import detect_log
+            detect_log.log_event("未登记", name, count, 0, raw, "不在名单里",
+                                 self.settings)
+        except Exception:
+            pass
 
     def _is_artifact_name(self, name):
         """判断一个拾取物名字是否是圣遗物"""
@@ -953,21 +1036,15 @@ class Detector:
         return lcs / max(m, n)
 
     def _register_material(self, name):
-        """把未知拾取物自动加入材料库（防止无限膨胀）"""
-        if not self.settings.get("auto_register_material", True):
-            return
-        try:
-            if len(self.known_names) >= MAX_MATERIALS:
-                return
-            mats = materials_db.load_materials()
-            if any(m["name"] == name for m in mats):
-                return
-            mats.append({"name": name, "icon": name + ".png"})
-            materials_db.save_materials(mats)
-            self.known_names.add(name)
-            self.last_event = (time.time(), f"📝 已自动登记新材料：{name}")
-        except Exception:
-            pass
+        """【已停用】以前会把不认识的拾取物自动加进材料库。
+
+        为什么停用：OCR 认错的名字（编编花蜜 / 适 / 塑等化形 …）也被当成
+        "新材料"登记进去，材料库攒了一堆错词。现在认不出来的名字
+        **既不统计也不登记**，只写进识别日志（`data/识别日志.log`）供事后查看。
+
+        留着这个空函数是为了兼容旧调用点；要恢复的话把内容加回来即可。
+        """
+        return
 
     # （自动截图已移除：识别完不留任何文件在本地。手动「诊断截图」在主程序里提供。）
 
