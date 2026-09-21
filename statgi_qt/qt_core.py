@@ -154,7 +154,7 @@ class AppState(QObject):
           · ocr_interval      -> 构造时复制（还除了 1000），**要推**
           · event_end_window  -> 构造时读进 _absence_seconds，**要推**
           · enable_mora / enable_material / enable_artifact /
-            only_foreground / auto_register_material
+            only_foreground / log_detections
                               -> 每次 tick 都现读 self.settings，**不用推**
         """
         det = getattr(self, "detector", None)

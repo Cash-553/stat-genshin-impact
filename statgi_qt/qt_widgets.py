@@ -368,7 +368,7 @@ class SubRow(Card):
     """
 
     def __init__(self, parent=None, icon="", title="", desc="", right=None,
-                 alpha=150, height=58, box=32, icon_color=None):
+                 alpha=150, height=58, box=32, icon_color=None, desc_color=None):
         super().__init__(parent, alpha=alpha)
         self.setFixedHeight(height)
         lay = QHBoxLayout(self)
@@ -384,7 +384,9 @@ class SubRow(Card):
         self.title_label = QLabel(title)
         self.title_label.setStyleSheet(label_qss(T.TEXT, 14, True))
         self.desc_label = QLabel(desc)
-        self.desc_label.setStyleSheet(label_qss(T.DIM, 12))
+        # desc_color 用来做红色警告（比如"全删了就识别不到东西了"）
+        self.desc_label.setStyleSheet(
+            label_qss(desc_color or T.DIM, 12, bool(desc_color)))
         mid.addWidget(self.title_label)
         mid.addWidget(self.desc_label)
         lay.addLayout(mid, 1)
@@ -485,11 +487,12 @@ class Accordion(QWidget):
         self.item_cards = []
 
         # 规范写法：items 里每项是 (图标, 标题, 说明, 右边控件)
+        # 也可以给第 5 个元素指定说明颜色（红色警告用）
         for it in (items or []):
-            vals = list(it) + [None] * (4 - len(it))
-            ic_name, ti, de, right = vals[0], vals[1], vals[2], vals[3]
+            vals = list(it) + [None] * (5 - len(it))
+            ic_name, ti, de, right, dcolor = vals[0], vals[1], vals[2], vals[3], vals[4]
             card = SubRow(self.body, icon=ic_name, title=ti, desc=de,
-                          right=right, alpha=ia)
+                          right=right, alpha=ia, desc_color=dcolor)
             bv.addWidget(card)
             self.item_cards.append(card)
 

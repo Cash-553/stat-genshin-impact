@@ -279,31 +279,26 @@ def _auto_trim(img, margin=4):
 #  区域框选（全屏半透明遮罩，拖一个框）
 # ============================================================
 class MaterialDialog(QDialog):
-    """材料库编辑：查看 / 搜索 / 添加 / 改名 / 删除。
+    """管理识别名单 —— 决定"认得出什么"。
 
-    列表里有三种来源（后面那个小标签）：
-        内置 —— materials_db.INITIAL_MATERIALS 里的
-        自动 —— 识别到新材料后自动登记进来的
-        记录 —— **只出现在收益记录里、没进材料库**的名字
+    名单存在 ``data/names.json``（第一次运行时从 ``generated_names.py`` 拷一份），
+    所以能改、能恢复默认。
 
-    ⚠ 为什么要有「记录」这一类：
-      识别结果记账和「登记进材料库」是两条路 —— 记账走记录文件，
-      登记走 materials.json。所以有些名字（尤其是 OCR 认错的）
-      会只出现在记录里，光看材料库根本找不到。
-      用户反馈过「明明登记了一堆错名字，编辑器里却找不到」，就是这原因。
+    ⚠ 名单里的名字才会被统计。**全删光了就什么都识别不到** ——
+      所以上面有红字警告、右下角有「恢复默认名单」。
 
     改名：双击列表里那一行直接改。
     """
 
     def __init__(self, parent, alpha=150):
         super().__init__(parent)
-        self.setWindowTitle("材料库")
-        self.setMinimumSize(640, 680)
+        self.setWindowTitle("管理识别名单")
+        self.setMinimumSize(680, 700)
         self.alpha = alpha
 
-        import materials_db
-        self.db = materials_db
-        self._names = []            # 当前列表里显示的名字
+        import names_db
+        self.db = names_db
+        self._names = []
 
         # 对话框自己有背景，不然会跟着系统主题走 ——
         # 浅色系统下会变成白底黑字，跟整个应用完全不搭（应用没有全局调色板）
@@ -326,46 +321,44 @@ class MaterialDialog(QDialog):
 
         root = QVBoxLayout(self)
         root.setContentsMargins(18, 14, 18, 16)
-        root.setSpacing(10)
+        root.setSpacing(9)
+
+        # 红字警告
+        warn = QLabel("⚠ 只有名单里的名字才会被统计。"
+                      "全删光了就什么都识别不到（点右下角「恢复默认名单」可以还原）")
+        warn.setWordWrap(True)
+        warn.setStyleSheet(label_qss("#E06C5A", 12, True))
+        root.addWidget(warn)
 
         self.tip = QLabel("")
-        self.tip.setStyleSheet(label_qss(DIM, 13))
+        self.tip.setStyleSheet(label_qss(DIM, 12))
         root.addWidget(self.tip)
 
-        # ---- 搜索 + 只看自动 ----
+        # ---- 搜索 + 筛选 ----
         bar = QHBoxLayout()
         bar.setSpacing(8)
         self.search = QLineEdit()
-        self.search.setPlaceholderText("搜索材料名…")
+        self.search.setPlaceholderText("搜索名字…")
         self.search.setFixedHeight(30)
         self.search.textChanged.connect(self._rebuild)
         bar.addWidget(self.search, 1)
 
-        self.only_auto = QCheckBox("只看非内置")
-        self.only_auto.setToolTip("隐藏内置的那 84 个，只看自动登记的和记录里的")
-        self.only_auto.toggled.connect(self._rebuild)
-        bar.addWidget(self.only_auto)
+        self.only_extra = QCheckBox("只看自己加的")
+        self.only_extra.setToolTip("隐藏内置默认名单里的那些，只看你增删过的")
+        self.only_extra.toggled.connect(self._rebuild)
+        bar.addWidget(self.only_extra)
 
-        # 「记录里出现过的名字」默认也列出来 —— 用户就是找不到这些才提的反馈
-        self.show_records = QCheckBox("含记录里的名字")
-        self.show_records.setChecked(True)
-        self.show_records.toggled.connect(self._rebuild)
-        bar.addWidget(self.show_records)
-
-        # 官方名字白名单（generated_names.py）里没有的 → 多半是 OCR 读错
-        self.only_sus = QCheckBox("只看疑似错名")
-        self.only_sus.setToolTip("列出不在官方材料名单里的名字（多半是识别读错的）")
-        self.only_sus.toggled.connect(self._rebuild)
-        bar.addWidget(self.only_sus)
+        self.only_used = QCheckBox("只看记录里出现过的")
+        self.only_used.setToolTip("只看收益记录里真的识别到过的名字（找漏记用）")
+        self.only_used.toggled.connect(self._rebuild)
+        bar.addWidget(self.only_used)
         root.addLayout(bar)
 
         # ---- 列表 ----
         self.list = QListWidget()
         self.list.setAlternatingRowColors(False)
-        # ⚠ 这里**不能**写 `QListWidget::item { color: ... }` ——
-        #   样式表里的 color 会盖掉 QListWidgetItem.setForeground()，
-        #   那样按类型上色（疑似红 / 记录灰 / 自动蓝）就全失效了。
-        #   默认颜色改用调色板，逐行的颜色在 _rebuild 里 setForeground。
+        # ⚠ 样式表里**不能**写 `QListWidget::item { color: ... }`，
+        #   那样会盖掉 QListWidgetItem.setForeground()，按类型上色全失效。
         pal = self.list.palette()
         pal.setColor(pal.ColorRole.Text, QColor(TEXT))
         self.list.setPalette(pal)
@@ -391,7 +384,7 @@ class MaterialDialog(QDialog):
         add = QHBoxLayout()
         add.setSpacing(8)
         self.new_edit = QLineEdit()
-        self.new_edit.setPlaceholderText("输入新材料名，回车添加…")
+        self.new_edit.setPlaceholderText("输入新名字，回车添加（材料进材料名单，其余进圣遗物名单）…")
         self.new_edit.setFixedHeight(30)
         self.new_edit.returnPressed.connect(self._on_add)
         add.addWidget(self.new_edit, 1)
@@ -409,9 +402,7 @@ class MaterialDialog(QDialog):
         for text, kind, cb in (
                 ("全选", "normal", lambda: self._check_all(True)),
                 ("全不选", "normal", lambda: self._check_all(False)),
-                ("加入材料库", "accent", self._on_adopt),
-                ("删除选中", "danger", self._on_delete),
-                ("恢复默认", "danger", self._on_reset)):
+                ("删除选中", "danger", self._on_delete)):
             b = QPushButton(text)
             b.setFixedHeight(32)
             b.setCursor(Qt.PointingHandCursor)
@@ -419,6 +410,12 @@ class MaterialDialog(QDialog):
             b.clicked.connect(cb)
             bottom.addWidget(b)
         bottom.addStretch(1)
+        rst = QPushButton("恢复默认名单")
+        rst.setFixedHeight(32)
+        rst.setCursor(Qt.PointingHandCursor)
+        rst.setStyleSheet(btn_qss("danger", self.alpha))
+        rst.clicked.connect(self._on_reset)
+        bottom.addWidget(rst)
         close = QPushButton("关闭")
         close.setFixedSize(84, 32)
         close.setCursor(Qt.PointingHandCursor)
@@ -429,144 +426,85 @@ class MaterialDialog(QDialog):
 
         self._rebuild()
 
-    # ---------- 列表 ----------
+    # ---------- 数据 ----------
 
-    def _all(self):
+    def _data(self):
         try:
-            return [m for m in self.db.load_materials() if m.get("name")]
+            return self.db.load()
         except Exception:
-            return []
+            return {"materials": [], "artifacts": []}
 
-    def _record_names(self):
-        """收益记录里出现过的材料名 -> 出现总次数"""
-        out = {}
-        if not self.show_records.isChecked():
-            return out
-        try:
-            import sessions
-            for r in sessions.load_sessions():
-                for k, v in (r.get("materials", {}) or {}).items():
-                    out[str(k)] = out.get(str(k), 0) + int(v or 0)
-        except Exception:
-            pass
-        return out
-
-    @staticmethod
-    def _whitelist():
-        """官方名字白名单（材料 + 圣遗物）。
-
-        不在这个名单里的名字，多半是 OCR 读错的 ——
-        比如「编编花蜜」（错）vs「骗骗花蜜」（对）、「牢固的箭镞」vs「牢固的箭簇」。
-        """
+    def _builtin(self):
+        """内置默认名单（判断某个名字是不是"自己加的"）"""
         try:
             import generated_names as g
             return set(g.MATERIAL_NAMES) | set(g.ARTIFACT_NAMES)
         except Exception:
             return set()
 
+    def _used(self):
+        """收益记录里真的识别到过的名字 -> 次数"""
+        try:
+            import sessions
+            out = {}
+            for r in sessions.load_sessions():
+                for k, v in (r.get("materials", {}) or {}).items():
+                    out[str(k)] = out.get(str(k), 0) + int(v or 0)
+            return out
+        except Exception:
+            return {}
+
+    # ---------- 列表 ----------
+
     def _rebuild(self):
         kw = self.search.text().strip()
-        only_auto = self.only_auto.isChecked()
-        only_sus = self.only_sus.isChecked()
-        WL = self._whitelist()
-        lib = self._all()
-        lib_names = {str(m["name"]) for m in lib}
-        recs = self._record_names()
+        d = self._data()
+        builtin = self._builtin()
+        used = self._used() if self.only_used.isChecked() else {}
 
-        # 行 = (名字, 标签, 是不是"只在记录里")
+        # 行 = (名字, 类别, 是不是自己加的, 有没有在记录里出现过)
         rows = []
-        n_auto = 0
-        for m in lib:
-            name = str(m["name"])
-            auto = not self.db.is_builtin(name)
-            if auto:
-                n_auto += 1
-            tag = "自动" if auto else "内置"
-            if WL and name not in WL:
-                tag += "　疑似"
-            rows.append((name, tag, False))
-        n_rec_only = 0
-        for name, n in sorted(recs.items(), key=lambda kv: -kv[1]):
-            if name not in lib_names:
-                tag = f"记录 x{n}"
-                if WL and name not in WL:
-                    tag += "　疑似"
-                rows.append((name, tag, True))
-                n_rec_only += 1
+        for n in d["materials"]:
+            rows.append((n, "材料", n not in builtin, used.get(n, 0)))
+        for n in d["artifacts"]:
+            rows.append((n, "圣遗物", n not in builtin, used.get(n, 0)))
 
         self.list.blockSignals(True)
         self.list.clear()
         self._names = []
-        n_sus = 0
-        for name, tag, rec_only in rows:
-            if only_auto and tag.startswith("内置"):
+        n_extra = 0
+        for name, kind, extra, cnt in rows:
+            if extra:
+                n_extra += 1
+            if self.only_extra.isChecked() and not extra:
                 continue
-            suspect = "疑似" in tag
-            if only_sus and not suspect:
+            if self.only_used.isChecked() and not cnt:
                 continue
             if kw and kw not in name:
                 continue
-            if suspect:
-                n_sus += 1
+            tag = kind + ("　自加" if extra else "")
+            if cnt:
+                tag += f"　记录×{cnt}"
             it = QListWidgetItem(f"{name}　　{tag}")
-            # 只在记录里的不给改名（改材料库改不动它）
-            flags = it.flags() | Qt.ItemIsUserCheckable
-            if not rec_only:
-                flags |= Qt.ItemIsEditable
-            it.setFlags(flags)
+            it.setFlags(it.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsEditable)
             it.setCheckState(Qt.Unchecked)
-            it.setData(Qt.UserRole, name)
-            it.setData(Qt.UserRole + 1, rec_only)
-            if suspect:
-                it.setForeground(QColor("#E06C5A"))     # 红：疑似错名
-            elif rec_only:
-                it.setForeground(QColor(DIM))           # 灰：只在记录里
-            elif tag.startswith("自动"):
-                it.setForeground(QColor(ACCENT))        # 蓝：自动登记
+            it.setData(Qt.UserRole, name)          # 原始名字（改名时对比）
+            it.setData(Qt.UserRole + 1, kind)      # 材料 / 圣遗物
+            if extra:
+                it.setForeground(QColor(ACCENT))   # 蓝：自己加的
+            elif cnt:
+                it.setForeground(QColor(TEXT))
             else:
-                it.setForeground(QColor(TEXT))          # 白：内置
+                it.setForeground(QColor(DIM))      # 灰：内置且没用到过
             self.list.addItem(it)
             self._names.append(name)
         self.list.blockSignals(False)
 
-        builtin = len(self.db.INITIAL_MATERIALS)
         self.tip.setText(
-            f"材料库 {len(lib)} 个（内置 {builtin}　自动登记 {n_auto}）"
-            f"　记录里另有 {n_rec_only} 个不在库里的"
-            f"　·　疑似错名 {n_sus} 个（红色，不在官方名单里）")
-        self._sync_title()
-
-    def _sync_title(self):
-        self.setWindowTitle(f"材料库　共 {len(self._all())} 个")
-
-    def _checked_rows(self):
-        """勾选的行 -> [(名字, 是不是只在记录里)]"""
-        out = []
-        for i in range(self.list.count()):
-            it = self.list.item(i)
-            if it.checkState() == Qt.Checked:
-                out.append((str(it.data(Qt.UserRole)),
-                            bool(it.data(Qt.UserRole + 1))))
-        return out
-
-    def _on_adopt(self):
-        """把「只在记录里」的名字加进材料库（下次识别就能按它归类）"""
-        rows = self._checked_rows()
-        if not rows:
-            QMessageBox.information(self, "提示", "先勾选要加入的名字。")
-            return
-        mats = self._all()
-        have = {str(m["name"]) for m in mats}
-        add = [n for n, _ in rows if n not in have]
-        if not add:
-            QMessageBox.information(self, "提示", "勾选的都已经在材料库里了。")
-            return
-        for n in add:
-            mats.append({"name": n, "icon": n + ".png"})
-        self.db.save_materials(mats)
-        self._rebuild()
-        QMessageBox.information(self, "已加入",
-                                f"已把 {len(add)} 个名字加进材料库。")
+            f"材料 {len(d['materials'])} 个　圣遗物 {len(d['artifacts'])} 个"
+            f"　其中自己加的 {n_extra} 个"
+            f"　·　双击可改名；没识别到过的名字显示为灰色")
+        self.setWindowTitle(f"管理识别名单　共 {len(rows)} 个")
 
     def _check_all(self, on):
         self.list.blockSignals(True)
@@ -574,79 +512,85 @@ class MaterialDialog(QDialog):
             self.list.item(i).setCheckState(Qt.Checked if on else Qt.Unchecked)
         self.list.blockSignals(False)
 
+    def _checked(self):
+        out = []
+        for i in range(self.list.count()):
+            it = self.list.item(i)
+            if it.checkState() == Qt.Checked:
+                out.append((str(it.data(Qt.UserRole)),
+                            str(it.data(Qt.UserRole + 1))))
+        return out
+
     # ---------- 增删改 ----------
 
     def _on_item_changed(self, item):
-        """改名：双击编辑完会走这里（勾选框变化也会走，但名字没变就跳过）"""
-        if item.data(Qt.UserRole + 1):       # 「记录」那类不给改名
-            return
+        """改名：双击编辑完走这里（勾选框变化也走，但名字没变就跳过）"""
         old = str(item.data(Qt.UserRole))
+        kind = str(item.data(Qt.UserRole + 1))
         new = item.text().strip()
-        # 显示文字里带了「　　内置 / 　　自动 / 　　记录 xN」后缀，取前面那一段
         if "　　" in new:
-            new = new.split("　　")[0]
-        new = new.strip()
+            new = new.split("　　")[0].strip()
         if not new or new == old:
             return
-        mats = self._all()
-        if any(str(m["name"]) == new for m in mats):
-            QMessageBox.warning(self, "重名", f"材料库里已经有「{new}」了。")
+        d = self._data()
+        bucket = "materials" if kind == "材料" else "artifacts"
+        if new in d["materials"] or new in d["artifacts"]:
+            QMessageBox.warning(self, "重名", f"名单里已经有「{new}」了。")
             self._rebuild()
             return
-        for m in mats:
-            if str(m["name"]) == old:
-                m["name"] = new
-                m["icon"] = new + ".png"
-                break
-        self.db.save_materials(mats)
+        try:
+            d[bucket][d[bucket].index(old)] = new
+            self.db.save(d)
+        except ValueError:
+            pass
         self._rebuild()
 
     def _on_add(self):
         name = self.new_edit.text().strip()
         if not name:
             return
-        mats = self._all()
-        if any(str(m["name"]) == name for m in mats):
-            QMessageBox.warning(self, "已存在", f"材料库里已经有「{name}」了。")
+        d = self._data()
+        if name in d["materials"] or name in d["artifacts"]:
+            QMessageBox.warning(self, "已存在", f"名单里已经有「{name}」了。")
             return
-        mats.append({"name": name, "icon": name + ".png"})
-        self.db.save_materials(mats)
+        # 判断该进哪一份：能当成圣遗物的进圣遗物，其余的进材料
+        try:
+            import detector
+            is_art = detector.Detector._is_artifact_name(
+                detector.Detector.__new__(detector.Detector), name)
+        except Exception:
+            is_art = False
+        d["artifacts" if is_art else "materials"].append(name)
+        self.db.save(d)
         self.new_edit.clear()
         self._rebuild()
         self.list.scrollToBottom()
 
     def _on_delete(self):
-        rows = [n for n, rec_only in self._checked_rows() if not rec_only]
-        only_rec = [n for n, rec_only in self._checked_rows() if rec_only]
+        rows = self._checked()
         if not rows:
-            if only_rec:
-                QMessageBox.information(
-                    self, "提示",
-                    f"勾选的 {len(only_rec)} 个都只在记录里，不在材料库里，"
-                    f"没有可删的。\n\n（记录里的名字删不掉，它已经记在台账上了）")
-            else:
-                QMessageBox.information(self, "提示", "先勾选要删除的材料。")
+            QMessageBox.information(self, "提示", "先勾选要删除的名字。")
             return
-        if QMessageBox.question(
-                self, "确认删除",
-                f"要从材料库里删除这 {len(rows)} 个吗？\n\n"
-                "删掉之后，识别到同名材料会当成新材料（开着自动登记就会再加回来）。"
-                + (f"\n\n另外勾选的 {len(only_rec)} 个只在记录里，会跳过。"
-                   if only_rec else "")
-        ) != QMessageBox.Yes:
+        d = self._data()
+        left = len(d["materials"]) + len(d["artifacts"]) - len(rows)
+        msg = (f"要从名单里删除这 {len(rows)} 个名字吗？\n\n"
+               f"删掉之后识别到它们就**不会记账**了")
+        if left <= 0:
+            msg = ("⚠ 这样会把名单删空，之后**什么都不会被统计**！\n\n"
+                   "确定要删吗？（关掉这个窗口后可以点「恢复默认名单」还原）")
+        if QMessageBox.question(self, "确认删除", msg) != QMessageBox.Yes:
             return
-        names = set(rows)
-        mats = [m for m in self._all() if str(m["name"]) not in names]
-        self.db.save_materials(mats)
+        drop = {n for n, _ in rows}
+        d["materials"] = [n for n in d["materials"] if n not in drop]
+        d["artifacts"] = [n for n in d["artifacts"] if n not in drop]
+        self.db.save(d)
         self._rebuild()
 
     def _on_reset(self):
-        n = len(self._all())
         if QMessageBox.question(
-                self, "恢复默认材料库",
-                f"会清掉后加进去的材料名，只留内置的 "
-                f"{len(self.db.INITIAL_MATERIALS)} 个。\n\n"
-                f"当前一共 {n} 个。确定吗？") != QMessageBox.Yes:
+                self, "恢复默认名单",
+                "会把识别名单还原成内置的那份。\n\n"
+                "你自己加过或删过的名字都会没掉。确定吗？") != QMessageBox.Yes:
             return
         self.db.reset_to_default()
         self._rebuild()
