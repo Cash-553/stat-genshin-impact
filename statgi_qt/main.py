@@ -73,6 +73,24 @@ def main():
 
     from qt_window import MainWindow
 
+    # 一次性重置材料库。
+    #
+    # 老版本开着「自动登记新材料」，OCR 认错的名字也被记进材料库了，
+    # 攒了一堆错的。materials_db.LIB_VERSION 加一，所有老用户下次启动
+    # 自动清一次，只留内置那份材料名单。
+    #
+    # ⚠ 必须放在建窗口之前 —— Detector 一建实例就会 load_materials()
+    #   把名字读进内存，先清完再读，否则这一轮用的还是旧库。
+    try:
+        import config_manager
+        import materials_db
+        _s = config_manager.load_settings()
+        if materials_db.migrate_library(_s):
+            config_manager.save_settings(_s)
+            print("[材料库] 已按新版本重置为内置列表")
+    except Exception:
+        pass
+
     # 清一下上次自动更新留下的临时文件（下载分卷 / 新版本解压出来的东西 /
     # 备份目录 / 更新.bat）。更新脚本是先启动本程序、再自己退出的，
     # 所以到这里它已经干完活了，删掉是安全的。

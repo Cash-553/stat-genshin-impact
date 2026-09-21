@@ -40,6 +40,7 @@ DEFAULT_SETTINGS = {
     "enable_material": True,         # 识别怪物素材
     "enable_artifact": True,         # 识别圣遗物（狗粮）
     "auto_register_material": True,  # 遇到不认识的材料自动登记到材料库
+    "materials_lib_version": 0,      # 材料库版本：低于 materials_db.LIB_VERSION 就重置一次
     "only_foreground": True,       # 只在原神窗口在前台时识别（切到其他应用停止识别）
     # 开发者选项（默认隐藏，不采集，不影响普通用户）
     "developer_mode": False,       # 开发者模式（开启后显示开发者选项）
