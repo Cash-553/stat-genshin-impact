@@ -1,23 +1,23 @@
 {
-  "version": "0.9",
+  "version": "0.9.1",
   "notes": "新增「识别名单」设置项；不在名单中的名称不再计入统计，减少误记；\n修复启动时公告卡片引发的崩溃与部分界面图标缺失的问题。",
   "url_github": "https://github.com/Cash-553/stat-genshin-impact/releases",
   "url_gitee": "https://gitee.com/Cash553/stat-genshin-impact/releases",
   "update": {
-    "size": 123526660,
-    "sha256": "444858aef94782ac1a1c79a762b6b7b6dadb6290c02d1236c0df86f15cf745b9",
+    "size": 123548647,
+    "sha256": "7ed712bf94897b5205cc436af1b983ce6b4d8ce7f141b3b36ebf05a5d852ceef",
     "sources": [
       {
         "label": "Gitee（国内快）",
         "parts": [
-          "https://gitee.com/Cash553/stat-genshin-impact/releases/download/v0.9/StatGI_v0.9.part1",
-          "https://gitee.com/Cash553/stat-genshin-impact/releases/download/v0.9/StatGI_v0.9.part2"
+          "https://gitee.com/Cash553/stat-genshin-impact/releases/download/v0.9.1/StatGI_v0.9.1.part1",
+          "https://gitee.com/Cash553/stat-genshin-impact/releases/download/v0.9.1/StatGI_v0.9.1.part2"
         ]
       },
       {
         "label": "GitHub",
         "parts": [
-          "https://github.com/Cash-553/stat-genshin-impact/releases/download/v0.9/StatGI_v0.9.zip"
+          "https://github.com/Cash-553/stat-genshin-impact/releases/download/v0.9.1/StatGI_v0.9.1.zip"
         ]
       }
     ]
