@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (QWidget, QFrame, QLabel, QPushButton, QVBoxLayout
 
 import config_manager
 import paths
-from qt_pages import NOTICE_PAGE_INDEX
+from qt_pages import NOTICE_PAGE_INDEX, VERSION as _VERSION
 from qt_theme import (HEADER, RADIUS_WINDOW, panel_alpha, label_qss, rgba,
                       btn_qss)
 import qt_theme as T
@@ -234,7 +234,8 @@ class Sidebar(QFrame):
         self.notice_dot.hide()
 
         # 左下角版本号。检测到新版本时会变成「检测到新版本」并闪红光
-        self.ver_label = QLabel("V0.9")
+        # 从 qt_pages.VERSION 取，别写死 —— 以前写死 V0.9，改版本号会漏掉这里
+        self.ver_label = QLabel("V" + _VERSION)
         self.ver_label.setStyleSheet(label_qss(T.DIM, 12))
         self.ver_label.setAlignment(Qt.AlignCenter)
         self.ver_label.setCursor(Qt.PointingHandCursor)
@@ -270,7 +271,7 @@ class Sidebar(QFrame):
             self._upd_timer.start()
         else:
             self._upd_timer.stop()
-            self.ver_label.setText("V0.9")
+            self.ver_label.setText("V" + _VERSION)
             self.ver_label.setStyleSheet(label_qss(T.DIM, 12))
             self.ver_label.setToolTip("")
 

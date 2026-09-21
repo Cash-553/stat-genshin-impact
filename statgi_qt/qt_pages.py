@@ -29,7 +29,7 @@ from qt_widgets import (Card, SettingRow, Switch, Accordion, heading,
                         IconButton, msg_info, RedDot)
 from qt_icon import IconWidget, attach_hover
 
-VERSION = "0.9"
+VERSION = "0.9.1"
 
 # 颜色下拉框里那一项「自定义颜色…」（选了会开取色器）
 CUSTOM_COLOR = "自定义颜色…"
