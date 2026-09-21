@@ -931,6 +931,15 @@ class PageSettings(BasePage):
         return d
 
     def _on_tab(self, idx):
+        # 离开「开发」页时，把「模拟检测到新版本」自动关掉。
+        # 那是个纯预览用的开关，忘了关的话侧栏会一直闪红光，很烦。
+        prev_name = self.TABS[self.tabs.currentIndex()] if self.tabs.count() else ""
+        new_name = self.TABS[idx] if 0 <= idx < len(self.TABS) else ""
+        if prev_name == "开发" and new_name != "开发":
+            sw = getattr(self, "sim_update", None)
+            if sw is not None and sw.isChecked():
+                sw.setChecked(False)          # 会触发 toggled → 关掉提示
+
         self.tabs.setCurrentIndex(idx)
         for i, b in enumerate(self._tab_btns):
             on = (i == idx)
@@ -1208,7 +1217,7 @@ class PageSettings(BasePage):
         warn.setStyleSheet(label_qss("#E06C5A", 12, True))
         self.mat_acc = Accordion(
             self._inner[tb], "clipboard-list", "识别名单",
-            "认得出什么由这份名单决定；不在名单里的不记账（只写进识别日志）",
+            "不要乱改！！！",
             items=self._make_mat_items(), alpha=self.alpha, footer=warn)
         self._lay[tb].insertWidget(self._lay[tb].count() - 1, self.mat_acc)
         self._refresh_mat_count()
@@ -1278,7 +1287,10 @@ class PageSettings(BasePage):
         ul.setContentsMargins(0, 0, 0, 0)
         ul.setSpacing(8)
         self.update_btn = QPushButton("检测更新")
-        self.update_btn.setFixedSize(130, 32)
+        # 用最小宽度而不是固定 130 —— 固定宽度会让按钮比文字宽一大截，
+        # 挂在它右上角的红点看着就像挂在卡片上了
+        self.update_btn.setMinimumWidth(108)
+        self.update_btn.setFixedHeight(32)
         self.update_btn.setCursor(Qt.PointingHandCursor)
         self.update_btn.setStyleSheet(btn_qss("normal", self.alpha))
         set_btn_icon(self.update_btn, "search", 15)
@@ -1289,8 +1301,9 @@ class PageSettings(BasePage):
         ul.addWidget(self.update_status)
         self.update_row = self._row(tb, "refresh-cw", "版本更新",
                                     f"当前版本 v{VERSION}，检测需联网", upd_row)
-        # 检测到新版本时，这一行右上角也挂个红点
-        self.update_dot = RedDot(self.update_row)
+        # 检测到新版本时挂个红点 —— 挂在**「检测更新」按钮**的右上角，
+        # 不是整张卡片的右上角（挂卡片上离按钮太远，指不准是哪个）
+        self.update_dot = RedDot(self.update_btn)
 
     # ================= 开发 =================
     def _build_dev(self, s):
@@ -1329,15 +1342,16 @@ class PageSettings(BasePage):
         self.name_count_label = QLabel("")
         self.name_count_label.hide()
         edit_btn = small_button("管理…", self._open_material_editor, self.alpha,
-                                icon="clipboard-list", width=84)
+                                icon="clipboard-list", width=84, height=30)
         items.append(("clipboard-list", "管理识别名单",
                       "查看、增删名单里的名字", edit_btn))
 
         # 2) 恢复默认名单
         reset_btn = small_button("恢复默认", self._reset_names, self.alpha,
-                                 kind="danger", icon="refresh-cw", width=96)
+                                 kind="danger", icon="refresh-cw", width=104,
+                                 height=30)
         items.append(("refresh-cw", "恢复默认名单",
-                      "改乱了可以一键还原成内置名单", reset_btn))
+                      "恢复成内置名单", reset_btn))
 
         # 3) 识别日志开关
         self.log_switch = Switch(self._inner["统计"],
@@ -1345,14 +1359,14 @@ class PageSettings(BasePage):
         self.log_switch.toggled.connect(
             lambda v: self.state.set_setting("log_detections", bool(v)))
         items.append(("file-text", "记录识别日志",
-                      "每统计一笔都记下来，包含原始识别文字，方便查错",
+                      "将每次统计结果写入日志文件，包含识别到的原始文字",
                       self.log_switch))
 
         # 4) 打开日志
         open_log = small_button("打开日志", self._open_detect_log, self.alpha,
-                                icon="file-text", width=96)
+                                icon="file-text", width=104, height=30)
         items.append(("file-text", "识别日志",
-                      "每笔统计的时间、名字、数量和原始文字", open_log))
+                      "按时间记录每次统计的明细，可用于排查误判", open_log))
 
         return items
 
@@ -1410,7 +1424,7 @@ class PageSettings(BasePage):
         if acc is not None:
             for c in acc.item_cards:
                 if c.title_label.text() == "管理识别名单":
-                    c.desc_label.setText(txt + "　点右边可以增删")
+                    c.desc_label.setText(txt)
 
     def _open_material_editor(self):
         from qt_dialogs import MaterialDialog

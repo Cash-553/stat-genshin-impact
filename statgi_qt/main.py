@@ -103,6 +103,14 @@ def main():
     win = MainWindow()
     win.show()
 
+    # 识别日志：写一段抬头（时间 + 当前识别名单），这样出了"认不出来"的
+    # 问题时，能先确认当时用的是哪份名单
+    try:
+        import detect_log
+        detect_log.session_start(win.settings)
+    except Exception:
+        pass
+
     # 启动预热：在**后台线程**里把 OCR 模型加载好、空跑一次。
     #
     # 为什么要：ONNX Runtime 第一次推理要先建内存池、做图优化，
@@ -131,7 +139,15 @@ def main():
     from PySide6.QtCore import QTimer
     QTimer.singleShot(1500, win.start_update_check)
 
-    return app.exec()
+    rc = app.exec()
+
+    # 识别日志：记一行关闭
+    try:
+        import detect_log
+        detect_log.session_end(win.settings)
+    except Exception:
+        pass
+    return rc
 
 
 if __name__ == "__main__":

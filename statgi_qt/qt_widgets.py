@@ -138,11 +138,15 @@ def set_btn_icon(button, icon, size=15, role="TEXT", color=None):
 
 def small_button(text, callback=None, alpha=150, kind="normal", icon=None,
                  width=None, height=30):
-    """小按钮（折叠区里的操作用）"""
+    """小按钮（折叠区里的操作用）
+
+    width 是**最小**宽度，不是固定宽度 —— 用 setFixedWidth 的话
+    图标 + 四个汉字就会把最后一个字裁掉（"恢复默认" → "恢复默"）。
+    """
     b = QPushButton(text)
     b.setFixedHeight(height)
     if width:
-        b.setFixedWidth(width)
+        b.setMinimumWidth(width)
     b.setCursor(Qt.PointingHandCursor)
     b.setStyleSheet(btn_qss(kind, alpha))
     set_btn_icon(b, icon, 14)
