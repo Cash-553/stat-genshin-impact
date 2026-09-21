@@ -1211,8 +1211,8 @@ class PageSettings(BasePage):
         # ---- 识别名单 ----
         # 放「统计」里（不放「开发」）—— 这个是日常要用的：
         # 识别到什么材料都按这个名单判定，名字错了或者漏了要能随时改。
-        warn = QLabel("⚠ 名单里的名字才会被统计。全删光了就什么都识别不到，"
-                      "点「恢复默认名单」可以还原。")
+        warn = QLabel("⚠ 名单决定可识别的物品范围。不在名单中的名称不会被统计；"
+                      "若名单被清空，将无法识别任何物品，请用「恢复默认名单」还原。")
         warn.setWordWrap(True)
         warn.setStyleSheet(label_qss("#E06C5A", 12, True))
         self.mat_acc = Accordion(
@@ -1353,41 +1353,7 @@ class PageSettings(BasePage):
         items.append(("refresh-cw", "恢复默认名单",
                       "恢复成内置名单", reset_btn))
 
-        # 3) 识别日志开关
-        self.log_switch = Switch(self._inner["统计"],
-                                 bool(self.state.get_setting("log_detections", True)))
-        self.log_switch.toggled.connect(
-            lambda v: self.state.set_setting("log_detections", bool(v)))
-        items.append(("file-text", "记录识别日志",
-                      "将每次统计结果写入日志文件，包含识别到的原始文字",
-                      self.log_switch))
-
-        # 4) 打开日志
-        open_log = small_button("打开日志", self._open_detect_log, self.alpha,
-                                icon="file-text", width=104, height=30)
-        items.append(("file-text", "识别日志",
-                      "按时间记录每次统计的明细，可用于排查误判", open_log))
-
         return items
-
-    def _open_detect_log(self):
-        """打开识别日志（没有就提示一句）"""
-        import os
-        try:
-            import detect_log
-            p = detect_log.LOG_FILE
-        except Exception:
-            QMessageBox.warning(self, "失败", "找不到日志模块。")
-            return
-        if not p.exists():
-            msg_info(self, "还没有日志",
-                     "还没有记录过。先点「开始监测」跑一会儿，\n"
-                     "统计到东西之后这里就会有日志了。")
-            return
-        try:
-            os.startfile(str(p))                     # noqa  Windows 专用
-        except Exception as e:
-            QMessageBox.warning(self, "打不开", f"打不开日志文件：{e}\n\n位置：\n{p}")
 
     def _reset_names(self):
         """恢复默认识别名单"""

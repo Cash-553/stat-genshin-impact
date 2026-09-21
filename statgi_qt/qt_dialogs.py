@@ -324,8 +324,8 @@ class MaterialDialog(QDialog):
         root.setSpacing(9)
 
         # 红字警告
-        warn = QLabel("⚠ 只有名单里的名字才会被统计。"
-                      "全删光了就什么都识别不到（点右下角「恢复默认名单」可以还原）")
+        warn = QLabel("⚠ 名单决定可识别的物品范围。不在名单中的名称不会被统计；"
+                      "若名单被清空，将无法识别任何物品，请用下方「恢复默认名单」还原。")
         warn.setWordWrap(True)
         warn.setStyleSheet(label_qss("#E06C5A", 12, True))
         root.addWidget(warn)
