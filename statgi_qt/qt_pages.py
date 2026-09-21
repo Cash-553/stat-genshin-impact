@@ -1312,7 +1312,7 @@ class PageSettings(BasePage):
         self.dev_enabled = Switch(self._inner[tb], bool(s.get("developer_mode", False)))
         self.dev_enabled.toggled.connect(self._on_developer_mode)
         self._row(tb, "wrench", "开发者模式",
-                  "开启后显示下方样本采集与材料库工具", self.dev_enabled)
+                  "开启后显示下方的维护工具", self.dev_enabled)
 
         # ---- 开发者选项：折叠卡片，每一项一张子卡片 ----
         self.dev_acc = Accordion(self._inner[tb], "flask-conical", "开发者选项",
