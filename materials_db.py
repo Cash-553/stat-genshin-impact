@@ -97,3 +97,39 @@ def save_materials(mats):
         json.dumps({"materials": mats}, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+
+
+def reset_to_default():
+    """恢复成内置材料列表（把自动登记进去的那些错名字清掉）"""
+    try:
+        MATERIALS_FILE.unlink()
+    except FileNotFoundError:
+        pass
+    return create_default()
+
+
+def is_builtin(name):
+    """这个名字是不是内置的（不是自动登记进来的）"""
+    return str(name) in set(INITIAL_MATERIALS)
+
+
+# 材料库的"版本"。改动这个数字会让所有用户**下次启动时重置一次**材料库。
+#
+# 为什么要有这个：老版本开了「自动登记新材料」，OCR 认错的名字也被记进去了，
+# 攒了一堆错词。清一次比让用户自己一个个删省事。
+#
+# 0 -> 1：清掉自动登记的名字，只留内置那份（INITIAL_MATERIALS，84 个）
+LIB_VERSION = 1
+
+
+def migrate_library(settings):
+    """按需重置材料库（一次性）。
+
+    返回 True 表示这次动过——调用方要把 settings 存回去。
+    """
+    cur = int(settings.get("materials_lib_version", 0) or 0)
+    if cur >= LIB_VERSION:
+        return False
+    reset_to_default()
+    settings["materials_lib_version"] = LIB_VERSION
+    return True

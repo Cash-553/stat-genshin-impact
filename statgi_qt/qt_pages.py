@@ -848,7 +848,7 @@ class PageSettings(BasePage):
     title = "设置"
     update_checked = Signal(object, object)      # 检测更新结果（从后台线程发回来）
 
-    TABS = ["外观", "识别", "行为", "统计", "直播", "其它"]
+    TABS = ["外观", "识别", "行为", "统计", "直播", "升级", "开发"]
 
     def __init__(self, win):
         super().__init__(win)
@@ -862,7 +862,7 @@ class PageSettings(BasePage):
         bl.setContentsMargins(0, 0, 0, 6)
         bl.setSpacing(6)
         self._tab_btns = []
-        self._tab_dots = {}          # 标签名 -> 小红点（检测到新版本时挂在「其它」上）
+        self._tab_dots = {}          # 标签名 -> 小红点（检测到新版本时挂在「升级」上）
         for i, name in enumerate(self.TABS):
             b = QPushButton(name)
             b.setFixedHeight(34)
@@ -905,7 +905,8 @@ class PageSettings(BasePage):
         self._build_behavior(s)
         self._build_stats(s)
         self._build_live(s)
-        self._build_other(s)
+        self._build_upgrade(s)
+        self._build_dev(s)
 
         self._on_tab(0)
 
@@ -1198,13 +1199,6 @@ class PageSettings(BasePage):
                                 items=ro_items, alpha=self.alpha)
         self._lay[tb].insertWidget(self._lay[tb].count() - 1, self.ro_acc)
 
-        # 「自动登记新材料」放在这里（从「识别」挪过来的）
-        self.auto_reg = Switch(self._inner[tb], bool(s.get("auto_register_material", True)))
-        self.auto_reg.toggled.connect(
-            lambda v: self.state.set_setting("auto_register_material", bool(v)))
-        self._row(tb, "plus", "自动登记新材料",
-                  "识别到材料库中不存在的名称时自动登记", self.auto_reg)
-
     # ================= 直播 =================
     def _build_live(self, s):
         tb = "直播"
@@ -1246,9 +1240,9 @@ class PageSettings(BasePage):
     def _bar_url(port):
         return f"http://127.0.0.1:{int(port)}/bar"
 
-    # ================= 其它 =================
-    def _build_other(self, s):
-        tb = "其它"
+    # ================= 升级 =================
+    def _build_upgrade(self, s):
+        tb = "升级"
 
         # ---- 更新渠道 ----
         # 国内用 Gitee 快；GitHub 的 API 有每小时 60 次的限流，
@@ -1284,10 +1278,14 @@ class PageSettings(BasePage):
         # 检测到新版本时，这一行右上角也挂个红点
         self.update_dot = RedDot(self.update_row)
 
+    # ================= 开发 =================
+    def _build_dev(self, s):
+        tb = "开发"
+
         self.dev_enabled = Switch(self._inner[tb], bool(s.get("developer_mode", False)))
         self.dev_enabled.toggled.connect(self._on_developer_mode)
         self._row(tb, "wrench", "开发者模式",
-                  "开启后显示下方样本采集工具", self.dev_enabled)
+                  "开启后显示下方样本采集与材料库工具", self.dev_enabled)
 
         # ---- 开发者选项：折叠卡片，每一项一张子卡片 ----
         self.dev_acc = Accordion(self._inner[tb], "flask-conical", "开发者选项",
@@ -1296,6 +1294,14 @@ class PageSettings(BasePage):
                                  items=self._make_dev_items(), alpha=self.alpha)
         self._lay[tb].insertWidget(self._lay[tb].count() - 1, self.dev_acc)
         self.dev_acc.setVisible(bool(s.get("developer_mode", False)))
+
+        # ---- 材料库 ----
+        self.mat_acc = Accordion(
+            self._inner[tb], "database", "材料库",
+            "识别到的材料名单；不在库里的名字会当成新材料",
+            items=self._make_mat_items(), alpha=self.alpha)
+        self._lay[tb].insertWidget(self._lay[tb].count() - 1, self.mat_acc)
+        self.mat_acc.setVisible(bool(s.get("developer_mode", False)))
 
         # 折叠卡片里的「保存目录」和「已采集样本」两行要动态更新，
         # 建完之后按标题把卡片找出来存好
@@ -1307,6 +1313,76 @@ class PageSettings(BasePage):
                 self.dev_stats_card = c
         self._set_dev_path(self.state.get_setting("dataset_path", ""))
         self._refresh_dev_stats()
+        self._refresh_mat_count()
+
+    # ---------- 材料库 ----------
+    def _make_mat_items(self):
+        """材料库那一组子卡片"""
+        items = []
+
+        # 1) 自动登记新材料（从「统计」搬过来的）
+        self.auto_reg = Switch(self._inner["开发"],
+                               bool(self.state.get_setting("auto_register_material", True)))
+        self.auto_reg.toggled.connect(
+            lambda v: self.state.set_setting("auto_register_material", bool(v)))
+        items.append(("plus", "自动登记新材料",
+                      "识别到材料库里没有的名字时，自动加进去", self.auto_reg))
+
+        # 2) 编辑材料库
+        self.mat_count_label = QLabel("")
+        self.mat_count_label.hide()
+        edit_btn = small_button("编辑…", self._open_material_editor, self.alpha,
+                                icon="file-text", width=84)
+        items.append(("list", "材料名单", "查看、修改、删除材料名", edit_btn))
+
+        # 3) 恢复默认
+        reset_btn = small_button("恢复默认", self._reset_materials, self.alpha,
+                                 kind="danger", icon="refresh-cw", width=96)
+        items.append(("refresh-cw", "恢复默认材料库",
+                      "只保留内置材料，清掉自动登记的", reset_btn))
+
+        return items
+
+    def _refresh_mat_count(self):
+        try:
+            import materials_db
+            mats = materials_db.load_materials()
+            builtin = len(materials_db.INITIAL_MATERIALS)
+            extra = max(0, len(mats) - builtin)
+            txt = f"共 {len(mats)} 个（内置 {builtin}　自动登记 {extra}）"
+        except Exception:
+            txt = "（读取失败）"
+        self.mat_count_label.setText(txt)
+        acc = getattr(self, "mat_acc", None)
+        if acc is not None:
+            for c in acc.item_cards:
+                if c.title_label.text() == "材料名单":
+                    c.desc_label.setText(txt)
+
+    def _open_material_editor(self):
+        from qt_dialogs import MaterialDialog
+        dlg = MaterialDialog(self.win, self.alpha)
+        dlg.exec()
+        self._refresh_mat_count()
+
+    def _reset_materials(self):
+        import materials_db
+        n = 0
+        try:
+            n = len(materials_db.load_materials())
+        except Exception:
+            pass
+        if QMessageBox.question(
+                self, "恢复默认材料库",
+                f"会清掉后加进去的材料名，只留内置的那 {len(materials_db.INITIAL_MATERIALS)} 个。\n\n"
+                f"当前一共 {n} 个。确定吗？") != QMessageBox.Yes:
+            return
+        try:
+            materials_db.reset_to_default()
+            self._refresh_mat_count()
+            msg_info(self, "已恢复", "材料库已恢复成内置列表。")
+        except Exception as e:
+            QMessageBox.warning(self, "失败", f"恢复失败：{e}")
 
     # ---------- 开发者选项 ----------
     def _make_dev_items(self):
@@ -1318,7 +1394,7 @@ class PageSettings(BasePage):
         # 1) 启用样本采集
         # 注意：DatasetCollector 读的键是 dataset_enabled，
         # 不是 dataset_collect —— 键名写错了这个开关就是空的。
-        self.dev_switch = Switch(self._inner["其它"],
+        self.dev_switch = Switch(self._inner["开发"],
                                  bool(self.state.get_setting("dataset_enabled", False)))
         self.dev_switch.toggled.connect(
             lambda v: self.state.set_setting("dataset_enabled", bool(v)))
@@ -1345,7 +1421,7 @@ class PageSettings(BasePage):
                       "删掉全部已采集的截图，不影响收益数据", clear_btn))
 
         # 5) 预览「检测到新版本」的效果
-        self.sim_update = Switch(self._inner["其它"], False)
+        self.sim_update = Switch(self._inner["开发"], False)
         self.sim_update.toggled.connect(self._on_sim_update)
         items.append(("eye", "模拟检测到新版本",
                       "预览左下角闪烁与设置红点的提示效果", self.sim_update))
@@ -1369,9 +1445,12 @@ class PageSettings(BasePage):
 
     def _on_developer_mode(self, v):
         self.state.set_setting("developer_mode", bool(v))
-        self.dev_acc.setVisible(bool(v))
+        for acc in (getattr(self, "dev_acc", None), getattr(self, "mat_acc", None)):
+            if acc is not None:
+                acc.setVisible(bool(v))
         if v:
             self._refresh_dev_stats()
+            self._refresh_mat_count()
 
     def _refresh_dev_stats(self):
         try:
@@ -1645,8 +1724,8 @@ class PageSettings(BasePage):
     # ---------- 检测到新版本的提示 ----------
 
     def set_update_badge(self, on):
-        """检测到新版本：「其它」标签 + 「版本更新」那一行都挂红点"""
-        dot = self._tab_dots.get("其它")
+        """检测到新版本：「升级」标签 + 「版本更新」那一行都挂红点"""
+        dot = self._tab_dots.get("升级")
         if dot is not None:
             dot.set_on(on)
         dot2 = getattr(self, "update_dot", None)
@@ -1654,12 +1733,12 @@ class PageSettings(BasePage):
             dot2.set_on(on)
 
     def goto_update(self):
-        """跳到「其它」标签，并滚到「版本更新」那一行"""
+        """跳到「升级」标签，并滚到「版本更新」那一行"""
         try:
-            self._on_tab(self.TABS.index("其它"))
+            self._on_tab(self.TABS.index("升级"))
         except Exception:
             return
-        sc = self._scroll.get("其它")
+        sc = self._scroll.get("升级")
         row = getattr(self, "update_row", None)
         if sc is not None and row is not None:
             sc.ensureWidgetVisible(row, 0, 90)

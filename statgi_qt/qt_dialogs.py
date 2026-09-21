@@ -10,11 +10,12 @@ from PySide6.QtCore import Qt, QRect
 from PySide6.QtGui import QGuiApplication, QPainter, QColor, QPen, QPixmap
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
                                QLabel, QPushButton, QFileDialog, QMessageBox,
-                               QWidget, QFrame)
+                               QWidget, QFrame, QListWidget, QListWidgetItem,
+                               QLineEdit, QCheckBox)
 
 import config_manager
 import paths
-from qt_theme import (TEXT, DIM, ACCENT, CARD, panel_alpha, label_qss,
+from qt_theme import (TEXT, DIM, ACCENT, CARD, BG, BORDER, panel_alpha, label_qss,
                       btn_qss)
 from qt_widgets import Card, set_btn_icon
 from qt_icon import IconWidget
@@ -277,6 +278,254 @@ def _auto_trim(img, margin=4):
 # ============================================================
 #  区域框选（全屏半透明遮罩，拖一个框）
 # ============================================================
+class MaterialDialog(QDialog):
+    """材料库编辑：查看 / 搜索 / 添加 / 改名 / 删除。
+
+    内置材料（`materials_db.INITIAL_MATERIALS`）后面标「内置」，
+    自动登记进来的标「自动」—— 带「自动」的多半是 OCR 认错的名字，
+    想清干净就用「只看自动」筛出来批量删，或者直接「恢复默认」。
+
+    改名：双击列表里那一行直接改。
+    """
+
+    def __init__(self, parent, alpha=150):
+        super().__init__(parent)
+        self.setWindowTitle("材料库")
+        self.setMinimumSize(600, 640)
+        self.alpha = alpha
+
+        import materials_db
+        self.db = materials_db
+        self._names = []            # 当前列表里显示的名字
+
+        # 对话框自己有背景，不然会跟着系统主题走 ——
+        # 浅色系统下会变成白底黑字，跟整个应用完全不搭（应用没有全局调色板）
+        self.setStyleSheet(f"""
+            QDialog {{ background: {BG}; }}
+            QLineEdit {{
+                background: rgba(255,255,255,16); color: {TEXT};
+                border: 1px solid {BORDER}; border-radius: 6px;
+                padding: 3px 8px; selection-background-color: {ACCENT};
+            }}
+            QCheckBox {{ color: {DIM}; spacing: 7px; }}
+            QCheckBox::indicator {{
+                width: 14px; height: 14px; border-radius: 3px;
+                border: 1px solid rgba(255,255,255,70); background: transparent;
+            }}
+            QCheckBox::indicator:checked {{
+                background: {ACCENT}; border: 1px solid {ACCENT};
+            }}
+        """)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(18, 14, 18, 16)
+        root.setSpacing(10)
+
+        self.tip = QLabel("")
+        self.tip.setStyleSheet(label_qss(DIM, 13))
+        root.addWidget(self.tip)
+
+        # ---- 搜索 + 只看自动 ----
+        bar = QHBoxLayout()
+        bar.setSpacing(8)
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("搜索材料名…")
+        self.search.setFixedHeight(30)
+        self.search.textChanged.connect(self._rebuild)
+        bar.addWidget(self.search, 1)
+
+        self.only_auto = QCheckBox("只看自动登记")
+        self.only_auto.toggled.connect(self._rebuild)
+        bar.addWidget(self.only_auto)
+        root.addLayout(bar)
+
+        # ---- 列表 ----
+        self.list = QListWidget()
+        self.list.setAlternatingRowColors(False)
+        self.list.setStyleSheet(f"""
+            QListWidget {{
+                background: rgba(0,0,0,90); border: 1px solid {BORDER};
+                border-radius: 8px; padding: 4px; outline: none;
+            }}
+            QListWidget::item {{ padding: 5px 6px; color: {TEXT}; }}
+            QListWidget::item:selected {{ background: {ACCENT}; color: #10161f; }}
+            QListWidget::indicator {{
+                width: 13px; height: 13px; border-radius: 3px;
+                border: 1px solid rgba(255,255,255,70); background: transparent;
+            }}
+            QListWidget::indicator:checked {{
+                background: {ACCENT}; border: 1px solid {ACCENT};
+            }}
+        """)
+        self.list.itemChanged.connect(self._on_item_changed)
+        root.addWidget(self.list, 1)
+
+        # ---- 添加 ----
+        add = QHBoxLayout()
+        add.setSpacing(8)
+        self.new_edit = QLineEdit()
+        self.new_edit.setPlaceholderText("输入新材料名，回车添加…")
+        self.new_edit.setFixedHeight(30)
+        self.new_edit.returnPressed.connect(self._on_add)
+        add.addWidget(self.new_edit, 1)
+        self.add_btn = QPushButton("添加")
+        self.add_btn.setFixedSize(76, 30)
+        self.add_btn.setCursor(Qt.PointingHandCursor)
+        self.add_btn.setStyleSheet(btn_qss("accent", self.alpha))
+        self.add_btn.clicked.connect(self._on_add)
+        add.addWidget(self.add_btn)
+        root.addLayout(add)
+
+        # ---- 底部按钮 ----
+        bottom = QHBoxLayout()
+        bottom.setSpacing(8)
+        for text, kind, cb in (
+                ("全选", "normal", lambda: self._check_all(True)),
+                ("全不选", "normal", lambda: self._check_all(False)),
+                ("删除选中", "danger", self._on_delete),
+                ("恢复默认", "danger", self._on_reset)):
+            b = QPushButton(text)
+            b.setFixedHeight(32)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setStyleSheet(btn_qss(kind, self.alpha))
+            b.clicked.connect(cb)
+            bottom.addWidget(b)
+        bottom.addStretch(1)
+        close = QPushButton("关闭")
+        close.setFixedSize(84, 32)
+        close.setCursor(Qt.PointingHandCursor)
+        close.setStyleSheet(btn_qss("normal", self.alpha))
+        close.clicked.connect(self.accept)
+        bottom.addWidget(close)
+        root.addLayout(bottom)
+
+        self._rebuild()
+
+    # ---------- 列表 ----------
+
+    def _all(self):
+        try:
+            return [m for m in self.db.load_materials() if m.get("name")]
+        except Exception:
+            return []
+
+    def _rebuild(self):
+        kw = self.search.text().strip()
+        only_auto = self.only_auto.isChecked()
+        self.list.blockSignals(True)
+        self.list.clear()
+        self._names = []
+        n_auto = 0
+        for m in self._all():
+            name = str(m["name"])
+            auto = not self.db.is_builtin(name)
+            if auto:
+                n_auto += 1
+            if only_auto and not auto:
+                continue
+            if kw and kw not in name:
+                continue
+            it = QListWidgetItem(f"{name}　　{'自动' if auto else '内置'}")
+            it.setFlags(it.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsEditable)
+            it.setCheckState(Qt.Unchecked)
+            it.setData(Qt.UserRole, name)          # 记住原始名字，改名时对比
+            if auto:
+                it.setForeground(QColor(ACCENT))
+            self.list.addItem(it)
+            self._names.append(name)
+        self.list.blockSignals(False)
+
+        total = len(self._all())
+        builtin = len(self.db.INITIAL_MATERIALS)
+        self.tip.setText(
+            f"共 {total} 个材料（内置 {builtin}　自动登记 {n_auto}）。"
+            f"双击可改名；带「自动」的多半是识别错的名字。")
+        self._sync_title()
+
+    def _sync_title(self):
+        self.setWindowTitle(f"材料库　共 {len(self._all())} 个")
+
+    def _check_all(self, on):
+        self.list.blockSignals(True)
+        for i in range(self.list.count()):
+            self.list.item(i).setCheckState(Qt.Checked if on else Qt.Unchecked)
+        self.list.blockSignals(False)
+
+    def _checked_names(self):
+        out = []
+        for i in range(self.list.count()):
+            it = self.list.item(i)
+            if it.checkState() == Qt.Checked:
+                out.append(str(it.data(Qt.UserRole)))
+        return out
+
+    # ---------- 增删改 ----------
+
+    def _on_item_changed(self, item):
+        """改名：双击编辑完会走这里（勾选框变化也会走，但名字没变就跳过）"""
+        old = str(item.data(Qt.UserRole))
+        new = item.text().strip()
+        # 显示文字里带了「内置 / 自动」后缀，取前面那一段
+        for suffix in ("　　自动", "　　内置"):
+            if new.endswith(suffix):
+                new = new[: -len(suffix)]
+        new = new.strip()
+        if not new or new == old:
+            return
+        mats = self._all()
+        if any(str(m["name"]) == new for m in mats):
+            QMessageBox.warning(self, "重名", f"材料库里已经有「{new}」了。")
+            self._rebuild()
+            return
+        for m in mats:
+            if str(m["name"]) == old:
+                m["name"] = new
+                m["icon"] = new + ".png"
+                break
+        self.db.save_materials(mats)
+        self._rebuild()
+
+    def _on_add(self):
+        name = self.new_edit.text().strip()
+        if not name:
+            return
+        mats = self._all()
+        if any(str(m["name"]) == name for m in mats):
+            QMessageBox.warning(self, "已存在", f"材料库里已经有「{name}」了。")
+            return
+        mats.append({"name": name, "icon": name + ".png"})
+        self.db.save_materials(mats)
+        self.new_edit.clear()
+        self._rebuild()
+        self.list.scrollToBottom()
+
+    def _on_delete(self):
+        names = set(self._checked_names())
+        if not names:
+            QMessageBox.information(self, "提示", "先勾选要删除的材料。")
+            return
+        if QMessageBox.question(
+                self, "确认删除",
+                f"要删除这 {len(names)} 个材料吗？\n\n"
+                "删掉之后，识别到同名材料会当成新材料（如果开着自动登记就会再加回来）。"
+        ) != QMessageBox.Yes:
+            return
+        mats = [m for m in self._all() if str(m["name"]) not in names]
+        self.db.save_materials(mats)
+        self._rebuild()
+
+    def _on_reset(self):
+        n = len(self._all())
+        if QMessageBox.question(
+                self, "恢复默认材料库",
+                f"会清掉后加进去的材料名，只留内置的 "
+                f"{len(self.db.INITIAL_MATERIALS)} 个。\n\n"
+                f"当前一共 {n} 个。确定吗？") != QMessageBox.Yes:
+            return
+        self.db.reset_to_default()
+        self._rebuild()
+
+
 class RegionSelector(QWidget):
     def __init__(self, parent=None):
         super().__init__(None)
