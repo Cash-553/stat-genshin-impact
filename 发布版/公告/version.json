@@ -4,20 +4,20 @@
   "url_github": "https://github.com/Cash-553/stat-genshin-impact/releases",
   "url_gitee": "https://gitee.com/Cash553/stat-genshin-impact/releases",
   "update": {
-    "size": 123553356,
-    "sha256": "b90365ff72770489033712c9eb14b8973cf59a9122c93a99633ddfa133d09112",
+    "size": 126436416,
+    "sha256": "cffa27a095b70e213c0ad5ea20bc9324e3025483bc2a9ac17912713d9c114043",
     "sources": [
       {
         "label": "Gitee（国内快）",
         "parts": [
-          "https://gitee.com/Cash553/stat-genshin-impact/releases/download/v0.9.1/StatGI_v0.9.1.part1",
-          "https://gitee.com/Cash553/stat-genshin-impact/releases/download/v0.9.1/StatGI_v0.9.1.part2"
+          "https://gitee.com/Cash553/stat-genshin-impact/releases/download/v0.9.2/StatGI_v0.9.2.part1",
+          "https://gitee.com/Cash553/stat-genshin-impact/releases/download/v0.9.2/StatGI_v0.9.2.part2"
         ]
       },
       {
         "label": "GitHub",
         "parts": [
-          "https://github.com/Cash-553/stat-genshin-impact/releases/download/v0.9.1/StatGI_v0.9.1.zip"
+          "https://github.com/Cash-553/stat-genshin-impact/releases/download/v0.9.2/StatGI_v0.9.2.zip"
         ]
       }
     ]
