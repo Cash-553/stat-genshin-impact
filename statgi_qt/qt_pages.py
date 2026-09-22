@@ -16,20 +16,22 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                                QPushButton, QComboBox, QLineEdit, QSlider,
                                QScrollArea, QFrame, QMessageBox, QFileDialog,
                                QStackedWidget, QDialog, QApplication,
-                               QProgressBar)
+                               QProgressBar, QSizePolicy)
 
 from qt_theme import (panel_alpha, label_qss, btn_qss, entry_qss, combo_qss,
                       slider_qss, scroll_qss, rgba)
 import qt_theme as T
 import config_manager
+import filters_db
 import qt_notice
 import sessions
-from qt_widgets import (Card, SettingRow, Switch, Accordion, heading,
+from qt_widgets import (Card, SettingRow, Switch, Accordion, SwitchAccordion,
+                        heading,
                         level_name, level_value, set_btn_icon, small_button,
                         IconButton, msg_info, RedDot)
 from qt_icon import IconWidget, attach_hover
 
-VERSION = "0.9.1"
+VERSION = "0.9.2"
 
 # 颜色下拉框里那一项「自定义颜色…」（选了会开取色器）
 CUSTOM_COLOR = "自定义颜色…"
@@ -77,6 +79,14 @@ class BasePage(QWidget):
 
     def stretch(self):
         self.v.addStretch(1)
+
+    def _dd(self, items, width=150):
+        """通用下拉框（放在基类上，别的页面也能用）"""
+        d = QComboBox()
+        d.addItems([str(x) for x in items])
+        d.setFixedWidth(width)
+        d.setStyleSheet(combo_qss())
+        return d
 
 
 # ============================================================
@@ -408,36 +418,60 @@ class PageBar(BasePage):
                             "向左调节透明度更高，减少对游戏画面的遮挡",
                             right_wrap(self.opacity, self.opacity_label), alpha=self.alpha))
 
-        # 显示项目：折叠区，每一项一张子卡片（图标 + 标题 + 说明 + 开关）
-        self.slot_switches = {}
-        slot_items = []
-        for key, ic_name, name, desc in (
-                ("slot1", "coins", "摩拉", "统计条上显示摩拉那一格"),
-                ("slot2", "swords", "材料", "统计条上显示材料那一格"),
-                ("slot3", "gem", "狗粮", "统计条上显示圣遗物那一格")):
-            sw = Switch(self, bool(bar.get("show_" + key, True)))
-            sw.toggled.connect(lambda v, k=key: self._on_slots_changed())
-            self.slot_switches[key] = sw
-            slot_items.append((ic_name, name, desc, sw))
-        self.slot_acc = Accordion(self, "layout-dashboard", "显示项目",
-                                  "勾选统计条显示项，修改后即时生效",
-                                  items=slot_items, alpha=self.alpha)
-        self.add(self.slot_acc)
-        self._sync_slot_desc()
+        # ---- 悬浮窗样式 ----
+        self._build_bar_style(bar)
+
         self.stretch()
 
-    def _sync_slot_desc(self):
-        names = [n for k, n in (("slot1", "摩拉"), ("slot2", "材料"), ("slot3", "狗粮"))
-                 if self.slot_switches[k].isChecked()]
-        self.slot_acc.desc_label.setText(
-            f"当前显示：{'、'.join(names) if names else '（都不显示）'}")
+    # ---------- 悬浮窗内容与样式 ----------
+    def _build_bar_style(self, bar):
+        """入口收在「项目设置」对话框里：动态项目 + 每项独立属性 + 整体窗口设置。
 
-    def _on_slots_changed(self):
-        for key, sw in self.slot_switches.items():
-            self.state.set_setting(f"stat_bar.show_{key}", bool(sw.isChecked()))
-        self._sync_slot_desc()
+        不要在设置页里堆一堆滑块 —— 那样既不直观也不好扩展。
+        """
+        edit = small_button("编辑悬浮窗…", self._open_bar_editor, self.alpha,
+                            icon="palette", width=128, height=30)
+        self.bar_edit_btn = edit
+        items = [
+            ("settings", "项目与样式",
+             "加项目 / 改名字 / 字体 / 卡片 / 排列，改完立刻生效", edit),
+        ]
+        self.bar_style_acc = Accordion(self, "palette", "悬浮窗内容与样式",
+                                       "", items=items, alpha=self.alpha)
+        self.add(self.bar_style_acc)
+        self._sync_bar_style_desc()
+
+    def _open_bar_editor(self):
+        from qt_bar_editor import BarEditorDialog
+        if self.win.bar_window is None:
+            self.win.open_stat_bar()
+            # ⚠ 这里要同步一下按钮文字 —— 不然悬浮窗都开出来了，
+            #   按钮还写着「打开统计条」，点一下反而把它关了。
+            self._sync_btn()
+        # ⚠ 用 show() 而不是 exec()：**模态会把悬浮窗锁住**，
+        #   开着编辑器就没法拖悬浮窗了。非模态才能边改边拖。
+        dlg = getattr(self, "_bar_editor_dlg", None)
+        if dlg is not None and dlg.isVisible():
+            dlg.raise_()
+            dlg.activateWindow()
+            return
+        dlg = BarEditorDialog(self.win, self.alpha, on_apply=self._apply_bar)
+        self._bar_editor_dlg = dlg          # 存起来，不然会被垃圾回收
+        dlg.finished.connect(lambda _r: self._sync_bar_style_desc())
+        dlg.show()
+
+    def _apply_bar(self):
+        """让悬浮窗立刻按新配置重建"""
         if self.win.bar_window is not None:
-            self.win.bar_window.apply_appearance()
+            self.win.bar_window.reload()
+
+    def _sync_bar_style_desc(self):
+        import bar_items
+        cfg = bar_items.load()
+        items = cfg.get("items") or []
+        vis = sum(1 for x in items if x.get("visible", True))
+        self.bar_style_acc.desc_label.setText(
+            f"当前 {len(items)} 个项目，显示 {vis} 个")
 
     def _toggle_bar(self):
         if self.win.bar_window is not None:
@@ -455,11 +489,16 @@ class PageBar(BasePage):
     def _on_opacity(self, v):
         self.opacity_label.setText(f"{v}%")
         self.state.set_setting("stat_bar.opacity", v / 100.0)
+        import bar_items
+        cfg = bar_items.load()
+        cfg["window"]["opacity"] = v / 100.0
+        bar_items.save(cfg)
         if self.win.bar_window is not None:
-            self.win.bar_window.apply_appearance()
+            self.win.bar_window.reload()
 
     def on_show(self):
         self._sync_btn()
+        self._sync_bar_style_desc()
 
 
 # ============================================================
@@ -471,7 +510,8 @@ class PageRecords(BasePage):
     def __init__(self, win):
         super().__init__(win)
         self.state = win.state
-        self._open = set()          # 展开了明细的记录 key
+        self._open = set()          # 展开了总数那一级的记录 key（第一级）
+        self._mats = set()          # 列出了材料明细的记录 key（第二级）
         self._cards = {}
         self._view = "normal"       # normal = 收益记录 / fav = 收藏夹
         self._edit = False          # 编辑模式（勾选多条批量操作）
@@ -593,6 +633,7 @@ class PageRecords(BasePage):
     def _toggle_view(self):
         self._view = "fav" if self._view == "normal" else "normal"
         self._open.clear()
+        self._mats.clear()
         self._checked.clear()
         self.refresh()
 
@@ -696,63 +737,116 @@ class PageRecords(BasePage):
         return date, t1, t2
 
     def _make_card(self, item, fav=False):
+        """一条收益记录 = **两级展开的折叠卡片**（用户指定的层级）。
+
+            收起      🗓 日期　开始 → 结束　时长              [✎][★][▸][🗑]
+            展开一级  摩拉 xx　狗粮 xx　材料 xx               ← 总数
+                      [查看明细]                             ← 在这张卡片上
+            展开二级  破损的面具 ×12  牢固的箭簇 ×6 …          ← 材料明细
+
+        名称和备注的编辑入口是右边那个铅笔图标（用户要求「只要图标」）。
+        """
         key = sessions.record_key(item)
         c = Card(self, alpha=self.alpha)
         v = QVBoxLayout(c)
         v.setContentsMargins(16, 12, 16, 12)
-        v.setSpacing(6)
+        v.setSpacing(8)
 
+        # ---------- 头部：名称/默认名 + 备注 …… 图标 ----------
         top = QHBoxLayout()
         top.setSpacing(8)
 
-        # 编辑模式：最左边一个勾选框
-        if self._edit:
+        if self._edit:                      # 编辑模式：最左边一个勾选框
             sel = IconButton(c, height=28, icon_size=17,
                              icon="square-check" if key in self._checked else "square",
                              alpha=self.alpha)
             sel.clicked.connect(lambda _=None, k=key: self._toggle_check(k))
             top.addWidget(sel)
 
-        dur = fmt_duration(item.get("seconds", 0))
-        date, t1, t2 = self._when_parts(item)
-        when = date if date else "——"
-        if t1:
-            when += f"　{t1}"
-            if t2:
-                when += f" → {t2}"
-        top.addWidget(IconWidget(c, name="calendar", size=16, role="DIM"))
-        t = QLabel(f"{when}　　时长 {dur}")
-        t.setStyleSheet(label_qss(T.TEXT, 14, True))
-        top.addWidget(t)
-        top.addStretch(1)
+        name = sessions.display_name(item)
+        notes = sessions.display_notes(item)
+        mid = QVBoxLayout()
+        mid.setSpacing(2)
+        name_lb = QLabel(name)
+        name_lb.setStyleSheet(label_qss(T.TEXT, 15, True))
+        mid.addWidget(name_lb)
+        note_lb = QLabel(notes or "（没有备注）")
+        note_lb.setStyleSheet(label_qss(T.DIM, 12))
+        note_lb.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        note_lb.setMinimumWidth(0)
+        mid.addWidget(note_lb)
+        top.addLayout(mid, 1)
 
-        # 「查看明细」
+        # ---------- 第一级展开：只看得到**总数** ----------
+        mats = item.get("materials") or {}
+        mat_total = sum(int(v) for v in mats.values())
+        head_body = QWidget()
+        hb = QVBoxLayout(head_body)
+        hb.setContentsMargins(0, 4, 0, 0)
+        hb.setSpacing(6)
+        nums = QHBoxLayout()
+        for label, val in (("摩拉", f"{item.get('mora', 0):,}"),
+                           ("狗粮", f"×{item.get('artifact', 0)}"),
+                           ("材料", f"{mat_total}")):
+            lb = QLabel(f"{label} {val}")
+            lb.setStyleSheet(label_qss(T.ACCENT, 15, True))
+            nums.addWidget(lb)
+            nums.addSpacing(20)
+        nums.addStretch(1)
+        hb.addLayout(nums)
+
+        # ---------- 第二级：全部材料明细 ----------
+        # ⚠「查看明细」按钮**不在这里** —— 它挪到卡片头部去了（见下）。
+        #   放在这一块里的话，收起状态就看不到它，用户以为没这个功能（踩过）。
         detail = QWidget()
         dl = QVBoxLayout(detail)
-        dl.setContentsMargins(0, 4, 0, 0)
-        mats = item.get("materials") or {}
+        dl.setContentsMargins(0, 2, 0, 0)
+        dl.setSpacing(6)
+
+        mats_box = QWidget(detail)
+        mb = QVBoxLayout(mats_box)
+        mb.setContentsMargins(0, 0, 0, 0)
+        mb.setSpacing(4)
         if mats:
-            for name, cnt in sorted(mats.items(), key=lambda kv: -kv[1]):
+            for mname, cnt in sorted(mats.items(), key=lambda kv: -kv[1]):
                 r = QHBoxLayout()
-                a = QLabel(name)
+                a = QLabel(mname)
                 a.setStyleSheet(label_qss(T.TEXT, 13))
                 b = QLabel(f"×{cnt}")
                 b.setStyleSheet(label_qss(T.DIM, 13))
                 r.addWidget(a)
                 r.addStretch(1)
                 r.addWidget(b)
-                dl.addLayout(r)
+                mb.addLayout(r)
         else:
             lb = QLabel("（这条记录没有材料）")
             lb.setStyleSheet(label_qss(T.DIM, 13))
-            dl.addWidget(lb)
-        detail.setVisible(key in self._open)
+            mb.addWidget(lb)
+        mb.addStretch(1)
+        dl.addWidget(mats_box)
 
-        det_btn = IconButton(c, icon="file-text", text="查看明细",
-                             alpha=self.alpha, height=28, icon_size=15)
-        top.addWidget(det_btn)
+        # 三个状态：卡片有没有展开 / 明细有没有列出
+        opened = key in self._open
+        mats_shown = key in self._mats
+        head_body.setVisible(opened)
+        detail.setVisible(opened and mats_shown)
+        mats_box.setVisible(mats_shown)
+        v.addLayout(top)
+        v.addWidget(head_body)
+        v.addWidget(detail)
+        # 存一下，方便外部（验证脚本 / 以后要联动的地方）查状态
+        c.detail = detail
+        c.head_body = head_body
+        c.mats_box = mats_box
 
-        # 「收藏 / 取消收藏」（纯图标，鼠标悬停会弹）
+        # ---------- 右边的图标：编辑 / 收藏 / 删除 ----------
+        # ⚠ 编辑图标是用户明确要求的（「在主卡片右边加一个编辑的图标，只要图标」）
+        edit_btn = IconButton(c, icon="pencil", alpha=self.alpha, height=28,
+                              icon_size=16)
+        edit_btn.setToolTip("改这条记录的名称和备注")
+        edit_btn.clicked.connect(lambda _=None, it=item: self._edit_record(it))
+        top.addWidget(edit_btn)
+
         is_fav = sessions.is_favorite(item)
         fav_btn = IconButton(c, icon="star", alpha=self.alpha, height=28,
                              icon_size=16, active=is_fav)
@@ -767,7 +861,20 @@ class PageRecords(BasePage):
                 (self._unfavorite_one(it) if f else self._favorite_one(it)))
         top.addWidget(fav_btn)
 
-        # 「删除」（纯图标；收藏夹里不提供，用上面的星星移出）
+        # 「查看明细 / 收起明细」—— **放在卡片头部**，收起状态也看得到。
+        # ⚠ 用户报过"折叠卡片里没有查看明细这个选项" —— 之前它被放进
+        #   展开后的内容区里，收起时根本看不见。放头部就没这个问题。
+        det_btn = IconButton(c, icon="file-text", text="查看明细",
+                             alpha=self.alpha, height=28, icon_size=15)
+        det_btn.setToolTip("展开这条记录，列出全部材料明细")
+        top.addWidget(det_btn)
+
+        # 折叠箭头
+        arrow = QLabel("▾" if opened else "▸")
+        arrow.setStyleSheet(label_qss(T.DIM, 14))
+        top.addWidget(arrow)
+        c.arrow = arrow
+
         if not fav:
             del_btn = IconButton(c, icon="trash", kind="danger",
                                  alpha=self.alpha, height=28, icon_size=16)
@@ -776,33 +883,79 @@ class PageRecords(BasePage):
                 lambda _=None, it=item: self._delete_one(it))
             top.addWidget(del_btn)
 
-        v.addLayout(top)
+        # ---------- 展开 / 收起 ----------
+        # 两级状态：
+        #   _open  第一级（看得到总数那一行）
+        #   _mats  第二级（材料明细全列出来）
+        # 头部那个「查看明细」按钮**两级一起管**（它就是"看明细"的入口）；
+        # 点名字 / 备注 / 箭头只切第一级，但按钮文字要跟着对上。
+        def _sync_btn(b=det_btn, k=key):
+            b.set_text("收起明细" if k in self._mats else "查看明细")
 
-        nums = QHBoxLayout()
-        for label, val in (("摩拉", f"{item.get('mora', 0):,}"),
-                           ("狗粮", f"×{item.get('artifact', 0)}")):
-            lb = QLabel(f"{label} {val}")
-            lb.setStyleSheet(label_qss(T.ACCENT, 15, True))
-            nums.addWidget(lb)
-            nums.addSpacing(20)
-        nums.addStretch(1)
-        v.addLayout(nums)
-        v.addWidget(detail)
-
-        def _toggle(_=None, k=key, d=detail, b=det_btn):
+        def _toggle_card(_=None, k=key, hb=head_body, d=detail,
+                         ar=arrow, mm=mats_box):
             if k in self._open:
                 self._open.discard(k)
+                hb.setVisible(False)
                 d.setVisible(False)
-                b.set_text("查看明细")
+                ar.setText("▸")
             else:
                 self._open.add(k)
-                d.setVisible(True)
-                b.set_text("收起明细")
+                hb.setVisible(True)
+                # 明细按上次的状态恢复
+                if k in self._mats:
+                    d.setVisible(True)
+                    mm.setVisible(True)
+                ar.setText("▾")
+            _sync_btn()
 
-        det_btn.clicked.connect(_toggle)
-        if key in self._open:
-            det_btn.set_text("收起明细")
+        # 「查看明细 / 收起明细」—— 两级一起开 / 一起关
+        def _toggle_mats(_=None, k=key, d=detail, mm=mats_box, b=det_btn,
+                         hb=head_body, ar=arrow):
+            if k in self._mats:
+                self._mats.discard(k)
+                self._open.discard(k)
+                mm.setVisible(False)
+                d.setVisible(False)
+                hb.setVisible(False)
+                ar.setText("▸")
+            else:
+                self._mats.add(k)
+                self._open.add(k)
+                hb.setVisible(True)
+                d.setVisible(True)
+                mm.setVisible(True)
+                ar.setText("▾")
+            _sync_btn()
+
+        for w in (name_lb, note_lb, arrow):
+            w.setCursor(Qt.PointingHandCursor)
+            w.mousePressEvent = _toggle_card
+        det_btn.clicked.connect(_toggle_mats)
+        _sync_btn()
+
         return c
+
+
+    def _edit_record(self, item):
+        """弹出小窗改名称 / 备注"""
+        import qt_dialogs
+        dlg = qt_dialogs.RecordEditDialog(self, item, alpha=self.alpha)
+        dlg.setStyleSheet(dlg.styleSheet())
+        # 弹在应用窗口正中间
+        try:
+            dlg.adjustSize()
+            g = self.window().frameGeometry()
+            dlg.move(g.center().x() - dlg.width() // 2,
+                     g.center().y() - dlg.height() // 2)
+        except Exception:
+            pass
+        if dlg.exec() != QDialog.Accepted:
+            return
+        name, notes = dlg.values()
+        sessions.update_record(item, name=name, notes=notes)
+        self.refresh()
+
 
     def _on_clear(self):
         if self._view == "fav":
@@ -922,13 +1075,6 @@ class PageSettings(BasePage):
                          alpha=self.alpha, height=height)
         self._lay[tab].insertWidget(self._lay[tab].count() - 1, row)
         return row
-
-    def _dd(self, items, width=150):
-        d = QComboBox()
-        d.addItems([str(x) for x in items])
-        d.setFixedWidth(width)
-        d.setStyleSheet(combo_qss())
-        return d
 
     def _on_tab(self, idx):
         # 离开「开发」页时，把「模拟检测到新版本」自动关掉。
@@ -1221,6 +1367,207 @@ class PageSettings(BasePage):
             items=self._make_mat_items(), alpha=self.alpha, footer=warn)
         self._lay[tb].insertWidget(self._lay[tb].count() - 1, self.mat_acc)
         self._refresh_mat_count()
+
+        # ---- 黑名单 / 白名单（决定「认出来了要不要记账」）----
+        # 层级（用户指定）：
+        #   黑名单管理 ▸  材料黑名单 [开关] ▸ 配置名单 ▸ …
+        #                圣遗物黑名单 [开关] ▸ 配置名单 ▸ …
+        #   白名单管理 ▸  材料白名单 [开关] ▸ 配置名单 ▸ …
+        #                圣遗物白名单 [开关] ▸ 配置名单 ▸ …
+        # 主卡片**没有开关**，开关在材料 / 圣遗物那一层；开了才出现配置卡片。
+        self.filter_switches = {}       # 名单键 -> Switch（在卡片头上）
+        self.filter_units = {}          # 名单键 -> SwitchAccordion
+        self.filter_cfg_accs = {}       # 名单键 -> 「配置名单」折叠卡片
+        self.filter_sub_accs = {}       # 名单键 -> 同 units（老名字，留着兼容）
+        for kind, kind_label, icon_name, main_title, main_desc in (
+                ("black", "黑名单", "eye-off", "黑名单管理",
+                 "名单里的物品识别到了也不记账"),
+                ("white", "白名单", "square-check", "白名单管理",
+                 "只记账名单里的物品，其余一律不记")):
+            self._lay[tb].insertWidget(
+                self._lay[tb].count() - 1,
+                self._build_filter_group(kind, kind_label, icon_name,
+                                         main_title, main_desc))
+
+    # ---------- 黑名单 / 白名单 ----------
+
+    def _build_filter_group(self, kind, kind_label, icon_name,
+                            main_title, main_desc):
+        """一张主卡片（黑名单管理 / 白名单管理）。
+
+        层级（用户指定）：
+            主卡片（**没有开关**）         <- Accordion
+              └ 材料XX名单  [开关]         <- SwitchAccordion
+                   点标题展开 →「配置名单」<- 自己给的控件，不再被包卡片
+        """
+        body = QWidget()
+        bl = QVBoxLayout(body)
+        bl.setContentsMargins(0, 0, 0, 0)
+        bl.setSpacing(0)
+
+        for cat, cat_label in (("material", "材料"), ("artifact", "圣遗物")):
+            key = f"{cat}_{kind}"
+            label = f"{cat_label}{kind_label}"
+            is_white = (kind == "white")
+            filt_desc = (f"只记账名单里的{cat_label}" if is_white
+                         else f"名单里的{cat_label}不记账")
+
+            # 「配置名单」那张卡片（内容区的真正内容）
+            cfg_btn = small_button(
+                "配置名单", lambda k=key: self._open_filter(k), self.alpha,
+                icon="list", width=104, height=30)
+            cfg_acc = Accordion(
+                body, "list", "配置名单",
+                self._filter_cfg_desc(key, label, []),
+                items=[("list", label, "打开后搜索、勾选", cfg_btn)],
+                alpha=T.panel_alpha(self.alpha))
+            self.filter_cfg_accs[key] = cfg_acc
+
+            unit = SwitchAccordion(
+                body, icon="layers", title=label, desc=filt_desc,
+                alpha=T.panel_alpha(self.alpha),
+                checked=filters_db.is_enabled(self.state.settings, key),
+                body=cfg_acc)
+            unit.toggled.connect(
+                lambda v, k=key, lb=label: self._on_filter_toggled(k, v, lb))
+            self.filter_units[key] = unit
+            self.filter_switches[key] = unit.switch
+            self.filter_sub_accs[key] = unit
+
+            bl.addWidget(unit)
+
+        return Accordion(self._inner["统计"], icon_name, main_title, main_desc,
+                         items=None, body_widget=body, alpha=self.alpha)
+
+    @staticmethod
+    def _filter_cfg_desc(key, label, names):
+        """配置名单那张卡片的简介：带上当前有几个名字"""
+        cat = "材料" if key.startswith("material") else "圣遗物"
+        n = len(names or [])
+        if not n:
+            return f"还没配任何{cat} —— 打开后搜索、勾选"
+        return f"已配 {n} 个{cat}，打开后可继续增删"
+
+    def _on_filter_toggled(self, key, val, label):
+        """开关一变：写设置 + 让「配置名单」跟着显隐"""
+        filters = filters_db.get(self.state.settings)
+        filters[key]["enabled"] = bool(val)
+        self.state.set_setting("records.filters", filters)
+        acc = self.filter_cfg_accs.get(key)
+        if acc is not None:
+            acc.desc_label.setText(
+                self._filter_cfg_desc(key, label, filters[key]["names"]))
+
+    def _open_filter(self, key):
+        """打开某张名单的配置窗"""
+        import qt_dialogs
+        label = filters_db.KEY_LABEL.get(key, key)
+        cat = "材料" if key.startswith("material") else "圣遗物"
+        is_white = key.endswith("_white")
+        desc = (f"只有在这张名单里的{cat}才会被记账；名单为空则什么都记不了。"
+                if is_white else
+                f"在这张名单里的{cat}识别到了也不记账。")
+        try:
+            import names_db
+            d = names_db.load()
+            pool = d.get("materials" if cat == "材料" else "artifacts") or []
+        except Exception:
+            pool = []
+        cur = filters_db.names_of(self.state.settings, key)
+        dlg = qt_dialogs.NameListDialog(self, key, f"配置{label}", desc,
+                                        pool, cur, alpha=self.alpha)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        filters = filters_db.get(self.state.settings)
+        filters[key]["names"] = dlg.chosen()
+        self.state.set_setting("records.filters", filters)
+        acc = self.filter_cfg_accs.get(key)
+        if acc is not None:
+            acc.desc_label.setText(
+                self._filter_cfg_desc(key, label, filters[key]["names"]))
+
+    # ---------- 离开设置页时的空名单提醒 ----------
+
+    def on_hide(self):
+        """离开设置页：检查「开着但空着」的名单，弹窗提醒 + 自动关掉白名单。
+
+        用户要求：
+          · 弹窗要弹在**应用正中间**
+          · 白名单为空 = 识别不到任何内容，文案要提到「去识别里关掉」
+            并且**自动把该白名单关掉**（提示语里写「白名单功能已关闭」）
+          · 弹完才切页 —— 所以主窗口必须在 setCurrentIndex **之前**调它
+        """
+        try:
+            self._warn_empty_filters()
+        except Exception:
+            pass
+
+    def _warn_empty_filters(self):
+        s = self.state.settings
+        whites = filters_db.empty_enabled_whitelists(s)
+        blacks = filters_db.empty_enabled_blacklists(s)
+        if not whites and not blacks:
+            return
+
+        lines = []
+        for key in whites:
+            label = filters_db.KEY_LABEL.get(key, key)
+            cat = "材料" if key.startswith("material") else "圣遗物"
+            enable_key = ("enable_material" if cat == "材料"
+                          else "enable_artifact")
+            if bool(s.get(enable_key, True)):
+                tip = ("如不需要识别这项内容，可前往「设置 → 识别」里"
+                       "将其关闭。")
+            else:
+                tip = ("如需重新识别这项内容，可前往「设置 → 识别」里"
+                       "重新开启。")
+            lines.append(f"「{label}」为空，将识别不到{cat}任何内容。\n"
+                         f"{tip}\n白名单功能已关闭。")
+        for key in blacks:
+            label = filters_db.KEY_LABEL.get(key, key)
+            cat = "材料" if key.startswith("material") else "圣遗物"
+            lines.append(f"「{label}」为空，不会过滤任何{cat}。\n"
+                         "（黑名单为空不影响识别，只是不排除任何物品。）")
+
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("名单为空")
+        box.setText("检测到名单已开启但没有内容")
+        box.setInformativeText("\n\n".join(lines))
+        box.setStandardButtons(QMessageBox.Ok)
+        box.setStyleSheet(f"""
+            QMessageBox {{ background: {T.BG}; }}
+            QMessageBox QLabel {{ color: {T.TEXT}; background: transparent; }}
+        """)
+        self._center_on_app(box)
+        box.exec()
+
+        # 白名单：自动关掉（用户要求「白名单功能已关闭」）
+        if whites:
+            filters = filters_db.get(s)
+            for key in whites:
+                filters[key]["enabled"] = False
+            self.state.set_setting("records.filters", filters)
+            for key in whites:
+                sw = self.filter_switches.get(key)
+                if sw is not None:
+                    sw.blockSignals(True)
+                    sw.setChecked(False)
+                    sw.blockSignals(False)
+                acc = self.filter_cfg_accs.get(key)
+                if acc is not None:
+                    acc.setVisible(False)
+
+    def _center_on_app(self, dlg):
+        """把一个弹窗摆到**应用窗口正中间**（用户要求）"""
+        try:
+            win = self.window()
+            dlg.adjustSize()
+            g = win.frameGeometry()
+            dlg.move(g.center().x() - dlg.width() // 2,
+                     g.center().y() - dlg.height() // 2)
+        except Exception:
+            pass
 
     # ================= 直播 =================
     def _build_live(self, s):
@@ -2230,3 +2577,4 @@ def build_pages(win):
 
 # 公告页在栈里的下标（侧栏那个「公告」按钮要用）
 NOTICE_PAGE_INDEX = 4
+

@@ -11,12 +11,13 @@ from PySide6.QtGui import QGuiApplication, QPainter, QColor, QPen, QPixmap
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
                                QLabel, QPushButton, QFileDialog, QMessageBox,
                                QWidget, QFrame, QListWidget, QListWidgetItem,
-                               QLineEdit, QCheckBox)
+                               QLineEdit, QCheckBox, QComboBox, QSlider,
+                               QPlainTextEdit, QScrollArea)
 
 import config_manager
 import paths
 from qt_theme import (TEXT, DIM, ACCENT, CARD, BG, BORDER, panel_alpha, label_qss,
-                      btn_qss)
+                      btn_qss, combo_qss, slider_qss)
 from qt_widgets import Card, set_btn_icon
 from qt_icon import IconWidget
 
@@ -596,6 +597,496 @@ class MaterialDialog(QDialog):
         self._rebuild()
 
 
+class BarStyleDialog(QDialog):
+    """桌面悬浮窗的样式编辑 —— 像绘画软件那样**选一个框再改它的属性**。
+
+    左边挑样式（内置的「经典」「直播间」不能改，要改先复制）；
+    中间挑**改哪个框**：「全部（一起改）」改所有框共用的那份，
+    选中某一格就只改那一格（写进 overrides，不影响别人）。
+
+    改完立刻存盘 + 刷新悬浮窗。
+    """
+
+    def __init__(self, parent, alpha=150, on_apply=None):
+        super().__init__(parent)
+        self.setWindowTitle("桌面悬浮窗样式")
+        self.setMinimumSize(900, 660)
+        self.alpha = alpha
+        self._on_apply = on_apply
+        self._cur = None            # 当前样式名
+        self._scope = self.db.SCOPE_ALL if hasattr(self, "db") else "__all__"
+        self._loading = False
+
+        import bar_styles
+        self.db = bar_styles
+        self._scope = bar_styles.SCOPE_ALL
+        self._data = {}             # 当前样式的工作副本
+
+        self.setStyleSheet(f"""
+            QDialog {{ background: {BG}; }}
+            QLabel {{ color: {TEXT}; }}
+            QCheckBox {{ color: {DIM}; spacing: 7px; }}
+            QCheckBox::indicator {{
+                width: 14px; height: 14px; border-radius: 3px;
+                border: 1px solid rgba(255,255,255,70); background: transparent;
+            }}
+            QCheckBox::indicator:checked {{ background: {ACCENT}; border: 1px solid {ACCENT}; }}
+        """)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(18, 14, 18, 16)
+        root.setSpacing(10)
+
+        body = QHBoxLayout()
+        body.setSpacing(12)
+
+        # ---- 左：样式列表 ----
+        left = QVBoxLayout()
+        left.setSpacing(6)
+        left.addWidget(self._h("样式"))
+        self.list = QListWidget()
+        self.list.setFixedWidth(168)
+        self._style_list_qss(self.list)
+        self.list.currentItemChanged.connect(self._on_pick)
+        left.addWidget(self.list, 1)
+        for text, kind, cb in (
+                ("新建…", "accent", self._on_new),
+                ("复制一份", "normal", self._on_dup),
+                ("重命名…", "normal", self._on_rename),
+                ("删除", "danger", self._on_delete)):
+            b = QPushButton(text)
+            b.setFixedHeight(28)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setStyleSheet(btn_qss(kind, self.alpha))
+            b.clicked.connect(cb)
+            left.addWidget(b)
+        body.addLayout(left)
+
+        # ---- 中：改哪个框 ----
+        mid = QVBoxLayout()
+        mid.setSpacing(6)
+        mid.addWidget(self._h("改哪个框"))
+        self.scope_list = QListWidget()
+        self.scope_list.setFixedWidth(120)
+        self._style_list_qss(self.scope_list)
+        self.scope_list.currentItemChanged.connect(self._on_scope)
+        mid.addWidget(self.scope_list, 1)
+        body.addLayout(mid)
+
+        # ---- 右：参数 + 预览 ----
+        right = QVBoxLayout()
+        right.setSpacing(8)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet(
+            "QScrollArea { background: transparent; border: none; }"
+            "QScrollArea > QWidget > QWidget { background: transparent; }")
+        holder = QWidget()
+        holder.setStyleSheet("background: transparent;")
+        flay = QVBoxLayout(holder)
+        flay.setContentsMargins(0, 0, 8, 0)
+        flay.setSpacing(5)
+
+        self.fields = {}
+        self.field_meta = {}
+        for key, label, desc, kind, arg, scope in self.db.FIELDS:
+            row = QHBoxLayout()
+            row.setSpacing(8)
+            t = QLabel(label)
+            t.setStyleSheet(label_qss(TEXT, 13))
+            t.setFixedWidth(88)
+            row.addWidget(t)
+            d = QLabel(desc)
+            d.setStyleSheet(label_qss(DIM, 11))
+            d.setFixedWidth(190)
+            row.addWidget(d)
+            w = self._make_widget(key, kind, arg)
+            self.field_meta[key] = (scope, kind, arg, label)
+            self.fields[key] = w
+            if kind == "text":
+                w.setFixedWidth(150)
+                row.addWidget(w)
+            elif kind in ("choice",):
+                w.setFixedWidth(140)
+                row.addWidget(w)
+            elif kind in ("color", "color_opt"):
+                w.setMinimumWidth(126)
+                row.addWidget(w)
+            else:
+                w.setFixedWidth(140)
+                row.addWidget(w)
+                w._val_label = QLabel("")
+                w._val_label.setFixedWidth(44)
+                w._val_label.setStyleSheet(label_qss(ACCENT, 12))
+                row.addWidget(w._val_label)
+            row.addStretch(1)
+            flay.addLayout(row)
+        flay.addStretch(1)
+        scroll.setWidget(holder)
+        right.addWidget(scroll, 1)
+
+        right.addWidget(self._h("预览"))
+        pvbox = Card(self, alpha=self.alpha)
+        pvl = QVBoxLayout(pvbox)
+        pvl.setContentsMargins(12, 10, 12, 10)
+        self.preview = _BarPreview(pvbox)
+        pvl.addWidget(self.preview, alignment=Qt.AlignCenter)
+        right.addWidget(pvbox)
+        body.addLayout(right, 1)
+        root.addLayout(body, 1)
+
+        bottom = QHBoxLayout()
+        self.tip = QLabel("")
+        self.tip.setStyleSheet(label_qss(DIM, 12))
+        bottom.addWidget(self.tip, 1)
+        close = QPushButton("关闭")
+        close.setFixedSize(84, 32)
+        close.setCursor(Qt.PointingHandCursor)
+        close.setStyleSheet(btn_qss("normal", self.alpha))
+        close.clicked.connect(self.accept)
+        bottom.addWidget(close)
+        root.addLayout(bottom)
+
+        self._reload_list()
+
+    # ---------- 小工具 ----------
+    def _h(self, text):
+        lb = QLabel(text)
+        lb.setStyleSheet(label_qss(TEXT, 14, True))
+        return lb
+
+    def _style_list_qss(self, w):
+        pal = w.palette()
+        pal.setColor(pal.ColorRole.Text, QColor(TEXT))
+        w.setPalette(pal)
+        w.setStyleSheet(f"""
+            QListWidget {{
+                background: rgba(0,0,0,90); border: 1px solid {BORDER};
+                border-radius: 8px; padding: 4px; outline: none;
+            }}
+            QListWidget::item {{ padding: 6px 8px; }}
+            QListWidget::item:selected {{ background: {ACCENT}; color: #10161f; }}
+        """)
+
+    def _make_widget(self, key, kind, arg):
+        if kind == "choice":
+            w = QComboBox()
+            w.addItems([n for n, _ in arg])
+            w.setStyleSheet(combo_qss())
+            w.currentTextChanged.connect(lambda _t, k=key: self._on_change(k))
+        elif kind == "bool":
+            w = QCheckBox()
+            w.toggled.connect(lambda _v, k=key: self._on_change(k))
+        elif kind in ("color", "color_opt"):
+            w = QPushButton("选颜色")
+            w.setFixedHeight(26)
+            w.setCursor(Qt.PointingHandCursor)
+            w.clicked.connect(lambda _c=False, k=key: self._on_pick_color(k))
+        elif kind == "text":
+            w = QLineEdit()
+            w.setFixedHeight(26)
+            w.setStyleSheet(
+                f"QLineEdit {{ background: rgba(255,255,255,16); color: {TEXT};"
+                f" border: 1px solid {BORDER}; border-radius: 6px; padding: 2px 6px; }}")
+            w.textChanged.connect(lambda _t, k=key: self._on_change(k))
+        else:
+            lo, hi = arg
+            w = QSlider(Qt.Horizontal)
+            w.setRange(lo, hi)
+            w.setStyleSheet(slider_qss())
+            w.valueChanged.connect(lambda _v, k=key: self._on_change(k))
+        return w
+
+    # ---------- 列表 ----------
+    def _reload_list(self, select=None):
+        self.list.blockSignals(True)
+        self.list.clear()
+        want = select or self.db.current()
+        for name in self.db.names():
+            tag = "（内置）" if self.db.is_builtin(name) else ""
+            it = QListWidgetItem(f"{name}{tag}")
+            it.setData(Qt.UserRole, name)
+            if self.db.is_builtin(name):
+                it.setForeground(QColor(DIM))
+            self.list.addItem(it)
+            if name == want:
+                self.list.setCurrentItem(it)
+        self.list.blockSignals(False)
+        if self.list.currentItem() is None and self.list.count():
+            self.list.setCurrentRow(0)
+        self._on_pick(self.list.currentItem())
+
+    def _reload_scopes(self):
+        self.scope_list.blockSignals(True)
+        self.scope_list.clear()
+        for key in [self.db.SCOPE_ALL] + list(self.db.SLOT_KEYS):
+            it = QListWidgetItem(self.db.SCOPE_LABEL[key])
+            it.setData(Qt.UserRole, key)
+            if key != self.db.SCOPE_ALL:
+                ov = (self._data.get("overrides") or {}).get(key) or {}
+                if ov:
+                    it.setForeground(QColor(ACCENT))     # 蓝：这格改过
+            self.scope_list.addItem(it)
+            if key == self._scope:
+                self.scope_list.setCurrentItem(it)
+        self.scope_list.blockSignals(False)
+        if self.scope_list.currentItem() is None and self.scope_list.count():
+            self.scope_list.setCurrentRow(0)
+
+    def _on_pick(self, item):
+        if item is None:
+            return
+        self._cur = str(item.data(Qt.UserRole))
+        self._data = self.db._fill(self.db.get(self._cur))
+        self._scope = self.db.SCOPE_ALL
+        self._reload_scopes()
+        self._load()
+
+    def _on_scope(self, item):
+        if item is None:
+            return
+        self._scope = str(item.data(Qt.UserRole))
+        self._load()
+
+    # ---------- 读 / 写 ----------
+    def _value_of(self, key):
+        """当前 scope 下这个字段显示什么值"""
+        scope, kind, arg, label = self.field_meta[key]
+        if scope == "all":
+            return self._data.get(key)
+        if self._scope == self.db.SCOPE_ALL:
+            return self._data.get(key)
+        ov = (self._data.get("overrides") or {}).get(self._scope) or {}
+        # 覆盖里没有就显示全局值（灰色提示"跟随全局"）
+        return ov.get(key, self._data.get(key))
+
+    def _is_overridden(self, key):
+        scope = self.field_meta[key][0]
+        if scope == "all" or self._scope == self.db.SCOPE_ALL:
+            return False
+        ov = (self._data.get("overrides") or {}).get(self._scope) or {}
+        return key in ov
+
+    def _load(self):
+        self._loading = True
+        builtin = self.db.is_builtin(self._cur)
+        for key, w in self.fields.items():
+            scope, kind, arg, label = self.field_meta[key]
+            # 全局项在"选中某一格"时不可改（它是共用的）
+            editable = (not builtin) and (scope == "slot" or self._scope == self.db.SCOPE_ALL)
+            w.setEnabled(editable)
+            v = self._value_of(key)
+            if kind == "choice":
+                w.setCurrentText({val: n for n, val in arg}.get(str(v), arg[0][0]))
+            elif kind == "bool":
+                w.setChecked(bool(v))
+            elif kind in ("color", "color_opt"):
+                c = str(v or "")
+                w.setText(c or ("跟随主题" if kind == "color_opt" else "选颜色"))
+                w.setStyleSheet(
+                    btn_qss("normal", self.alpha) +
+                    (f"QPushButton {{ background:{c}; color:#ffffff; }}" if c else ""))
+            elif kind == "text":
+                if w.text() != str(v or ""):
+                    w.setText(str(v or ""))
+            else:
+                w.blockSignals(True)
+                w.setValue(int(v))
+                w.blockSignals(False)
+                w._val_label.setText(str(int(v)))
+        # 提示现在改的是谁
+        who = self.db.SCOPE_LABEL.get(self._scope, self._scope)
+        extra = ""
+        if self._scope != self.db.SCOPE_ALL:
+            extra = "　（该格单独改过的地方会用蓝色标出来）"
+        tip = f"当前编辑：{self._cur}　·　改哪个框：{who}{extra}"
+        if builtin:
+            tip += "　·　内置样式不能改，要改请先「复制一份」"
+        self.tip.setText(tip)
+        self.preview.set_style(self._data)
+        self._loading = False
+
+    def _collect_into(self, key, value):
+        """把某个字段写进工作副本（全局 or 该格的覆盖）"""
+        scope = self.field_meta[key][0]
+        if scope == "all" or self._scope == self.db.SCOPE_ALL:
+            self._data[key] = value
+        else:
+            ov = dict(self._data.get("overrides") or {})
+            d = dict(ov.get(self._scope) or {})
+            base = self._data.get(key)
+            if value == base:
+                d.pop(key, None)          # 跟全局一样就不必单独存
+            else:
+                d[key] = value
+            if d:
+                ov[self._scope] = d
+            else:
+                ov.pop(self._scope, None)
+            self._data["overrides"] = ov
+
+    def _on_change(self, key):
+        if self._loading or self._cur is None:
+            return
+        w = self.fields[key]
+        scope, kind, arg, label = self.field_meta[key]
+        if kind == "choice":
+            v = {n: val for n, val in arg}.get(w.currentText(), arg[0][1])
+        elif kind == "bool":
+            v = bool(w.isChecked())
+        elif kind in ("color", "color_opt"):
+            txt = w.text().strip()
+            v = "" if txt in ("跟随主题", "选颜色", "") else txt
+        elif kind == "text":
+            v = w.text()
+        else:
+            v = int(w.value())
+            w._val_label.setText(str(v))
+        self._collect_into(key, v)
+        self.preview.set_style(self._data)
+        if not self.db.is_builtin(self._cur):
+            self.db.save_style(self._cur, self._data)
+            self._reload_scopes()
+            self._apply_current()
+
+    def _on_pick_color(self, key):
+        from PySide6.QtGui import QColor
+        from PySide6.QtWidgets import QColorDialog
+        if self.db.is_builtin(self._cur):
+            return
+        w = self.fields[key]
+        cur = w.text().strip()
+        init = QColor(cur) if cur not in ("跟随主题", "选颜色", "") else QColor("#141418")
+        col = QColorDialog.getColor(init, self, "选择颜色")
+        if not col.isValid():
+            return
+        w.setText(col.name())
+        self._on_change(key)
+
+    def _apply_current(self):
+        self.db.set_current(self._cur)
+        if callable(self._on_apply):
+            self._on_apply()
+
+    # ---------- 增删改 ----------
+    def _ask_name(self, title, default=""):
+        from PySide6.QtWidgets import QInputDialog
+        name, ok = QInputDialog.getText(self, title, "样式名称：", text=default)
+        return name.strip() if ok else ""
+
+    def _on_new(self):
+        name = self._ask_name("新建样式", "我的样式")
+        if not name:
+            return
+        if name in self.db.all_styles():
+            QMessageBox.warning(self, "重名", f"已经有叫「{name}」的样式了。")
+            return
+        self.db.save_style(name, self.db.CLASSIC)
+        self.db.set_current(name)
+        self._reload_list(select=name)
+        self._apply_current()
+
+    def _on_dup(self):
+        if not self._cur:
+            return
+        name = self._ask_name("复制样式", f"{self._cur} 副本")
+        if not name:
+            return
+        if name in self.db.all_styles():
+            QMessageBox.warning(self, "重名", f"已经有叫「{name}」的样式了。")
+            return
+        self.db.save_style(name, self.db.get(self._cur))
+        self.db.set_current(name)
+        self._reload_list(select=name)
+        self._apply_current()
+
+    def _on_rename(self):
+        if not self._cur or self.db.is_builtin(self._cur):
+            QMessageBox.information(self, "提示", "内置样式不能改名。")
+            return
+        name = self._ask_name("重命名", self._cur)
+        if not name:
+            return
+        if not self.db.rename_style(self._cur, name):
+            QMessageBox.warning(self, "失败", "改名没成功（重名了？）。")
+            return
+        self._reload_list(select=name)
+        self._apply_current()
+
+    def _on_delete(self):
+        if not self._cur or self.db.is_builtin(self._cur):
+            QMessageBox.information(self, "提示", "内置样式不能删除。")
+            return
+        if QMessageBox.question(
+                self, "确认删除",
+                f"要删掉样式「{self._cur}」吗？") != QMessageBox.Yes:
+            return
+        self.db.delete_style(self._cur)
+        self._reload_list()
+        self._apply_current()
+
+
+class _BarPreview(QWidget):
+    """悬浮窗预览：按样式摆格子，数字是假的。
+
+    固定放满 4 格（含「监测时间」）—— 这样调样式时每一格都能看到，
+    也知道开了第 4 格会长什么样。
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._slots = {}
+        self._lay = None
+        self._kind = None
+        self.setMinimumSize(400, 220)
+
+    def set_style(self, st):
+        keys = ("slot1", "slot2", "slot3", "slot4")
+        kind = str(st.get("layout", "row"))
+        if kind != self._kind:
+            if self._lay is not None:
+                while self._lay.count():
+                    it = self._lay.takeAt(0)
+                    w = it.widget()
+                    if w is not None:
+                        w.setParent(None)
+                old = self.layout()
+                if old is not None:
+                    QWidget().setLayout(old)
+            self._kind = kind
+            if kind == "grid":
+                lay = QGridLayout(self)
+                for i, k in enumerate(keys):
+                    lay.addWidget(self._slot(k), i // 2, i % 2)
+            else:
+                lay = QVBoxLayout(self) if kind == "column" else QHBoxLayout(self)
+                for k in keys:
+                    lay.addWidget(self._slot(k))
+            self._lay = lay
+        m = max(0, int(st.get("spacing", 8)))
+        self._lay.setContentsMargins(0, 0, 0, 0)
+        self._lay.setSpacing(m)
+        for s in self._slots.values():
+            s.setVisible(True)
+            s.apply_style(st)
+        self.adjustSize()
+
+    def _slot(self, key):
+        import bar_styles
+        import qt_bar
+        import paths
+        s = self._slots.get(key)
+        if s is None:
+            s = qt_bar.Slot(self, bar_styles.SLOT_NAMES.get(key, ""), key)
+            s.set_count({"slot1": "143,610", "slot2": "6,188",
+                         "slot3": "222", "slot4": "10:38:24"}[key])
+            icon = paths.icons_dir() / f"_bar_{key}.png"
+            s.set_icon_file(icon if icon.exists() else None)
+            self._slots[key] = s
+        return s
+
+
 class RegionSelector(QWidget):
     def __init__(self, parent=None):
         super().__init__(None)
@@ -674,3 +1165,310 @@ def select_region(parent=None):
         QGuiApplication.processEvents()
         time.sleep(0.01)
     return sel._result
+
+
+class RecordEditDialog(QDialog):
+    """改一条收益记录的名称 / 备注。
+
+    名称的作用跟「选项的名字」一样（卡片标题），备注跟「选项的简介」一样。
+    名称留空 = 用默认名（日期 + 起止时间 + 时长）。
+    """
+
+    def __init__(self, parent, rec, alpha=150):
+        super().__init__(parent)
+        self.setWindowTitle("编辑这条记录")
+        self.setMinimumWidth(520)
+        self.alpha = alpha
+        self._rec = rec or {}
+
+        self.setStyleSheet(f"""
+            QDialog {{ background: {BG}; }}
+            QLineEdit {{
+                background: rgba(255,255,255,16); color: {TEXT};
+                border: 1px solid {BORDER}; border-radius: 6px;
+                padding: 5px 8px; selection-background-color: {ACCENT};
+            }}
+            QPlainTextEdit {{
+                background: rgba(255,255,255,16); color: {TEXT};
+                border: 1px solid {BORDER}; border-radius: 6px;
+                padding: 5px 8px; selection-background-color: {ACCENT};
+            }}
+            QLabel {{ color: {TEXT}; background: transparent; }}
+        """)
+
+        import sessions
+        root = QVBoxLayout(self)
+        root.setContentsMargins(18, 14, 18, 16)
+        root.setSpacing(8)
+
+        def lab(t, dim=False):
+            x = QLabel(t)
+            x.setStyleSheet(label_qss(DIM if dim else TEXT, 12))
+            return x
+
+        root.addWidget(lab("名称", dim=False))
+        self.name_edit = QLineEdit(sessions.display_name(self._rec))
+        self.name_edit.setPlaceholderText("留空则用默认名（日期 + 时间 + 时长）")
+        root.addWidget(self.name_edit)
+
+        root.addWidget(lab(f"默认名：{sessions.default_name(self._rec)}", dim=True))
+        root.addSpacing(4)
+
+        root.addWidget(lab("备注", dim=False))
+        self.notes_edit = QPlainTextEdit(sessions.display_notes(self._rec))
+        self.notes_edit.setPlaceholderText("随便写点什么")
+        self.notes_edit.setFixedHeight(110)
+        root.addWidget(self.notes_edit)
+
+        root.addSpacing(6)
+        bottom = QHBoxLayout()
+        reset = QPushButton("清空名称与备注")
+        reset.setFixedHeight(32)
+        reset.setCursor(Qt.PointingHandCursor)
+        reset.setStyleSheet(btn_qss("danger", self.alpha))
+        reset.clicked.connect(self._clear)
+        bottom.addWidget(reset)
+        bottom.addStretch(1)
+        ok = QPushButton("确定")
+        ok.setFixedSize(84, 32)
+        ok.setCursor(Qt.PointingHandCursor)
+        ok.setStyleSheet(btn_qss("accent", self.alpha))
+        ok.clicked.connect(self.accept)
+        bottom.addWidget(ok)
+        no = QPushButton("取消")
+        no.setFixedSize(84, 32)
+        no.setCursor(Qt.PointingHandCursor)
+        no.setStyleSheet(btn_qss("normal", self.alpha))
+        no.clicked.connect(self.reject)
+        bottom.addWidget(no)
+        root.addLayout(bottom)
+
+    def _clear(self):
+        self.name_edit.setText("")
+        self.notes_edit.setPlainText("")
+
+    def values(self):
+        """返回 (name, notes)。名称等于默认名时也原样存下去，不改用户输入。"""
+        return (self.name_edit.text().strip(),
+                self.notes_edit.toPlainText().strip())
+
+
+# ============================================================
+#  黑名单 / 白名单 —— 配置单张名单
+# ============================================================
+class NameListDialog(QDialog):
+    """配置一张黑 / 白名单：从「所有可选名字」里挑，可搜索。
+
+    左边 = 还没选的（可搜索），右边 = 已选的。
+    点一下就在两边之间搬。确定后写回设置，返回 True。
+
+    跟「管理识别名单」那个弹窗的分工：
+        names_db      决定**能不能识别**（认不出来的名字进不来）
+        NameListDialog 决定**认出来了要不要记账**
+    """
+
+    def __init__(self, parent, key, title, desc, pool, chosen, alpha=150):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setMinimumSize(720, 660)
+        self.alpha = alpha
+        self.key = key
+        self._pool = sorted(str(x) for x in pool)
+        self._chosen = [str(x) for x in (chosen or [])]
+
+        self.setStyleSheet(f"""
+            QDialog {{ background: {BG}; }}
+            QLineEdit {{
+                background: rgba(255,255,255,16); color: {TEXT};
+                border: 1px solid {BORDER}; border-radius: 6px;
+                padding: 3px 8px; selection-background-color: {ACCENT};
+            }}
+            QLabel {{ color: {TEXT}; background: transparent; }}
+        """)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(18, 14, 18, 16)
+        root.setSpacing(9)
+
+        head = QLabel(title)
+        head.setStyleSheet(label_qss(TEXT, 16, True))
+        root.addWidget(head)
+
+        tip = QLabel(desc)
+        tip.setWordWrap(True)
+        tip.setStyleSheet(label_qss(DIM, 12))
+        root.addWidget(tip)
+
+        cols = QHBoxLayout()
+        cols.setSpacing(10)
+
+        # ---- 左：可选（带搜索）----
+        left = QVBoxLayout()
+        left.setSpacing(6)
+        lb = QLabel("可选（双击加进右边；Ctrl/Shift 多选后点「→ 加入」）")
+        lb.setStyleSheet(label_qss(DIM, 12))
+        left.addWidget(lb)
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("搜索名字…")
+        self.search.setFixedHeight(30)
+        self.search.textChanged.connect(self._refilter)
+        left.addWidget(self.search)
+        self.pool_list = self._make_list()
+        # ⚠ 用双击而不是单击：单击要留给「选中」（多选后点按钮批量搬），
+        #   两者都绑 itemClicked 的话一选就被搬走，没法多选了。
+        self.pool_list.itemDoubleClicked.connect(self._add_one)
+        left.addWidget(self.pool_list, 1)
+
+        # 中间的搬运按钮
+        mid = QVBoxLayout()
+        mid.addStretch(1)
+        for text, cb in (("→ 加入", self._add_checked),
+                         ("← 移出", self._del_checked)):
+            b = QPushButton(text)
+            b.setFixedSize(82, 30)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setStyleSheet(btn_qss("normal", self.alpha))
+            b.clicked.connect(cb)
+            mid.addWidget(b)
+        mid.addStretch(1)
+        cols.addLayout(left, 1)
+        cols.addLayout(mid)
+        # ---- 右：已选 ----
+        right = QVBoxLayout()
+        right.setSpacing(6)
+        self.right_label = QLabel("已选（双击移出）")
+        self.right_label.setStyleSheet(label_qss(DIM, 12))
+        right.addWidget(self.right_label)
+        spacer = QWidget()
+        spacer.setFixedHeight(36)          # 跟左边的搜索框对齐
+        right.addWidget(spacer)
+        self.chosen_list = self._make_list()
+        self.chosen_list.itemDoubleClicked.connect(self._del_one)
+        right.addWidget(self.chosen_list, 1)
+        cols.addLayout(right, 1)
+
+        root.addLayout(cols, 1)
+
+        # ---- 底部 ----
+        bottom = QHBoxLayout()
+        bottom.setSpacing(8)
+        for text, kind, cb in (("全选可见", "normal", self._add_all_visible),
+                               ("清空名单", "danger", self._clear),
+                               ("恢复原样", "normal", self._revert)):
+            b = QPushButton(text)
+            b.setFixedHeight(32)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setStyleSheet(btn_qss(kind, self.alpha))
+            b.clicked.connect(cb)
+            bottom.addWidget(b)
+        bottom.addStretch(1)
+        ok = QPushButton("确定")
+        ok.setFixedSize(84, 32)
+        ok.setCursor(Qt.PointingHandCursor)
+        ok.setStyleSheet(btn_qss("accent", self.alpha))
+        ok.clicked.connect(self.accept)
+        bottom.addWidget(ok)
+        no = QPushButton("取消")
+        no.setFixedSize(84, 32)
+        no.setCursor(Qt.PointingHandCursor)
+        no.setStyleSheet(btn_qss("normal", self.alpha))
+        no.clicked.connect(self.reject)
+        bottom.addWidget(no)
+        root.addLayout(bottom)
+
+        self._original = list(self._chosen)
+        self._rebuild()
+
+    # ---------- 内部 ----------
+
+    def _make_list(self):
+        """两个列表：点一下搬一个，Ctrl/Shift 多选后用中间按钮批量搬。
+
+        ⚠ 不能用 NoSelection —— 那样 selectedItems() 永远为空，
+        「→ 加入 / ← 移出」两个按钮就形同虚设（踩过）。
+        """
+        w = QListWidget()
+        w.setAlternatingRowColors(False)
+        w.setSelectionMode(QListWidget.ExtendedSelection)
+        pal = w.palette()
+        pal.setColor(pal.ColorRole.Text, QColor(TEXT))
+        w.setPalette(pal)
+        # ⚠ 样式表里别写 `QListWidget::item { color: ... }`
+        w.setStyleSheet(f"""
+            QListWidget {{
+                background: rgba(0,0,0,90); border: 1px solid {BORDER};
+                border-radius: 8px; padding: 4px; outline: none;
+            }}
+            QListWidget::item {{ padding: 5px 6px; }}
+            QListWidget::item:selected {{ background: {ACCENT}; color: #10161f; }}
+        """)
+        return w
+
+    def _rebuild(self):
+        self._refilter(self.search.text())
+
+    def _refilter(self, text):
+        key = (text or "").strip().lower()
+        chosen = set(self._chosen)
+        self.pool_list.clear()
+        for n in self._pool:
+            if n in chosen:
+                continue
+            if key and key not in n.lower():
+                continue
+            self.pool_list.addItem(n)
+        self.chosen_list.clear()
+        for n in self._chosen:
+            if key and key not in n.lower():
+                continue
+            self.chosen_list.addItem(n)
+        self.right_label.setText(
+            f"已选 {len(self._chosen)} 个（点一下移出）")
+
+    def _add_one(self, item):
+        """双击一条 -> 加进右边"""
+        n = item.text()
+        if n not in self._chosen:
+            self._chosen.append(n)
+            self._chosen = sorted(self._chosen)
+        self._rebuild()
+
+    def _del_one(self, item):
+        """双击一条 -> 从右边移出"""
+        n = item.text()
+        if n in self._chosen:
+            self._chosen.remove(n)
+        self._rebuild()
+
+    def _add_checked(self):
+        for it in self.pool_list.selectedItems():
+            n = it.text()
+            if n not in self._chosen:
+                self._chosen.append(n)
+        self._chosen = sorted(self._chosen)
+        self._rebuild()
+
+    def _del_checked(self):
+        for it in self.chosen_list.selectedItems():
+            if it.text() in self._chosen:
+                self._chosen.remove(it.text())
+        self._rebuild()
+
+    def _add_all_visible(self):
+        for i in range(self.pool_list.count()):
+            self._chosen.append(self.pool_list.item(i).text())
+        self._chosen = sorted(set(self._chosen))
+        self._rebuild()
+
+    def _clear(self):
+        self._chosen = []
+        self._rebuild()
+
+    def _revert(self):
+        self._chosen = list(self._original)
+        self._rebuild()
+
+    def chosen(self):
+        return list(self._chosen)
+
+

@@ -55,19 +55,34 @@ DEFAULT_SETTINGS = {
     "bg_dim": 0.0,                  # 背景图压暗程度（0~0.6，照片类背景图看不清字时用）
     "sidebar_glass": True,          # 左侧栏是否模糊（需要先设置背景图片）
     "panel_opacity": 0.5,           # 面板（卡片/侧边栏/按钮）透明度：0=全透明，1=不透明
-    # 横向统计条（直播间小窗口）：三个格子的图标文件（icons 文件夹里，内置默认）
+    # 桌面悬浮窗（统计条）：图标 + 开关 + 位置。
+    # 外观样式（大小/圆角/底色/描边/颜色…）在 data/bar_styles.json，见 bar_styles.py
     "stat_bar": {
         "slot1": "_bar_slot1.png",   # 摩拉（内置）
         "slot2": "_bar_slot2.png",   # 材料（内置）
         "slot3": "_bar_slot3.png",   # 狗粮（内置）
+        "slot4": "",                 # 监测时间（默认没图标，只显示文字）
         "always_on_top": True,       # 是否置顶
-        "opacity": 1.0,              # 统计条透明度（0.2~1.0，1.0=不透明）
+        "opacity": 1.0,              # 整体透明度（0.2~1.0，1.0=不透明）
         "show_slot1": True,          # 是否显示「摩拉」格
         "show_slot2": True,          # 是否显示「材料」格
         "show_slot3": True,          # 是否显示「狗粮」格
+        "show_slot4": False,         # 是否显示「监测时间」格（OBS 那条有，桌面默认不显示）
     },
     "rollover_hour": 0,              # 换日时间（0=自然日；4=凌晨4点换日）
     "rollover_enabled": True,        # 换日刷新数据总开关（关掉就一直累着，不换日）
+    # 黑名单 / 白名单：决定「识别到了要不要记账」（跟 names_db 的识别名单是两件事）
+    #   _white = 只记名单里的；_black = 名单里的一律不记；白名单优先
+    #   enabled 开着但 names 为空 = 什么都不记，离开设置页时会弹窗提醒并自动关掉
+    # 结构见 filters_db.LISTS
+    "records": {
+        "filters": {
+            "material_white": {"enabled": False, "names": []},
+            "material_black": {"enabled": False, "names": []},
+            "artifact_white": {"enabled": False, "names": []},
+            "artifact_black": {"enabled": False, "names": []},
+        },
+    },
     "obs_api_enabled": True,         # 直播数据接口总开关（OBS 那个，改了立刻生效）
     "hotkey": "关闭",                # 全局热键：开始/停止监测
     "hotkey_bar": "关闭",            # 全局热键：显示/隐藏统计条

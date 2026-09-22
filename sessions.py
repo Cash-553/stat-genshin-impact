@@ -85,7 +85,12 @@ def record_key(rec):
 
 
 def make_record(start_ts, end_ts, seconds, mora, artifact, materials):
-    """构造一条记录（时间用本地时间字符串，方便显示）"""
+    """构造一条记录（时间用本地时间字符串，方便显示）
+
+    ``name`` / ``notes`` 留空表示「用默认名 / 没有备注」——
+    名称默认是「日期 + 开始 → 结束 + 时长」，由 :func:`display_name` 现算，
+    用户改过就存进 ``name``。
+    """
     import time as _t
     return {
         "id": new_id(),
@@ -95,7 +100,92 @@ def make_record(start_ts, end_ts, seconds, mora, artifact, materials):
         "mora": int(max(0, mora)),
         "artifact": int(max(0, artifact)),
         "materials": {str(k): int(v) for k, v in (materials or {}).items() if v},
+        "name": "",        # 用户改过的名字（空 = 用默认名）
+        "notes": "",       # 备注
     }
+
+
+# ---------------------------------------------------------------- 名称 / 备注
+
+def _dur_text(seconds):
+    """时长文字：1小时23分 / 23分05秒 / 45秒"""
+    try:
+        sec = max(0, int(seconds))
+    except Exception:
+        sec = 0
+    h, m, s = sec // 3600, sec % 3600 // 60, sec % 60
+    if h:
+        return f"{h}小时{m:02d}分"
+    if m:
+        return f"{m}分{s:02d}秒"
+    return f"{s}秒"
+
+
+def default_name(rec):
+    """默认名称：日期 + 开始 → 结束 + 时长（用户要求的格式）"""
+    if not isinstance(rec, dict):
+        return ""
+    start = str(rec.get("start", "") or "").strip()
+    end = str(rec.get("end", "") or "").strip()
+    if not start and not end:
+        return "未命名记录"
+    date, t1 = (start.split(" ", 1) + [""])[:2] if start else ("", "")
+    t2 = end.split(" ", 1)[1] if " " in end else ""
+    parts = [date or "——"]
+    if t1:
+        parts.append(t1 + (f" → {t2}" if t2 else ""))
+    parts.append(f"时长 {_dur_text(rec.get('seconds', 0))}")
+    return "　".join(parts)
+
+
+def display_name(rec):
+    """界面上显示的名称：用户改过就用他的，否则用默认名"""
+    if not isinstance(rec, dict):
+        return ""
+    return str(rec.get("name") or "").strip() or default_name(rec)
+
+
+def display_notes(rec):
+    if not isinstance(rec, dict):
+        return ""
+    return str(rec.get("notes") or "").strip()
+
+
+def update_record(rec, **fields):
+    """改一条记录的字段（名称 / 备注）。
+
+    ⚠ 原记录和**收藏夹里的副本**都要改 —— 收藏夹存的是整条记录的深拷贝，
+    只改一边的话：从收益记录里改名，收藏夹里那条还是老名字。
+    """
+    if not isinstance(rec, dict):
+        return False
+    key = record_key(rec)
+    changed = False
+
+    items = load_sessions()
+    for r in items:
+        if record_key(r) == key:
+            r.update(fields)
+            changed = True
+    if changed:
+        save_sessions(items)
+
+    favs = load_favorites()
+    fav_changed = False
+    for f in favs:
+        if record_key(f) == key:
+            f.update(fields)
+            fav_changed = True
+    if fav_changed:
+        save_favorites(favs)
+
+    rec.update(fields)          # 让调用方手上那份也同步
+    return changed or fav_changed
+
+
+def format_duration(seconds):
+    """给界面用的时长显示（跟 _dur_text 同义，对外留个正经名字）"""
+    return _dur_text(seconds)
 
 
 # ---------------------------------------------------------------- 收藏夹
