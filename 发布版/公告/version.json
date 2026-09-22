@@ -1,11 +1,11 @@
 {
-  "version": "0.9.1",
-  "notes": "新增「识别名单」设置项；不在名单中的名称不再计入统计，减少误记；\n修复启动时公告卡片引发的崩溃与部分界面图标缺失的问题。",
+  "version": "0.9.2",
+  "notes": "悬浮窗新增自定义样式；新增黑白名单功能（可按材料 / 圣遗物指定只统计或排除某些物品）；收益记录界面优化。",
   "url_github": "https://github.com/Cash-553/stat-genshin-impact/releases",
   "url_gitee": "https://gitee.com/Cash553/stat-genshin-impact/releases",
   "update": {
-    "size": 123548647,
-    "sha256": "7ed712bf94897b5205cc436af1b983ce6b4d8ce7f141b3b36ebf05a5d852ceef",
+    "size": 123553356,
+    "sha256": "b90365ff72770489033712c9eb14b8973cf59a9122c93a99633ddfa133d09112",
     "sources": [
       {
         "label": "Gitee（国内快）",
