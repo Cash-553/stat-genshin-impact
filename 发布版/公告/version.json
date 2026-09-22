@@ -1,6 +1,6 @@
 {
   "version": "0.9.2",
-  "notes": "悬浮窗新增自定义样式；新增黑白名单功能（可按材料 / 圣遗物指定只统计或排除某些物品）；收益记录界面优化。",
+  "notes": "悬浮窗新增自定义样式\n新增黑白名单功能\n修复部分bug",
   "url_github": "https://github.com/Cash-553/stat-genshin-impact/releases",
   "url_gitee": "https://gitee.com/Cash553/stat-genshin-impact/releases",
   "update": {
