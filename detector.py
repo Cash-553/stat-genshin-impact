@@ -747,6 +747,21 @@ class Detector:
             ev.setdefault("raw", (text or "").strip())
         return ev
 
+    def _filter_allows(self, kind, name=""):
+        """黑名单 / 白名单：认出来了要不要记账。
+
+        kind = "material" / "artifact"
+        规则（白名单优先）：
+            白名单开着且非空 -> 只记名单里的
+            黑名单开着       -> 名单里的一律不记
+        名单为空且白名单开着 = 什么都不记（设置页会在离开时提醒并关掉它）
+        """
+        try:
+            import filters_db
+            return filters_db.allows(self.settings, kind, name)
+        except Exception:
+            return True          # 读不到名单就别拦，宁可能记也别丢数据
+
     def _parse_pickup_text_inner(self, text):
         """
         解析一行拾取提示："名称 × 数量"（原神里 × 符号偏小，OCR 可能读丢或读错）。
@@ -782,25 +797,31 @@ class Detector:
         if name in ARTIFACT_NAME_SET:
             if not self.settings.get("enable_artifact", True):
                 return None
+            if not self._filter_allows("artifact", name):
+                return None
             return {"type": "artifact", "count": count}
         # 2) 材料库已知材料
         if name in MATERIAL_NAME_SET:
             if not self.settings.get("enable_material", True):
+                return None
+            if not self._filter_allows("material", name):
                 return None
             return {"type": "material", "name": name, "count": count, "category": "monster"}
         # 3) 圣遗物关键词兜底（防名单遗漏）
         if self._is_artifact_name(name):
             if not self.settings.get("enable_artifact", True):
                 return None
+            if not self._filter_allows("artifact", name):
+                return None
             return {"type": "artifact", "count": count}
         # 3.5) 名单纠错（OCR 错字时，从名单找最相似的名字纠正）
         if self.settings.get("enable_artifact", True):
             corr = self._fuzzy_match(name, ARTIFACT_NAME_SET, _ART_INDEX)
-            if corr:
+            if corr and self._filter_allows("artifact", corr):
                 return {"type": "artifact", "count": count}
         if self.settings.get("enable_material", True):
             corr = self._fuzzy_match(name, MATERIAL_NAME_SET, _MAT_INDEX)
-            if corr:
+            if corr and self._filter_allows("material", corr):
                 return {"type": "material", "name": corr, "count": count, "category": "monster"}
         # 3.5) 大数字兜底：名字不在任何名单，但数字较大（≥20）
         #      → 极可能是摩拉被 OCR 读丢"摩"字（摩拉 ×200 只读到部分）
@@ -948,20 +969,24 @@ class Detector:
             if name in MATERIAL_NAME_SET:
                 if not self.settings.get("enable_material", True):
                     return None
+                if not self._filter_allows("material", name):
+                    return None
                 return {"type": "material", "key": "material:" + name, "name": name, "count": count}
             # 3. 圣遗物（按关键词/部位后缀判断）
             if self._is_artifact_name(name):
                 if not self.settings.get("enable_artifact", True):
                     return None
+                if not self._filter_allows("artifact", name):
+                    return None
                 return {"type": "artifact", "key": "artifact", "count": 1}
             # 3.5 名单纠错：OCR 读错字时，从名单里找最像的纠正
             if self.settings.get("enable_material", True):
                 corr = self._fuzzy_match(name, MATERIAL_NAME_SET, _MAT_INDEX)
-                if corr:
+                if corr and self._filter_allows("material", corr):
                     return {"type": "material", "key": "material:" + corr,
                             "name": corr, "count": count}
                 corr = self._fuzzy_match(name, ARTIFACT_NAME_SET, _ART_INDEX)
-                if corr:
+                if corr and self._filter_allows("artifact", corr):
                     return {"type": "artifact", "key": "artifact", "count": 1}
             # 4. 不在任何名单里的 → **不登记**
             #

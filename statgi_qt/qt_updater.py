@@ -273,11 +273,14 @@ if not errorlevel 1 (
 rem ---- 2) 备份旧文件（除了用户数据）----
 if exist "_backup" rd /s /q "_backup"
 echo   正在备份旧版本…
-robocopy "." "_backup" /E /XD config data _backup /NFL /NDL /NJH /NJS >nul
+robocopy "." "_backup" /E /XD config data icons _backup /NFL /NDL /NJH /NJS >nul
 
-rem ---- 3) 把新文件搬过去（跳过 config 和 data）----
+rem ---- 3) 把新文件搬过去（跳过 config、data 和 icons）----
+rem ⚠ icons 整个跳过：用户能自己往 icons\\ 里导入图标，
+rem   直接覆盖会把人家导入的图删掉。
+rem   新版本自带的图标由主程序启动时补齐（icons_lib.sync_bundled_icons）。
 echo   正在替换文件…
-robocopy "{new_dir}" "." /E /XD config data _backup /NFL /NDL /NJH /NJS >nul
+robocopy "{new_dir}" "." /E /XD config data icons _backup /NFL /NDL /NJH /NJS >nul
 if errorlevel 8 goto failed
 
 echo   完成！
@@ -286,7 +289,7 @@ goto done
 :failed
 echo.
 echo   ✗ 替换失败，正在还原旧版本…
-robocopy "_backup" "." /E /XD config data _backup /NFL /NDL /NJH /NJS >nul
+robocopy "_backup" "." /E /XD config data icons _backup /NFL /NDL /NJH /NJS >nul
 echo   已还原，你的软件还能正常用。
 echo.
 pause

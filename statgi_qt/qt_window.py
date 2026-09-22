@@ -937,6 +937,17 @@ class MainWindow(QWidget):
             log_exc("qt_window 标题状态")
 
     def show_page(self, idx):
+        # ⚠ 先给**上一页**一个 on_hide 的机会，再切页。
+        #   设置页用它做「名单开着但为空」的提醒 —— 弹窗必须弹在切页之前，
+        #   不然用户已经走了才跳提示，会莫名其妙。
+        try:
+            old = self.stack.currentWidget()
+            fn = getattr(old, "on_hide", None)
+            if callable(fn):
+                fn()
+        except Exception:
+            from errlog import log_exc
+            log_exc("on_hide")
         self.stack.setCurrentIndex(idx)
         # 公告页不在导航里（是侧栏下面那个单独入口），
         # 所以在公告页时把导航的高亮全部清掉

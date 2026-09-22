@@ -11,7 +11,7 @@
 from PySide6.QtCore import Qt, Signal, QRectF, QSize, QEvent, QVariantAnimation
 from PySide6.QtGui import QPainter, QColor
 from PySide6.QtWidgets import (QFrame, QLabel, QPushButton, QHBoxLayout,
-                               QVBoxLayout, QWidget)
+                               QVBoxLayout, QWidget, QSizePolicy)
 
 from qt_theme import (RADIUS_CARD, RADIUS_BTN, card_qss, label_qss, title_qss,
                       btn_qss)
@@ -365,6 +365,94 @@ class SettingRow(Card):
 ACCORDION_INSET = 12      # 子卡片比主卡片窄多少（左右各缩进）
 
 
+class SwitchAccordion(QWidget):
+    """折叠区（带**头部开关**版）。
+
+    跟 Accordion 的区别：
+        · 头部右边多一个开关，开关一变就发 ``toggled(bool)``
+        · 内容区直接放**你自己给的控件**，不会被自动包卡片
+          （Accordion 的 body_widget 会被 _extract_body_items 逐项包卡片，
+           想放一张卡片进去会被包成"卡片套卡片"）
+        · 开关是关的时候，点标题**不展开**（没东西可配）
+
+    用在：设置 → 统计 的黑名单 / 白名单。层级是
+        主卡片(纯 Accordion) > 物品种类卡片(SwitchAccordion) > 配置名单(控件)
+    """
+
+    toggled = Signal(bool)
+
+    def __init__(self, parent=None, icon="", title="", desc="", alpha=150,
+                 checked=False, body=None):
+        super().__init__(parent)
+        self._open = False
+        self._alpha = alpha
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # ---- 头部：图标 + 标题 + 说明 …… 开关 ----
+        self.head = SubRow(self, icon=icon, title=title, desc=desc,
+                           right=None, alpha=alpha)
+        self.title_label = self.head.title_label
+        self.desc_label = self.head.desc_label
+        self.switch = Switch(self.head, bool(checked))
+        self.switch.toggled.connect(self._on_switch)
+        self.head.layout().addWidget(self.switch)
+
+        # 点头部（开关以外的地方）展开 / 收起
+        for w in (self.head, self.head.icon_box, self.title_label,
+                  self.head.desc_label):
+            w.setCursor(Qt.PointingHandCursor)
+            w.mousePressEvent = self._toggle
+        attach_hover(self.head, self.head.icon_widget)
+        outer.addWidget(self.head)
+
+        # ---- 内容区：放调用方给的控件 ----
+        self.body = QWidget(self)
+        bl = QVBoxLayout(self.body)
+        bl.setContentsMargins(ACCORDION_INSET, 0, ACCORDION_INSET, 0)
+        bl.setSpacing(0)
+        self.body_layout = bl
+        if body is not None:
+            bl.addWidget(body)
+        self.body.setVisible(False)          # 默认收起
+        outer.addWidget(self.body)
+
+        self.arrow = QLabel("▸")
+        self.arrow.setStyleSheet(label_qss(T.DIM, 15))
+        self.head.layout().insertWidget(self.head.layout().count() - 1,
+                                        self.arrow)
+        self.arrow.setCursor(Qt.PointingHandCursor)
+        self.arrow.mousePressEvent = self._toggle
+
+    def _on_switch(self, val):
+        on = bool(val)
+        self.body.setVisible(False if not on else self.body.isVisible())
+        self._open = False
+        self.arrow.setText("▸")
+        self.toggled.emit(on)
+
+    def _toggle(self, _e=None):
+        if not self.switch.isChecked():
+            return                            # 没开就没东西可配
+        self._open = not self._open
+        self.body.setVisible(self._open)
+        self.arrow.setText("▾" if self._open else "▸")
+
+    def is_on(self):
+        return self.switch.isChecked()
+
+    def set_on_silent(self, on):
+        self.switch.blockSignals(True)
+        self.switch.setChecked(bool(on))
+        self.switch.blockSignals(False)
+        if not on:
+            self.body.setVisible(False)
+            self._open = False
+            self.arrow.setText("▸")
+
+
 class SubRow(Card):
     """折叠区里的子卡片：[图标] 标题 + 说明 …… [右边控件]
 
@@ -391,6 +479,10 @@ class SubRow(Card):
         # desc_color 用来做红色警告（比如"全删了就识别不到东西了"）
         self.desc_label.setStyleSheet(
             label_qss(desc_color or T.DIM, 12, bool(desc_color)))
+        # ⚠ 说明文字长了会把右边的控件**顶出卡片外面**（看着像叠在一起）。
+        #   给它 Ignored 的横向策略：文字不再撑宽行，右边控件就待在卡片里。
+        self.desc_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.desc_label.setMinimumWidth(0)
         mid.addWidget(self.title_label)
         mid.addWidget(self.desc_label)
         lay.addLayout(mid, 1)

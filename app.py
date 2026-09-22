@@ -13,6 +13,7 @@
 """
 import os
 import sys
+import traceback
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 QT_DIR = os.path.join(HERE, "statgi_qt")
@@ -23,6 +24,52 @@ for p in (HERE, QT_DIR):
     if p not in sys.path:
         sys.path.insert(0, p)
 
+
+# ============================================================
+#  启动日志（默认不写，排查打包问题时才开）
+#
+#  为什么需要：打包版是 console=False，**没有任何输出**。启动阶段一崩
+#  （或者被单实例检测挡住直接返回 0），用户那边就是"双击没反应"，
+#  而 data\error.log 是进到主窗口之后才装的钩子，抓不到这个阶段。
+#
+#  用法：设环境变量 STATGI_STARTUP_LOG=1 再启动，就会写
+#  exe 旁边的 data\startup.log。
+#
+#  ⚠ 目录要按 **exe 旁边** 算，不能用 __file__ —— 冻结后 __file__ 指向
+#    _internal\，日志会写到 _internal\data\ 里去（踩过）。
+# ============================================================
+def _log(msg):
+    import os as _os
+    if _os.environ.get("STATGI_STARTUP_LOG") != "1":
+        return
+    try:
+        import paths
+        d = paths.app_dir() / "data"
+        d.mkdir(parents=True, exist_ok=True)
+        with open(d / "startup.log", "a", encoding="utf-8") as f:
+            f.write(msg + "\n")
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
-    from main import main as qt_main      # statgi_qt/main.py
-    sys.exit(qt_main())
+    import time
+    _log(f"--- 启动 {time.strftime('%Y-%m-%d %H:%M:%S')} ---")
+    _log(f"  冻结={getattr(sys, 'frozen', False)}  "
+         f"_MEIPASS={getattr(sys, '_MEIPASS', '(无)')}")
+    _log(f"  python={sys.version.split()[0]}")
+    try:
+        from main import main as qt_main      # statgi_qt/main.py
+    except Exception:
+        _log("  ✗ import main 失败：\n" + traceback.format_exc())
+        raise
+    try:
+        rc = qt_main()
+        _log(f"  main() 返回 {rc}")
+        sys.exit(rc)
+    except SystemExit as e:
+        _log(f"  SystemExit: {e}")
+        raise
+    except Exception:
+        _log("  ✗ main() 抛异常：\n" + traceback.format_exc())
+        raise

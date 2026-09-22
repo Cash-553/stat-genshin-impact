@@ -100,6 +100,16 @@ def main():
     except Exception:
         pass
 
+    # 更新时 `robocopy` 会整个跳过 icons\（免得冲掉用户自己导入的图标），
+    # 所以这里把新版本自带的图标补上：
+    #   · 三个 slot + mora/artifact 永远按新版本覆盖（外观基线）
+    #   · 其余只在缺失时补，不覆盖同名文件 —— 用户的图得以保留
+    try:
+        import icons_lib
+        icons_lib.sync_bundled_icons()
+    except Exception:
+        pass
+
     win = MainWindow()
     win.show()
 
