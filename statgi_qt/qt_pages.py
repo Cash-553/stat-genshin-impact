@@ -31,7 +31,9 @@ from qt_widgets import (Card, SettingRow, Switch, Accordion, SwitchAccordion,
                         IconButton, msg_info, RedDot)
 from qt_icon import IconWidget, attach_hover
 
-VERSION = "0.9.2"
+# 版本号住在 app_info（叶子模块）里 —— 这样 qt_update 读版本时不必反向
+# import 本文件，两边就不会形成循环依赖了。
+from app_info import VERSION, APP_NAME          # noqa: E402
 
 # 颜色下拉框里那一项「自定义颜色…」（选了会开取色器）
 CUSTOM_COLOR = "自定义颜色…"

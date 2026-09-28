@@ -56,7 +56,7 @@ DEFAULT_SETTINGS = {
     "sidebar_glass": True,          # 左侧栏是否模糊（需要先设置背景图片）
     "panel_opacity": 0.5,           # 面板（卡片/侧边栏/按钮）透明度：0=全透明，1=不透明
     # 桌面悬浮窗（统计条）：图标 + 开关 + 位置。
-    # 外观样式（大小/圆角/底色/描边/颜色…）在 data/bar_styles.json，见 bar_styles.py
+    # 外观样式（大小/圆角/底色/描边/颜色…）在 data/bar_items.json，见 bar_items.py
     "stat_bar": {
         "slot1": "_bar_slot1.png",   # 摩拉（内置）
         "slot2": "_bar_slot2.png",   # 材料（内置）

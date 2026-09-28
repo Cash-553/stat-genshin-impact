@@ -149,9 +149,9 @@ def check(channel="auto", bust_cache=True):
 
 
 def current_version():
-    """本地版本（从 qt_pages 读，避免两处写死）"""
+    """本地版本（从 app_info 读 —— 那是个叶子模块，不会造成循环依赖）"""
     try:
-        from qt_pages import VERSION
+        from app_info import VERSION
         return str(VERSION)
     except Exception:
         return "0"
