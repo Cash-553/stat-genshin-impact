@@ -30,6 +30,17 @@ except ImportError:
 
 
 def main():
+    # 界面缩放（用户设置里的 ui_scale）——
+    # ⚠ 必须赶在 **QApplication 建出来之前** 设 `QT_SCALE_FACTOR`：
+    #   Qt 只在建 App 那一刻读一次，之后再改没用（所以设置里写了"重启后生效"）。
+    try:
+        import config_manager
+        _sc = float(config_manager.load_settings().get("ui_scale", 1.0) or 1.0)
+        if abs(_sc - 1.0) > 0.001:
+            os.environ["QT_SCALE_FACTOR"] = f"{_sc:g}"
+    except Exception:
+        pass
+
     # 高 DPI：交给 Qt 自己处理
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
@@ -113,8 +124,9 @@ def main():
     win = MainWindow()
     win.show()
 
-    # 识别日志：写一段抬头（时间 + 当前识别名单），这样出了"认不出来"的
-    # 问题时，能先确认当时用的是哪份名单
+    # 识别日志：**新开一个日志文件**（一次运行一个，放进 data/识别日志/），
+    # 并写一段抬头（时间 + 当前识别名单）——
+    # 这样出了"认不出来"的问题时，能先确认当时用的是哪份名单
     try:
         import detect_log
         detect_log.session_start(win.settings)

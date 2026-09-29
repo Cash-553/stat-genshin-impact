@@ -18,7 +18,8 @@ from PySide6.QtCore import QObject, QTimer, Signal
 
 import config_manager
 import paths
-import sessions
+import svc_capture
+import svc_records
 from stats import DailyStats
 
 GOOD = "#6CCB5F"
@@ -34,6 +35,7 @@ class AppState(QObject):
     stats_changed = Signal()               # 数字 / 材料变了
     status_changed = Signal(str, str)      # 状态文字, 颜色
     event_happened = Signal(str, float)    # 最近一次识别（描述, 时间戳）
+    session_ended = Signal(object)         # 本次监测结束（参数=刚写进记录的那条 dict）
 
     def __init__(self, settings):
         super().__init__()
@@ -49,7 +51,7 @@ class AppState(QObject):
         self._detect_thread = None
         self._detect_stop = None
         self._detect_queue = None
-        self._detect_err_streak = 0
+        # 「连续失败计数」搬去 svc_capture.run_detector 了（本来也没人读它）
         self.detector = None
         self._sess_start_ts = None
         self._sess_snapshot = None
@@ -145,33 +147,11 @@ class AppState(QObject):
     def apply_live_settings(self):
         """把改了设置立刻推给**正在运行**的识别线程。
 
-        识别线程是用 settings 这个 dict 构造 Detector 的，而 Detector 在
-        构造时把一部分值**复制**成自己的属性 —— 所以光改 settings 它不会变，
-        必须显式把新值赋回去（Tk 版的 _apply_live_settings 就是这么做的）。
-
-        哪些要推、哪些不用推（看 detector.py 实际怎么用）：
-          · change_threshold  -> 构造时复制成属性，**要推**
-          · ocr_interval      -> 构造时复制（还除了 1000），**要推**
-          · event_end_window  -> 构造时读进 _absence_seconds，**要推**
-          · enable_mora / enable_material / enable_artifact /
-            only_foreground / log_detections
-                              -> 每次 tick 都现读 self.settings，**不用推**
+        ⚠ 具体推哪几个值、为什么是那几个 —— 见 `svc_capture.apply_live_settings`。
+          那是"识别管线怎么说话"的知识，搬去 service 了。
         """
-        det = getattr(self, "detector", None)
-        if det is None:
-            return
-        try:
-            det.change_threshold = float(self.settings.get("change_threshold", 2.0))
-        except Exception:
-            pass
-        try:
-            det.ocr_interval = float(self.settings.get("ocr_interval", 150)) / 1000.0
-        except Exception:
-            pass
-        try:
-            det._absence_seconds = float(self.settings.get("event_end_window", 1.5))
-        except Exception:
-            pass
+        svc_capture.apply_live_settings(getattr(self, "detector", None),
+                                       self.settings)
 
     # ================= 监测 =================
     def toggle(self):
@@ -193,8 +173,7 @@ class AppState(QObject):
         region = None
         mode_text = "正在监测（自动识别游戏窗口）"
         try:
-            from capture import find_game_window
-            win = find_game_window()
+            win = svc_capture.find_game_window()
         except Exception:
             win = None
         if win is None:
@@ -209,7 +188,6 @@ class AppState(QObject):
         # 启动后台检测线程
         self._detect_stop = threading.Event()
         self._detect_queue = queue.Queue()
-        self._detect_err_streak = 0
         self._detect_thread = threading.Thread(
             target=self._detect_loop, args=(region,), daemon=True)
         self._detect_thread.start()
@@ -224,11 +202,15 @@ class AppState(QObject):
         self.force_refresh()
 
     def _detect_loop(self, region):
-        """后台线程：识别（含慢速 OCR）全在这里跑，主线程只管界面"""
-        from detector import Detector
+        """后台线程：识别（含慢速 OCR）全在这里跑，主线程只管界面
+
+        ⚠ 分工：**线程 / 队列 / 谁造谁清 Detector 留在本类**，
+          那一轮循环本身在 `svc_capture.run_detector`。
+          搬走的只是「怎么跟识别器说话」，线程那套一个字没动。
+        """
         stop_ev = self._detect_stop
         try:
-            det = Detector(region, ICONS_DIR, self.settings, stats=self.stats)
+            det = svc_capture.make_detector(region, self.settings, self.stats)
         except Exception as e:
             try:
                 self._detect_queue.put(("error", str(e)))
@@ -237,36 +219,9 @@ class AppState(QObject):
             return
         self.detector = det
         try:
-            last_ts = None
-            while stop_ev is not None and not stop_ev.is_set():
-                try:
-                    det.tick()
-                    self._detect_err_streak = 0
-                except Exception:
-                    self._detect_err_streak += 1
-                    if self._detect_err_streak > 20:
-                        try:
-                            self._detect_queue.put(("error", "连续识别失败"))
-                        except Exception:
-                            pass
-                        break
-                ev = det.last_event
-                if ev is not None and ev[0] != last_ts:
-                    last_ts = ev[0]
-                    try:
-                        self._detect_queue.put(("event", ev))
-                    except Exception:
-                        pass
-                try:
-                    interval = max(0.02, int(self.settings.get("tick_interval", 50)) / 1000.0)
-                except Exception:
-                    interval = 0.05
-                stop_ev.wait(interval)
+            svc_capture.run_detector(det, stop_ev, self.settings,
+                                     self._detect_queue)
         finally:
-            try:
-                det.close()
-            except Exception:
-                pass
             # 只有"当前这个"才清空 —— 万一用户停完马上又开了一个，
             # 旧线程收尾时不能把新 detector 抹掉
             if self.detector is det:
@@ -290,7 +245,13 @@ class AppState(QObject):
         # 再通知后台线程退出（它可能正在跑一次 OCR，要等它跑完那一轮）
         self.monitoring = False
         self._monitor_start = None
-        self._record_session()
+        rec = self._record_session()
+        if rec:
+            # 给窗口用：弹「本次小结」。退出程序的那条路不会弹（见 qt_window）。
+            try:
+                self.session_ended.emit(rec)
+            except Exception:
+                pass
         if self._detect_stop is not None:
             try:
                 self._detect_stop.set()
@@ -302,12 +263,17 @@ class AppState(QObject):
         self.force_refresh()
 
     def _record_session(self):
-        """把这次监测的收益差值写进「收益记录」"""
+        """把这次监测的收益差值写进「收益记录」
+
+        返回刚写进去的那条记录 dict（没写就返回 None）——
+        窗口拿它弹「本次小结」（`session_ended` 信号）。
+        """
+        rec = None
         try:
             if not self._sess_snapshot:
-                return
+                return None
             if not self._sess_start_ts:
-                return
+                return None
             m0, a0, mat0, norm0 = self._sess_snapshot
             m1, a1 = self.stats.mora, self.stats.artifact
             mat1 = dict(self.stats.materials)
@@ -320,23 +286,23 @@ class AppState(QObject):
             delta = {k: v for k, v in delta.items() if v > 0}
             seconds = int(time.time() - self._sess_start_ts)
             if seconds < 5 and not delta and m1 == m0 and a1 == a0:
-                return          # 什么都没干，不记
-            sessions.add_session(sessions.make_record(
+                return None         # 什么都没干，不记
+            rec = svc_records.make_record(
                 self._sess_start_ts, time.time(), seconds,
-                max(0, m1 - m0), max(0, a1 - a0), delta))
+                max(0, m1 - m0), max(0, a1 - a0), delta)
+            svc_records.add_session(rec)
         except Exception:
-            pass
+            rec = None
         finally:
             self._sess_snapshot = None
             self._sess_start_ts = None
+        return rec
 
     @staticmethod
     def _prewarm_ocr():
-        try:
-            from ocr_engine import OcrEngine
-            import numpy as np
-            ocr = OcrEngine()
-            ocr._ensure()
-            ocr.recognize_line(np.zeros((40, 400, 3), dtype=np.uint8))
-        except Exception:
-            pass
+        """预热 OCR 模型 —— 具体怎么做在 `svc_capture.prewarm_ocr`。
+
+        ⚠ 这个方法留着不删：`_morph\\api_snapshot.py` 会把类的私有方法也
+          算进"对外表面"，删了它会报「方法丢了」。
+        """
+        svc_capture.prewarm_ocr()

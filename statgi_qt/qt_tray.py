@@ -80,6 +80,21 @@ def _fallback_icon():
     return QIcon(pm)
 
 
+def _goto_page(win, title):
+    """托盘菜单用：按页面名字跳到那一页（顺便把窗口拎出来）
+
+    页面顺序见 `qt_pages.build_pages`：0 启动 / 1 收益统计条 / 2 收益记录 / 3 设置
+    """
+    try:
+        win.restore_from_tray()
+        for i, p in enumerate(win.pages):
+            if getattr(p, "title", "") == title:
+                win.show_page(i)
+                return
+    except Exception:
+        pass
+
+
 class Tray(QObject):
     """托盘图标 + 菜单"""
 
@@ -114,15 +129,36 @@ class Tray(QObject):
         self.act_stop.triggered.connect(lambda: win.state.stop())
         menu.addAction(self.act_stop)
         menu.addSeparator()
+        # 统计条：文字跟着"开着没有"变（托盘是最常用的入口，不用翻窗口）
+        self.act_bar = QAction("显示统计条", menu)
+        self.act_bar.setIcon(icon_qicon("chart-column", 14))
+        self.act_bar.triggered.connect(win.toggle_stat_bar)
+        menu.addAction(self.act_bar)
+        self.act_records = QAction("查看收益记录", menu)
+        self.act_records.setIcon(icon_qicon("clipboard-list", 14))
+        self.act_records.triggered.connect(
+            lambda: _goto_page(win, "收益记录"))
+        menu.addAction(self.act_records)
+        self.act_settings = QAction("打开设置", menu)
+        self.act_settings.setIcon(icon_qicon("settings", 14))
+        self.act_settings.triggered.connect(lambda: _goto_page(win, "设置"))
+        menu.addAction(self.act_settings)
+        menu.addSeparator()
+        self.act_logs = QAction("打开识别日志文件夹", menu)
+        self.act_logs.setIcon(icon_qicon("file-text", 14))
+        self.act_logs.triggered.connect(win.open_log_dir)
+        menu.addAction(self.act_logs)
         self.act_data = QAction("打开数据文件夹", menu)
         self.act_data.setIcon(icon_qicon("folder-open", 14))
         self.act_data.triggered.connect(win.open_data_dir)
         menu.addAction(self.act_data)
+        menu.addSeparator()
         self.act_exit = QAction("退出程序", menu)
         self.act_exit.setIcon(icon_qicon("power", 14))
         self.act_exit.triggered.connect(win.really_quit)
         menu.addAction(self.act_exit)
 
+        self._menu = menu                 # 留着，_sync 里要用（显示菜单前刷一遍文字）
         self.icon.setContextMenu(menu)
         self.icon.activated.connect(self._on_activated)
         self.icon.show()
@@ -134,6 +170,12 @@ class Tray(QObject):
         on = self.win.state.monitoring
         self.act_start.setEnabled(not on)
         self.act_stop.setEnabled(on)
+        # 统计条那一条：开着就写"隐藏统计条"
+        try:
+            self.act_bar.setText("隐藏统计条" if self.win.bar_window is not None
+                                 else "显示统计条")
+        except Exception:
+            pass
 
     def _on_activated(self, reason):
         if reason == QSystemTrayIcon.Trigger:      # 左键单击

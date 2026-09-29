@@ -10,6 +10,7 @@
     │         │ ▸ 基本信息 / ▸ 数值与文字 / ▸ 图标 …        │
     └─────────┴──────────────────────────────────────────┘
 """
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 import copy
@@ -20,42 +21,23 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                                QStackedWidget, QColorDialog, QMessageBox,
                                QInputDialog, QMenu, QListWidget, QListWidgetItem,
                                QFileDialog)
-
 import qt_theme as T
 from qt_widgets import SettingRow, Accordion, small_button, Switch
 from qt_window import NavButton
-
-import bar_items
+import svc_bar
 import icons_lib
+from qt_bar_common import _lab, _fix_label_bg
+from qt_material_picker import MaterialPicker
 
-
-def _lab(text, size=13, bold=False, color=None):
-    """不画底、不画框的 QLabel（本文件统一用它建标签）。
-
-    ⚠ 对话框那层 QSS 里有一条 `QLabel { ... }`，Qt 的样式引擎会因此把
-    QLabel 的 frameWidth 当成 1、顺手画一圈边框 —— 实测就是「标签文字
-    外面多一个圆角细框」。必须显式声明 background/border 才能压掉。
-    （2026-09-23 用像素聚类定位：label 矩形内恰好 108 个强调色像素）
-    """
-    w = QLabel(text)
-    w.setStyleSheet(T.label_qss(color or T.TEXT, size, bold)
-                    + "; background: transparent; border: none;")
-    return w
-
-
-def _fix_label_bg(lab):
-    """给 label 的样式补上「不画底」。
-
-    同一个根因：QLabel 从 QSS 级联继承了背景色，Qt 就会把它的底/框画出来。
-    NavButton 的 label 由主界面控件自己设样式，我们管不着它，
-    只能在拿到之后补一刀。
-
-    ⚠ `NavButton.set_active()` 每次都会重设 label 的样式，所以切换页面后
-    必须再补一次 —— 这就是为什么 `_nav()` 里也要调。
-    """
-    ss = lab.styleSheet()
-    if "background" not in ss:
-        lab.setStyleSheet(ss + "; background: transparent; border: none;")
+# ============================================================
+#  注意：`_lab` / `_fix_label_bg` / `MaterialPicker` 都已经搬走
+#
+#     qt_bar_common.py      _lab / _fix_label_bg
+#     qt_material_picker.py MaterialPicker
+#
+#  上面 import 进来的必须留着转发 ——
+#  `_morph\smoke_ui.py` 就是 `qt_bar_editor.MaterialPicker(...)` 调的。
+# ============================================================
 
 
 class BarEditorDialog(QDialog):
@@ -67,7 +49,7 @@ class BarEditorDialog(QDialog):
         self.setMinimumSize(1060, 720)
         self.alpha = alpha
         self._on_apply = on_apply
-        self._cfg = bar_items.load()
+        self._cfg = svc_bar.load()
         self._sel = 0
         self._loading = False
         # 当前这套配置是从哪套预设来的（空 = 认不出来）。
@@ -161,9 +143,9 @@ class BarEditorDialog(QDialog):
             + "; background: rgba(224,167,90,32); border-radius: 6px;"
               " padding: 6px 10px;")
         lay.addWidget(hint)
-        for name in bar_items.preset_names():
+        for name in svc_bar.preset_names():
             lay.addWidget(self._preset_card(name,
-                                            bar_items.is_builtin_preset(name)))
+                                            svc_bar.is_builtin_preset(name)))
         box = QWidget()
         h = QHBoxLayout(box)
         h.setContentsMargins(0, 0, 0, 0)
@@ -228,7 +210,7 @@ class BarEditorDialog(QDialog):
                 f"用「{name}」这套配置？当前配置会被盖掉。"
                 ) != QMessageBox.Yes:
             return
-        self._cfg = bar_items.apply_preset(name)
+        self._cfg = svc_bar.apply_preset(name)
         # 使用 ≠ 正在查看：清掉查看态，这样保存不会被只读 Guard 挡住
         self._preset = ""
         self._rebuild_tabs()
@@ -248,7 +230,7 @@ class BarEditorDialog(QDialog):
                 f"进去看「{name}」的配置？当前配置会被这套盖掉。"
                 ) != QMessageBox.Yes:
             return
-        self._cfg = bar_items.apply_preset(name)
+        self._cfg = svc_bar.apply_preset(name)
         self._preset = name          # 记住来路：只读判断和上方提示都靠它
         self._rebuild_tabs()
         self._load_item()
@@ -260,22 +242,22 @@ class BarEditorDialog(QDialog):
 
         名字冲突就自动加 _2 / _3 …
         """
-        src = bar_items.all_presets().get(name)
+        src = svc_bar.all_presets().get(name)
         if not src:
             QMessageBox.warning(self, "复制失败", f"找不到预设「{name}」。")
             return
         base = f"{name} 副本"
         new = base
         i = 2
-        while new in bar_items.preset_names():
+        while new in svc_bar.preset_names():
             new = f"{base}{i}"
             i += 1
-        if not bar_items.save_preset(new, copy.deepcopy(src)):
+        if not svc_bar.save_preset(new, copy.deepcopy(src)):
             QMessageBox.warning(self, "复制失败", "存不下，名字可能冲突了。")
             return
         self._refresh_presets()
         # 复制完直接进去编辑 —— 省一步
-        self._cfg = bar_items.apply_preset(new)
+        self._cfg = svc_bar.apply_preset(new)
         self._preset = new
         self._rebuild_tabs()
         self._load_item()
@@ -293,11 +275,11 @@ class BarEditorDialog(QDialog):
         name = name.strip() if ok else ""
         if not name:
             return
-        if name in bar_items.preset_names():
+        if name in svc_bar.preset_names():
             QMessageBox.warning(self, "重名", f"已经有叫「{name}」的预设了。")
             return
-        bar_items.save(self._cfg)
-        bar_items.save_preset(name, bar_items.load())
+        svc_bar.save(self._cfg)
+        svc_bar.save_preset(name, svc_bar.load())
         self._refresh_presets()
 
     def _rename_preset(self, name):
@@ -305,7 +287,7 @@ class BarEditorDialog(QDialog):
         new = new.strip() if ok else ""
         if not new:
             return
-        if not bar_items.rename_preset(name, new):
+        if not svc_bar.rename_preset(name, new):
             QMessageBox.warning(self, "失败", "改名没成功（重名了？）。")
             return
         self._refresh_presets()
@@ -314,7 +296,7 @@ class BarEditorDialog(QDialog):
         if QMessageBox.question(self, "删除预设",
                                 f"要删掉「{name}」吗？") != QMessageBox.Yes:
             return
-        bar_items.delete_preset(name)
+        svc_bar.delete_preset(name)
         self._refresh_presets()
 
     # ============================================================
@@ -368,7 +350,7 @@ class BarEditorDialog(QDialog):
         用户要的行为：用这两套时页面上所有配置都能**看到**，
         但全是灰的改不了，上面提示「内置预设无法修改，请复制后再修改」。
         """
-        return bool(self._preset) and bar_items.is_builtin_preset(self._preset)
+        return bool(self._preset) and svc_bar.is_builtin_preset(self._preset)
 
     def _apply_readonly(self):
         """按内置 / 自建预设切换只读状态"""
@@ -436,7 +418,7 @@ class BarEditorDialog(QDialog):
         「取消」要真的撤销：重新从磁盘读回来（`_save()` 是即时落盘的，
         所以磁盘上的就是最后一次保存的状态）。撤销完回预设界面。
         """
-        self._cfg = bar_items.load()
+        self._cfg = svc_bar.load()
         self._sel = 0
         self._rebuild_tabs()
         self._load_item()
@@ -551,15 +533,42 @@ class BarEditorDialog(QDialog):
             return
         self._cfg["items"][idx]["visible"] = bool(on)
         self._save()
+        # ⚠ 补一次重画（备忘 #17，2026-09-24 修）：
+        #   右键菜单那条路是**直接调这里**的 —— 原来只写数据 + _save()，
+        #   标签前面那个开关还显示旧状态，要等下一次 _rebuild_tabs()
+        #   （重开编辑器、增删项目）才同步，看着就像"点了没反应"。
+        #   从开关自己点进来那条路径本来是同步的（sw.toggled → 这里），
+        #   所以 _sync_switch 里"已经一样就不动"是必须的 —— 否则会绕回去。
+        self._sync_switch(idx)
+
+    def _sync_switch(self, idx):
+        """把第 idx 项的开关刷成数据里的样子。
+
+        ⚠ 用 `blockSignals` 包一下：`Switch.setChecked()` 最后会 `toggled.emit()`，
+          不挡住的话又会绕回 `_set_visible`。挡的只是信号，
+          120ms 的滑动动画照跑（离屏截图要等一下才看得到最终样子）。
+        """
+        try:
+            _box, sw = self.tab_btns[idx]
+        except (AttributeError, IndexError):
+            return
+        want = bool(self._cfg["items"][idx].get("visible", True))
+        if sw.isChecked() == want:
+            return
+        sw.blockSignals(True)
+        try:
+            sw.setChecked(want)
+        finally:
+            sw.blockSignals(False)
 
     def _on_add(self):
-        labels = [n for _v, n, _d in bar_items.SOURCES]
+        labels = [n for _v, n, _d in svc_bar.SOURCES]
         kind, ok = QInputDialog.getItem(self, "添加项目", "要显示什么？",
                                         labels, 0, False)
         if not ok:
             return
-        val = {n: v for v, n, _d in bar_items.SOURCES}[kind]
-        new = bar_items.new_item("text" if val == "text" else
+        val = {n: v for v, n, _d in svc_bar.SOURCES}[kind]
+        new = svc_bar.new_item("text" if val == "text" else
                                  ("time" if val == "runtime" else "number"))
         new["source"] = val
         new["type"] = ("text" if val == "text" else
@@ -589,8 +598,8 @@ class BarEditorDialog(QDialog):
 
     def _ask_material(self):
         try:
-            import names_db
-            mats = sorted(names_db.material_set())
+            import svc_names
+            mats = sorted(svc_names.material_set())
         except Exception:
             mats = []
         if not mats:
@@ -678,7 +687,7 @@ class BarEditorDialog(QDialog):
         I = {}
         I["title"] = self._edit("title")
         I["source"] = QComboBox()
-        I["source"].addItems([n for _v, n, _d in bar_items.SOURCES])
+        I["source"].addItems([n for _v, n, _d in svc_bar.SOURCES])
         I["source"].setFixedWidth(180)
         I["source"].setStyleSheet(T.combo_qss())
         I["source"].currentIndexChanged.connect(lambda _i: self._on_source())
@@ -843,12 +852,12 @@ class BarEditorDialog(QDialog):
         self._loading = True
         f = self.f
         f["title"].setText(str(it.get("title") or ""))
-        vals = [v for v, _n, _d in bar_items.SOURCES]
+        vals = [v for v, _n, _d in svc_bar.SOURCES]
         src = str(it.get("source") or "mora")
         f["source"].setCurrentIndex(vals.index(src) if src in vals else 0)
         f["src_desc"].setText(
             f"材料：{it.get('material')}" if src == "material"
-            else bar_items.SOURCE_DESC.get(src, ""))
+            else svc_bar.SOURCE_DESC.get(src, ""))
         for k, key in (("show_title", "show_title"), ("show_value", "show_value"),
                        ("icon_on", "show_icon"), ("border", "border"),
                        ("shadow", "shadow"), ("num_bold", "num_bold")):
@@ -897,7 +906,7 @@ class BarEditorDialog(QDialog):
         it = self._item()
         if it is None:
             return
-        val = [v for v, _n, _d in bar_items.SOURCES][
+        val = [v for v, _n, _d in svc_bar.SOURCES][
             self.f["source"].currentIndex()]
         it["source"] = val
         it["type"] = ("text" if val == "text" else
@@ -1063,7 +1072,7 @@ class BarEditorDialog(QDialog):
         # 只读（看内置预设）时不许落盘 —— 否则「看一眼」就把当前配置写掉了
         if self._is_readonly():
             return
-        bar_items.save(self._cfg)
+        svc_bar.save(self._cfg)
         if callable(self._on_apply):
             self._on_apply()
         self._refresh_preset_hint()
@@ -1076,19 +1085,17 @@ class BarEditorDialog(QDialog):
 
         这样重新打开窗口时也能正确显示「经典」还是「直播间」。
 
-        ⚠ 不能拿 ``bar_items.all_presets()`` 的原始项直接比：
+        ⚠ 不能拿 ``svc_bar.all_presets()`` 的原始项直接比：
         它是给「套用」用的、字段可能不全，而当前配置是 ``load()`` 出来的、
         每一项都补过默认值。两边字段数不一样，JSON 永不相等 ——
-        所以预设那边也要走一遍 ``_fill_item`` 才公平。
+        所以预设那边也要走一遍 ``svc_bar.fill_cfg`` 才公平。
         """
         mine = self._norm_cfg(self._cfg)
-        for name in bar_items.preset_names():
-            p = bar_items.all_presets().get(name)
+        for name in svc_bar.preset_names():
+            p = svc_bar.all_presets().get(name)
             if not p:
                 continue
-            cand = {"window": dict(p.get("window") or bar_items.DEFAULT_WINDOW),
-                    "items": [bar_items._fill_item(x)
-                              for x in (p.get("items") or [])]}
+            cand = svc_bar.fill_cfg(p)
             if mine == self._norm_cfg(cand):
                 return name
         return ""
@@ -1103,12 +1110,10 @@ class BarEditorDialog(QDialog):
 
     def _cfg_matches(self, name):
         """当前配置是不是就是这套预设的原样（比之前两边都补默认值）"""
-        p = bar_items.all_presets().get(name)
+        p = svc_bar.all_presets().get(name)
         if not p:
             return False
-        cand = {"window": dict(p.get("window") or bar_items.DEFAULT_WINDOW),
-                "items": [bar_items._fill_item(x)
-                          for x in (p.get("items") or [])]}
+        cand = svc_bar.fill_cfg(p)
         return self._norm_cfg(self._cfg) == self._norm_cfg(cand)
 
     def _preset_drifted(self):
@@ -1124,8 +1129,8 @@ class BarEditorDialog(QDialog):
         """
         ids = tuple(str(x.get("id")) for x in (self._cfg.get("items") or []))
         layout = str((self._cfg.get("window") or {}).get("layout") or "")
-        for name in bar_items.preset_names():
-            p = bar_items.all_presets().get(name) or {}
+        for name in svc_bar.preset_names():
+            p = svc_bar.all_presets().get(name) or {}
             pids = tuple(str(x.get("id")) for x in (p.get("items") or []))
             playout = str((p.get("window") or {}).get("layout") or "")
             if pids and pids == ids and playout == layout:
@@ -1148,107 +1153,3 @@ class BarEditorDialog(QDialog):
         所以保留成空实现，别再往界面上写东西。
         """
         return
-
-
-class MaterialPicker(QDialog):
-    """选材料 —— 带搜索框。
-
-    名单可能上百条，`QInputDialog.getItem` 那种下拉列表翻起来很痛苦，
-    所以这里用「搜索框 + 列表」：边打边筛，上下键选，回车确认。
-    """
-
-    def __init__(self, parent, materials, alpha=150):
-        super().__init__(parent)
-        self.setWindowTitle("选材料")
-        self.setMinimumSize(400, 480)
-        self.setStyleSheet(
-            f"QDialog {{ background: {T.BG}; }}"
-            f"QLabel {{ color: {T.TEXT}; background: transparent;"
-            f" border: none; }}")
-
-        root = QVBoxLayout(self)
-        root.setContentsMargins(16, 14, 16, 14)
-        root.setSpacing(10)
-        root.addWidget(_lab(f"要盯住哪个材料？（共 {len(materials)} 个）", 13))
-
-        self.search = QLineEdit()
-        self.search.setPlaceholderText("输入关键字筛选，回车选中…")
-        self.search.setFixedHeight(30)
-        self.search.textChanged.connect(self._refilter)
-        root.addWidget(self.search)
-
-        self.list = QListWidget()
-        self.list.setAlternatingRowColors(False)
-        # ⚠ 样式表里别写 `QListWidget::item { color: ... }`（会盖掉 setForeground）
-        pal = self.list.palette()
-        pal.setColor(pal.ColorRole.Text, QColor(T.TEXT))
-        self.list.setPalette(pal)
-        self.list.setStyleSheet(f"""
-            QListWidget {{
-                background: rgba(0,0,0,90); border: 1px solid {T.BORDER};
-                border-radius: 8px; padding: 4px; outline: none;
-            }}
-            QListWidget::item {{ padding: 6px 8px; border-radius: 5px; }}
-            QListWidget::item:selected {{ background: {T.ACCENT}; color: #10161f; }}
-        """)
-        self.list.addItems(materials)
-        self.list.setCurrentRow(0)
-        self.list.itemDoubleClicked.connect(lambda _i: self.accept())
-        root.addWidget(self.list, 1)
-
-        self.empty = _lab("没有匹配的材料", 12, color=T.DIM)
-        self.empty.hide()
-        root.addWidget(self.empty)
-
-        foot = QHBoxLayout()
-        foot.addStretch(1)
-        ok = small_button("选中", self.accept, alpha, kind="accent",
-                          width=88, height=32)
-        ok.setDefault(True)
-        foot.addWidget(ok)
-        foot.addWidget(small_button("取消", self.reject, alpha,
-                                    width=88, height=32))
-        root.addLayout(foot)
-
-        self.search.returnPressed.connect(self._on_enter)
-        self.search.setFocus()
-
-    # ---- 内部 ----
-
-    def _refilter(self, text):
-        """边打边筛：命中的显示，其余跳过。
-
-        注意：Qt 会把「当前项」保持在原来的行号上，所以筛完必须把
-        当前项挪到第一个可见项；筛不到任何东西时要清空当前项，
-        否则 chosen() 会返回上一次的那个名字。
-        """
-        key = (text or "").strip().lower()
-        cur = self.list.currentItem()
-        if cur is not None and cur.isHidden():
-            self.list.setCurrentItem(None)
-        first = -1
-        shown = 0
-        for i in range(self.list.count()):
-            it = self.list.item(i)
-            hit = (not key) or (key in it.text().lower())
-            it.setHidden(not hit)
-            if hit:
-                shown += 1
-                if first < 0:
-                    first = i
-        if shown == 0:
-            self.list.setCurrentItem(None)
-        elif self.list.currentItem() is None:
-            self.list.setCurrentRow(first)
-        self.empty.setVisible(shown == 0)
-
-    def _on_enter(self):
-        it = self.list.currentItem()
-        if it is not None and not it.isHidden():
-            self.accept()
-
-    def chosen(self):
-        it = self.list.currentItem()
-        if it is None or it.isHidden():
-            return ""
-        return it.text()

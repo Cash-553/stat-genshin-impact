@@ -1,22 +1,27 @@
 # -*- coding: utf-8 -*-
-"""5行FIFO拾取Track生命周期测试（最终方案）"""
+"""5行FIFO拾取Track生命周期测试（最终方案）
+
+⚠ 第 12 批：Track 状态机从 `Detector` 搬到了 `track_manager.TrackManager`，
+   `make_detector()` 里那一行是 `Detector.__init__` 那一步的镜像。
+   `run_frames` 仍然是 `patch("detector.time.time")` —— 时钟留在 detector
+   那边（`_observe_row_snapshot` 取好时间再喂给状态机），所以这个打桩照样有效。
+"""
 import unittest
 from unittest.mock import patch
 
 from detector import Detector
+from track_manager import TrackManager
 
 
 def make_detector():
     det = Detector.__new__(Detector)
-    det._lifecycles = {}
-    det._row_tracks = {}
-    det._last_row_order = []
-    det._next_row_track_id = 1
-    det._confirm_seconds = 0.15
-    det._absence_seconds = 1.5
     det._dbg = lambda: False
     det.accounted = []
     det._apply_event = lambda event, frame, score, use_tracker: det.accounted.append(event) or True
+    det.tracks = TrackManager(
+        absence_seconds=1.5,
+        report=lambda ev, frame: det._apply_event(ev, frame, 0.0, use_tracker=False),
+    )
     return det
 
 

@@ -14,8 +14,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
 
 import paths
 import qt_theme as T
-import bar_items
-
+import svc_bar
 ICONS_DIR = paths.icons_dir()
 
 # 阴影画的边距（别贴着窗口边切掉）
@@ -307,7 +306,7 @@ class StatBarWindow(QWidget):
         self._cards = []
         self._free_items = []
         self._editable = False
-        self._cfg = bar_items.load()
+        self._cfg = svc_bar.load()
         self._last = None
 
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
@@ -326,7 +325,7 @@ class StatBarWindow(QWidget):
     # ---------- 按配置重建 ----------
     def reload(self):
         """重新读配置并重建界面（设置界面上改了东西就调这个）"""
-        self._cfg = bar_items.load()
+        self._cfg = svc_bar.load()
         win = self._cfg.get("window") or {}
 
         for c in self._cards:
@@ -423,7 +422,7 @@ class StatBarWindow(QWidget):
             if data.get("id") == it.get("id"):
                 data["pos_x"], data["pos_y"] = int(x), int(y)
                 break
-        bar_items.save(self._cfg)
+        svc_bar.save(self._cfg)
         self._fit_canvas(max(0, int(
             (self._cfg.get("window") or {}).get("padding", 10))))
 
@@ -447,9 +446,9 @@ class StatBarWindow(QWidget):
         snap = self.state.snapshot()
         # hide_zero：数值是 0 就把整项藏起来
         for c in self._cards:
-            c.setVisible(not bar_items.should_hide(c.item, snap))
-        values = [bar_items.full_text(c.item, snap) for c in self._cards]
-        rates = ([bar_items.format_rate(c.item, snap) for c in self._cards]
+            c.setVisible(not svc_bar.should_hide(c.item, snap))
+        values = [svc_bar.full_text(c.item, snap) for c in self._cards]
+        rates = ([svc_bar.format_rate(c.item, snap) for c in self._cards]
                  if any(c.item.get("show_rate") for c in self._cards) else None)
         if values == self._last:
             return

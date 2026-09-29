@@ -24,6 +24,8 @@ from printwindow_capture import WindowCapture, find_game_window_hwnd
 from dataset_collector import DatasetCollector
 from ocr_engine import OcrEngine
 from stats import DailyStats, EventTracker
+from detect_accounting import Accounting
+from track_manager import TrackManager
 from generated_names import ARTIFACT_NAMES, MATERIAL_NAMES
 from main_ui_model import MainUiDetector
 
@@ -33,12 +35,21 @@ ARTIFACT_NAME_SET = set(ARTIFACT_NAMES)
 MATERIAL_NAME_SET = set(MATERIAL_NAMES)
 
 # 按名字长度分组索引（纠错时只遍历长度相近的候选，避免全集合遍历导致卡顿）
-_ART_INDEX = {}
-for _n in ARTIFACT_NAME_SET:
-    _ART_INDEX.setdefault(len(_n), []).append(_n)
-_MAT_INDEX = {}
-for _n in MATERIAL_NAME_SET:
-    _MAT_INDEX.setdefault(len(_n), []).append(_n)
+#
+# ⚠ 第 11 批顺手修的：原来这里是两个**模块级 for 循环**，
+#   循环变量 `_n` 会漏成模块全局 `detector._n`，而且它的值随
+#   **字符串哈希随机化**每次都不同（这个进程是「新手长枪」、下个进程是
+#   「电气水晶」）—— 没有任何地方用它，但会让接口快照的基线永远对不上。
+#   改成函数里建 → 循环变量留在局部，`_n` 不再泄漏。
+def _build_len_index(names):
+    idx = {}
+    for name in names:
+        idx.setdefault(len(name), []).append(name)
+    return idx
+
+
+_ART_INDEX = _build_len_index(ARTIFACT_NAME_SET)
+_MAT_INDEX = _build_len_index(MATERIAL_NAME_SET)
 
 
 def reload_names():
@@ -58,12 +69,11 @@ def reload_names():
     MATERIAL_NAME_SET.update(mats)
     ARTIFACT_NAME_SET.clear()
     ARTIFACT_NAME_SET.update(arts)
+    # 原地改索引（别处是 `from detector import _MAT_INDEX` 引用的，不能换成新对象）
     _MAT_INDEX.clear()
-    for n in MATERIAL_NAME_SET:
-        _MAT_INDEX.setdefault(len(n), []).append(n)
+    _MAT_INDEX.update(_build_len_index(MATERIAL_NAME_SET))
     _ART_INDEX.clear()
-    for n in ARTIFACT_NAME_SET:
-        _ART_INDEX.setdefault(len(n), []).append(n)
+    _ART_INDEX.update(_build_len_index(ARTIFACT_NAME_SET))
 
 
 # 启动时就按用户名单覆盖一次（names.json 不存在会自动从内置生成）
@@ -116,6 +126,10 @@ class Detector:
         self.tracker = EventTracker(
             end_window=float(self.settings.get("event_end_window", 1.5))
         )
+        # 记账 / 识别日志 / 训练样本（第 11 批从 `_apply_event` 里抽出来的）。
+        # ⚠ `self.dataset` 和 `self.stats` 仍然挂在本对象上（外面还在用），
+        #   ledger 只是拿着同一批对象的引用。
+        self.ledger = Accounting(self.stats, self.dataset, self.settings)
 
         # 掉落事件生命周期（防重复）：
         # 不能用“连续漏掉两帧就算消失”的方法：OCR 会偶发漏字/漏行，
@@ -123,14 +137,16 @@ class Detector:
         # 并在提示稳定可见后才入账。原神掉落提示完整显示约 3.5 秒，
         # 实测中一条提示有时只能被 OCR 成功读到一次（淡出、遮挡、换行都会影响），
         # 因此新行首次识别就入账；后续帧由“行实例队列”保证不会重复入账。
-        self._lifecycles = {}  # 事件身份 -> {first_seen,last_seen,hits,counted,candidates}
-        self._confirm_seconds = float(self.settings.get("event_confirm_seconds", 0.15))
-        self._absence_seconds = float(self.settings.get("event_end_window", 1.5))
-        # 收获栏是“最多五行的队列”，同名物品可同时占多行。不能只用名称
-        # 做 key，否则连续捡到 5 个同名材料会被合并而漏记。
-        self._row_tracks = {}       # track id -> 单行生命周期
-        self._last_row_order = []   # 上一次 OCR 中行实例的从上到下顺序
-        self._next_row_track_id = 1
+        #
+        # ⚠ 第 12 批（6.3）：这一整套状态机搬到 `track_manager.TrackManager` 了。
+        #   收获栏是“最多五行的队列”，同名物品可同时占多行 —— 不能只用名称
+        #   做 key，否则连续捡到 5 个同名材料会被合并而漏记。
+        #   时钟（`time.time()`）仍然在本文件取、当参数喂进去：现有测试是
+        #   `patch("detector.time.time")` 打的桩，时钟留在这儿它们才继续有效。
+        self.tracks = TrackManager(
+            absence_seconds=float(self.settings.get("event_end_window", 1.5)),
+            report=self._report_new_track,
+        )
 
         # 提示栏锚点记忆（思路一）：
         # 首次找到「获得」标题后，记住其下方的提示栏区域，即使「获得」随后消失
@@ -468,178 +484,25 @@ class Detector:
             pass
         return added
 
-    @staticmethod
-    def _row_label(ev):
-        """行匹配只看收益类别和名称；数量属于同一行的 OCR 读数。"""
-        if ev["type"] == "mora":
-            return "mora"
-        if ev["type"] == "artifact":
-            return "artifact"
-        return "material:" + ev["name"]
-
-    @staticmethod
-    def _lcs_pairs(old_labels, new_labels):
-        """返回两个有序提示行快照的最长公共子序列配对下标。"""
-        rows, cols = len(old_labels), len(new_labels)
-        dp = [[0] * (cols + 1) for _ in range(rows + 1)]
-        for i in range(rows - 1, -1, -1):
-            for j in range(cols - 1, -1, -1):
-                if old_labels[i] == new_labels[j]:
-                    dp[i][j] = 1 + dp[i + 1][j + 1]
-                else:
-                    dp[i][j] = max(dp[i + 1][j], dp[i][j + 1])
-        pairs, i, j = [], 0, 0
-        while i < rows and j < cols:
-            if old_labels[i] == new_labels[j]:
-                pairs.append((i, j))
-                i, j = i + 1, j + 1
-            elif dp[i + 1][j] >= dp[i][j + 1]:
-                i += 1
-            else:
-                j += 1
-        return pairs
-
     def _observe_row_snapshot(self, observations, frame):
+        """5 行 FIFO 拾取 Track 生命周期 —— 第 12 批搬到 `track_manager.TrackManager`。
+
+        ⚠ 这个方法**只留一行转发**（对外表面不变：`test_event_lifecycle.py`、
+          `_morph\\test_counting.py`、`_morph\\test_detector_tracks.py` 都还在调它）。
+        ⚠ 时钟在这儿取、当参数传进去 —— 现有测试是 `patch("detector.time.time")`
+          打的桩，时钟留在这边它们才继续有效。
         """
-        5 行 FIFO 拾取 Track 生命周期（最终方案）。
+        return self.tracks.observe(observations, frame, time.time())
 
-        - 拾取提示建模为最多 5 行的有序 FIFO 队列。
-        - Track 身份 = 有序队列连续 + identity，不用 Y 坐标（补位会变）。
-        - 用"最大有序重叠"（LCS）匹配旧 Track 与当前行，保留原有 Track。
-        - 只有"队尾新增"的行才创建新 Track 并入账一次。
-        - 两帧完全相同、无可证明的新事件时，不新增不统计。
-        - counted 的 Track 生命周期内只入账一次。
-        - OCR 短暂漏读进入 MISSING，不等于结束。
+    def _report_new_track(self, ev, frame):
+        """Track 状态机判定「这是一次新拾取」时回调到这里 —— 只负责入账。
+
+        原来这一句是内联在 `_observe_row_snapshot` 里的
+        `self._apply_event(ev, frame, 0.0, use_tracker=False)`：
+        `use_tracker=False` 是因为"新 Track"这件事本身已经保证了不重复，
+        不需要再过一遍时间窗口去重。
         """
-        now = time.time()
-        if not observations:
-            # 没有观察到任何行：把未超时的 Track 标记为 MISSING（不立即 END）
-            for tid in list(self._row_tracks):
-                st = self._row_tracks[tid]
-                if st["state"] != "ended":
-                    if now - st["last_seen"] > self._absence_seconds:
-                        st["state"] = "ended"
-                    else:
-                        st["state"] = "missing"
-            self._prune_tracks(now)
-            return False
-
-        # 1. 活跃 Track（未 ended、且在 absence 窗口内）
-        active_ids = [tid for tid in self._last_row_order
-                      if tid in self._row_tracks
-                      and self._row_tracks[tid].get("state") != "ended"
-                      and now - self._row_tracks[tid]["last_seen"] <= self._absence_seconds]
-        old_labels = [self._row_tracks[tid]["label"] for tid in active_ids]
-        new_labels = [self._row_label(ev) for ev in observations]
-
-        # 2. 最大有序重叠（LCS）：保留原有 Track，识别队尾新增
-        pairs = self._lcs_pairs(old_labels, new_labels)
-        matched_new = {new_i: active_ids[old_i] for old_i, new_i in pairs}
-
-        current_ids = []
-        added = False
-        for index, ev in enumerate(observations):
-            label = new_labels[index]
-            track_id = matched_new.get(index)
-            if track_id is None:
-                # 队尾新增 → 新 Track，可靠识别后立即入账一次
-                track_id = self._next_row_track_id
-                self._next_row_track_id += 1
-                self._row_tracks[track_id] = {
-                    "label": label,
-                    "identity": self._event_identity(ev),
-                    "event": ev,
-                    "first_seen": now,
-                    "last_seen": now,
-                    "state": "visible",
-                    "counted": False,
-                }
-                # 新 Track 入账一次，之后不再重复
-                self._row_tracks[track_id]["counted"] = True
-                added = self._apply_event(ev, frame, 0.0, use_tracker=False) or added
-            else:
-                # 复用旧 Track（同一行提示的连续帧）
-                st = self._row_tracks[track_id]
-                st["last_seen"] = now
-                st["state"] = "visible"
-                st["event"] = ev  # 更新最新读数
-            current_ids.append(track_id)
-
-        self._last_row_order = current_ids
-        self._prune_tracks(now)
-        return added
-
-    def _prune_tracks(self, now):
-        """回收 ended 或超时的 Track，避免内存增长"""
-        for tid in list(self._row_tracks):
-            st = self._row_tracks[tid]
-            if now - st["last_seen"] > self._absence_seconds:
-                st["state"] = "ended"
-            if now - st["last_seen"] > 15.0:
-                del self._row_tracks[tid]
-
-    @staticmethod
-    def _event_identity(ev):
-        """同一条提示在 OCR 中数量/符号波动时，仍归为同一个事件。"""
-        if ev["type"] == "mora":
-            return "mora"
-        if ev["type"] == "artifact":
-            return "artifact"
-        return "material:" + ev["name"]
-
-    @staticmethod
-    def _event_reading_key(ev):
-        """一条完整 OCR 读数的键；用于从多次读数中选出最可信的数量。"""
-        if ev["type"] == "mora":
-            return ("mora", ev["amount"])
-        if ev["type"] == "artifact":
-            return ("artifact", 1)
-        return ("material", ev["name"], ev["count"])
-
-    def _observe_event(self, ev, frame):
-        """记录一次 OCR 观察，并在事件稳定后只入账一次。
-
-        同一事件必须跨至少两次 OCR、持续 ``_confirm_seconds`` 才会入账。
-        “last_seen”按真实秒数判断，不再因两次 OCR 漏读就结束事件。
-        """
-        now = time.time()
-        identity = self._event_identity(ev)
-        state = self._lifecycles.get(identity)
-        if state is None or now - state["last_seen"] > self._absence_seconds:
-            state = {
-                "first_seen": now,
-                "last_seen": now,
-                "hits": 0,
-                "counted": False,
-                "candidates": {},
-                # 负无穷保证第一条观察一定计入样本，不能用 0：
-                # 在单元测试或刚启动时 now 可能正好为 0。
-                "last_sample": float("-inf"),
-            }
-            self._lifecycles[identity] = state
-
-        # 自动锚点、用户区域可能同时覆盖同一条提示；同一轮扫描只算一次样本。
-        if now - state["last_sample"] >= 0.08:
-            reading = self._event_reading_key(ev)
-            entry = state["candidates"].setdefault(reading, {"hits": 0, "event": ev, "last_seen": 0.0})
-            entry["hits"] += 1
-            entry["event"] = ev
-            entry["last_seen"] = now
-            state["hits"] += 1
-            state["last_sample"] = now
-        state["last_seen"] = now
-
-        if state["counted"]:
-            return False
-        if state["hits"] < 2 or now - state["first_seen"] < self._confirm_seconds:
-            return False
-
-        # 选择重复出现次数最多的读数；并列时保留最新读数。
-        best = max(state["candidates"].values(), key=lambda item: (item["hits"], item["last_seen"]))
-        state["counted"] = True
-        if self._dbg():
-            self._log(f"[DBG] 生命周期确认 identity={identity!r} hits={state['hits']} event={best['event']}")
-        return self._apply_event(best["event"], frame, 0.0, use_tracker=False)
+        return self._apply_event(ev, frame, 0.0, use_tracker=False)
 
     def _find_anchor_region(self, frame):
         """在左下角区域找"获得"标题，返回其下方提示栏区域；找不到返回 None"""
@@ -676,65 +539,6 @@ class Detector:
             return (x0, y0, x1, y1)
         except Exception:
             return None
-
-    def _scan_region_rows(self, frame, reg):
-        """在指定区域识别拾取提示行：投影找行 + 整条识别 + seen 去重统计"""
-        x0, y0, x1, y1 = reg
-        x0, y0 = max(0, x0), max(0, y0)
-        x1 = min(frame.shape[1], x1)
-        y1 = min(frame.shape[0], y1)
-        if y1 - y0 < 30 or x1 - x0 < 30:
-            return False
-        region = frame[y0:y1, x0:x1]
-        added = False
-        try:
-            rows = self._find_text_rows(region)
-            current = set()
-            # 同一行可能被背景切成多段 → 先收集所有文本，按规范化 key 去重合并
-            # （保留数量：合并后仍只统计一次，但数量取第一个有效值）
-            line_texts = []  # 每个元素: (规范化key, 原始text)
-            for (ry0, ry1) in rows:
-                crop = region[max(0, ry0 - 2):min(region.shape[0], ry1 + 3), :]
-                text, score = self.ocr.recognize_line(crop)
-                if not text:
-                    continue
-                key = self._norm_key(text)
-                if not key:
-                    continue
-                line_texts.append((key, text.strip()))
-            # 相邻相同 key 的行合并（背景把一行切碎成多段的典型情况）
-            merged_texts = []
-            for key, text in line_texts:
-                if merged_texts and merged_texts[-1][0] == key:
-                    # 同一行碎片：优先保留更"干净"（杂符更少、长度更合理）的文本，
-                    # 避免带引号/破折号的片段进入解析，同时避免重复统计
-                    prev_key, prev_text = merged_texts[-1]
-                    if self._cleaner_text(text) > self._cleaner_text(prev_text):
-                        merged_texts[-1] = (key, text)
-                else:
-                    merged_texts.append((key, text))
-            for key, text in merged_texts:
-                current.add(key)
-                # 新出现（从未见过）或 消失足够久后重现（独立的新拾取）→ 统计
-                if key not in self._seen or self._seen[key] >= 2:
-                    ev = self._parse_pickup_text(text)
-                    if self._dbg():
-                        self._log(f"[DBG]   行key={key!r} text={text!r} seen={self._seen.get(key)} ev={ev}")
-                    if ev is not None:
-                        # seen 状态机已保证不重复，不用 tracker（同类连续拾取间隔可能很短）
-                        added = self._apply_event(ev, frame, 0.0, use_tracker=False) or added
-            # 更新消失计数：当前出现的=0，没出现的=+1（消失≥2帧后同文本重现视为新拾取）
-            for t in current:
-                self._seen[t] = 0
-            for t in list(self._seen):
-                if t not in current:
-                    self._seen[t] += 1
-            for t in list(self._seen):
-                if self._seen[t] > 60:  # 太久没出现，清理（约10秒）
-                    del self._seen[t]
-        except Exception:
-            pass
-        return added
 
     def _parse_pickup_text(self, text):
         """包一层：把**原始 OCR 文字**塞进结果里。
@@ -781,6 +585,8 @@ class Detector:
                 amount = int(m.group(1).replace(",", ""))
                 if not self.settings.get("enable_mora", False):
                     return None  # 摩拉开关：默认关（用户要统计就打开）
+                if self._mora_over_limit(amount, t):
+                    return None  # 读数异常（多半是伤害数字叠上来），当误读丢掉
                 return {"type": "mora", "name": "摩拉", "amount": amount, "count": 1}
             return None
         # 材料 / 圣遗物："名称" + 可选 [×] + 可选数量
@@ -828,6 +634,8 @@ class Detector:
         #      材料的数量几乎不会 ≥20，用此区分摩拉与材料
         if count >= 20:
             if self.settings.get("enable_mora", True):
+                if self._mora_over_limit(count, t):
+                    return None
                 return {"type": "mora", "name": "摩拉", "amount": count, "count": 1}
         # 4) 不在任何名单里的 → **不登记**（只记日志）
         #
@@ -884,47 +692,36 @@ class Detector:
         use_tracker=True：走时间窗口去重（手动区域识别用）
         use_tracker=False：由调用方（seen 状态机）保证"新出现才统计"，
                            用于同类连续拾取（间隔可能小于去重窗口，不能用 tracker）
+
+        ⚠ 第 11 批（6.1 + 6.2）之后这个方法**只管"是不是新事件"**：
+          记账 / 识别日志 / 训练样本都交给 `self.ledger`（`detect_accounting.Accounting`）。
+          原来这三件事全挤在这里，想改日志格式都得动识别代码。
+          抽的时候行为一个字没改 —— 有 `_morph\\test_detector_apply.py`
+          （29 条断言）盯着。
         """
         added = False
         if ev["type"] == "mora":
             if not use_tracker or self.tracker.is_new_event("mora"):
-                self.stats.add_mora(ev["amount"])
-                self.last_event = (time.time(), f"摩拉 +{ev['amount']}")
+                self.last_event = self.ledger.record(
+                    ev, frame, self._record_source(use_tracker))
                 added = True
         elif ev["type"] == "material":
             key = "material:" + ev["name"]
             if not use_tracker or self.tracker.is_new_event(key):
-                self.stats.add_material(ev["name"], ev["count"], ev.get("category", "monster"))
-                self.last_event = (time.time(), f"{ev['name']} ×{ev['count']}")
+                self.last_event = self.ledger.record(
+                    ev, frame, self._record_source(use_tracker))
                 added = True
         elif ev["type"] == "artifact":
             if not use_tracker or self.tracker.is_new_event("artifact"):
-                self.stats.add_artifact()
-                self.last_event = (time.time(), "狗粮 +1")
+                self.last_event = self.ledger.record(
+                    ev, frame, self._record_source(use_tracker))
                 added = True
-        # 开发者选项：确认拾取后，后台采集 GAMEPLAY 训练样本
-        if added:
-            try:
-                self.dataset.capture_gameplay(frame, str(ev.get("name", "")))
-            except Exception:
-                pass
-            # 识别日志：记下这一笔 + 原始 OCR 文字，方便事后查错
-            try:
-                import detect_log
-                if ev["type"] == "mora":
-                    kind, nm, cnt, amt = "摩拉", "", 1, ev.get("amount", 0)
-                elif ev["type"] == "artifact":
-                    kind, nm, cnt, amt = "狗粮", "", 1, 0
-                else:
-                    kind, nm = "材料", ev.get("name", "")
-                    cnt, amt = ev.get("count", 1), 0
-                detect_log.log_event(
-                    kind, nm, cnt, amt, ev.get("raw", ""),
-                    "行队列" if not use_tracker else "区域扫描",
-                    self.settings)
-            except Exception:
-                pass
         return added
+
+    @staticmethod
+    def _record_source(use_tracker):
+        """识别日志里的「来源」那栏（原来是内联在三处调用里的字符串）"""
+        return "区域扫描" if use_tracker else "行队列"
 
     def _parse_text_event(self, text):
         """包一层：同样把原始 OCR 文字塞进结果里（给识别日志用）"""
@@ -947,10 +744,16 @@ class Detector:
                 return None
             m = re.search(r"[×xX+]\s*([\d,]{2,})", text)
             if m:
-                return {"type": "mora", "key": "mora", "amount": int(m.group(1).replace(",", ""))}
+                amt = int(m.group(1).replace(",", ""))
+                if self._mora_over_limit(amt, text):
+                    return None
+                return {"type": "mora", "key": "mora", "amount": amt}
             m = re.search(r"(\d{2,7})", text)
             if m:
-                return {"type": "mora", "key": "mora", "amount": int(m.group(1).replace(",", ""))}
+                amt = int(m.group(1).replace(",", ""))
+                if self._mora_over_limit(amt, text):
+                    return None
+                return {"type": "mora", "key": "mora", "amount": amt}
             return None
         # 材料/圣遗物："名字" 或 "名字×N"（整行必须是这种形式，防止把说明文字当掉落）
         # 注意：OCR 偶尔会读丢数量（如"破损的面具×2"读成"破损的面具×"），
@@ -1001,13 +804,39 @@ class Detector:
         """识别到但不在名单里的 —— 记进日志，但不统计、不登记。
 
         这样你翻日志能看出"哪些名字被丢掉了"，需要的话再手动加进名单。
+
+        ⚠ 第 11 批：写日志的动作搬到 `Accounting.log_rejected` 了，
+          这里只留"什么算未登记"这个判断。
+        """
+        self.ledger.log_rejected(name, count, raw)
+
+    def _mora_over_limit(self, amount, raw=""):
+        """摩拉单次读数是否超过「计数上限」—— 超了就当误读丢掉。
+
+        为什么要这道闸（用户提的需求）：
+            战斗时角色的**伤害数字**会跟「获得」栏的摩拉读数叠在一块儿，
+            OCR 可能一次读出「摩拉 12500」这种，一笔就把摩拉统计顶上天
+            （几万、几十万都出现过）。加了上限之后，超过的读数直接丢掉、不统计。
+
+        上限从设置读（`mora_max_amount`，默认 3000，设 0 = 不限制）；
+        **每次都现读** `self.settings`，所以用户在设置里改完立刻生效，
+        不需要「推给正在跑的识别器」那一步。
+
+        返回 True = 超限、调用方应当丢弃这条读数（同时往识别日志里记一笔，
+        日志的「来源」列会写「未统计（超过单次上限 N）」，方便事后核对）。
         """
         try:
-            import detect_log
-            detect_log.log_event("未登记", name, count, 0, raw, "不在名单里",
-                                 self.settings)
+            limit = int(float(self.settings.get("mora_max_amount", 3000) or 0))
+        except Exception:
+            limit = 3000
+        if limit <= 0 or amount <= limit:
+            return False
+        try:
+            self.ledger.log_dropped(
+                "摩拉", "", 1, amount, raw, f"未统计（超过单次上限 {limit}）")
         except Exception:
             pass
+        return True
 
     def _is_artifact_name(self, name):
         """判断一个拾取物名字是否是圣遗物"""
@@ -1065,7 +894,7 @@ class Detector:
 
         为什么停用：OCR 认错的名字（编编花蜜 / 适 / 塑等化形 …）也被当成
         "新材料"登记进去，材料库攒了一堆错词。现在认不出来的名字
-        **既不统计也不登记**，只写进识别日志（`data/识别日志.log`）供事后查看。
+        **既不统计也不登记**，只写进识别日志（`data/识别日志/`，一次运行一个文件）供事后查看。
 
         留着这个空函数是为了兼容旧调用点；要恢复的话把内容加回来即可。
         """

@@ -9,14 +9,13 @@
 背景图 / 背景色 / 强调色 / 面板透明度 全部来自
 config/settings.json —— 跟 Tk 版共用同一份设置。
 """
+
 import os
 import math
-
 from PySide6.QtCore import Qt, QRectF, QRect, QPoint, QTimer, Signal
 from PySide6.QtGui import QPainter, QPainterPath, QPixmap, QColor, QIcon
 from PySide6.QtWidgets import (QWidget, QFrame, QLabel, QPushButton, QVBoxLayout,
                                QHBoxLayout, QStackedWidget, QMessageBox)
-
 import config_manager
 import paths
 from qt_pages import NOTICE_PAGE_INDEX, VERSION as _VERSION
@@ -25,348 +24,27 @@ from qt_theme import (HEADER, RADIUS_WINDOW, panel_alpha, label_qss, rgba,
 import qt_theme as T
 from qt_icon import IconWidget, HoverHelper, attach_hover
 from qt_widgets import RedDot
-
-# 左下角「检测到新版本」闪烁：一帧 33ms（约 30fps），一个来回 1200ms
-_BLINK_MS = 33
-_BLINK_PERIOD_MS = 1200.0
-# ⚠ 不要用 T.DANGER —— 那是「背景色的浅色版」（深灰），闪出来是白↔深灰不是白↔红。
-#   跟侧栏公告红点用同一个红。
-_BLINK_RED = "#E06C5A"
-
-
-# ---------- 背景图工具 ----------
-def _cover(pm, w, h):
-    """把图裁成铺满 w×h（居中裁剪）= CSS 的 cover"""
-    if w <= 0 or h <= 0 or pm.isNull():
-        return pm
-    s = pm.scaled(w, h, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-    return s.copy((s.width() - w) // 2, (s.height() - h) // 2, w, h)
-
-
-def _blur(pm, factor=10):
-    """便宜模糊：缩小再放大。够用，而且不慢。"""
-    if pm.isNull():
-        return pm
-    w, h = max(1, pm.width()), max(1, pm.height())
-    small = pm.scaled(max(1, w // factor), max(1, h // factor),
-                      Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
-    return small.scaled(w, h, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
-
-
-def load_background(settings):
-    """背景图：设置了 bg_image 就用图；**没设置就返回空 = 走纯色背景**
-
-    （以前没设图时会自己画一张渐变图，现在不要了 —— 直接用主题的背景色。）
-    """
-    p = settings.get("bg_image")
-    if p and os.path.exists(p):
-        pm = QPixmap(p)
-        if not pm.isNull():
-            return pm
-    return QPixmap()          # 空 = 纯色背景
-
+from qt_bg import _cover, _blur, load_background
+from qt_titlebar import TitleBar
+from qt_navbtn import NavButton
+from qt_sidebar import Sidebar
+# 三个闪烁常量也一起转发 —— 它们内部只有 Sidebar 在用，
+# 但留在这儿可以保证 `qt_window` 对外露出的名字跟拆之前**一个不差**
+# （`_morph\api_snapshot.py` 会盯着这个）。
+from qt_sidebar import _BLINK_MS, _BLINK_PERIOD_MS, _BLINK_RED
 
 # ============================================================
-#  标题条
+#  注意：TitleBar / NavButton / Sidebar / 背景图工具 都已经搬走了
+#
+#     qt_bg.py         _cover / _blur / load_background
+#     qt_titlebar.py   TitleBar
+#     qt_navbtn.py     NavButton
+#     qt_sidebar.py    Sidebar（+ 闪烁那几个常量）
+#
+#  上面 import 进来的那些名字**必须留着转发** ——
+#  `qt_bar_editor.py` 顶层就 `from qt_window import NavButton`，
+#  删了它编辑器直接起不来，而且 py_compile 查不出来。
 # ============================================================
-class TitleBar(QFrame):
-    def __init__(self, win, title="StatGI", subtitle=""):
-        super().__init__(win)
-        self.win = win
-        self._drag = None
-        self.setFixedHeight(46)
-        self.setStyleSheet(
-            f"QFrame {{ background: {rgba(HEADER, 190)};"
-            f" border-top-left-radius: {RADIUS_WINDOW}px;"
-            f" border-top-right-radius: {RADIUS_WINDOW}px; }}")
-
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(16, 0, 8, 0)
-        lay.setSpacing(0)
-
-        # 应用图标用 emoji（叶子），其余图标仍是矢量图标
-        ico = IconWidget(self, name="🍃", size=20, role="ACCENT")
-        lay.addWidget(ico)
-        lay.addSpacing(8)
-        self.title_label = QLabel(title)
-        self.title_label.setStyleSheet(label_qss(T.TEXT, 14, True))
-        lay.addWidget(self.title_label)
-        lay.addSpacing(14)
-        self.sub_label = QLabel(subtitle)
-        self.sub_label.setStyleSheet(label_qss(T.DIM, 12))
-        lay.addWidget(self.sub_label)
-        lay.addStretch(1)
-
-        # 标题栏这两个按钮用文字符号，不用矢量图标 —— 试过图标，显示效果不好
-        for text, cb, danger in (("—", self.win.showMinimized, False),
-                                 ("✕", self.win.close, True)):
-            b = QPushButton(text)
-            b.setFixedSize(42, 30)
-            b.setCursor(Qt.PointingHandCursor)
-            hover = "#C0392B" if danger else "#3A3A3A"
-            b.setStyleSheet(
-                f"QPushButton {{ background:transparent; color:{T.TEXT}; border:none;"
-                f" border-radius:6px; font-size:13px; }}"
-                f"QPushButton:hover {{ background:{hover}; }}")
-            b.clicked.connect(cb)
-            lay.addWidget(b)
-
-    # 按住标题条拖动窗口（子控件不会把鼠标事件冒泡给主窗口，所以写在这里）
-    def mousePressEvent(self, e):
-        if e.button() == Qt.LeftButton:
-            self._drag = e.globalPosition().toPoint() - self.win.frameGeometry().topLeft()
-            e.accept()
-
-    def mouseMoveEvent(self, e):
-        if self._drag is not None and e.buttons() & Qt.LeftButton:
-            self.win.move(e.globalPosition().toPoint() - self._drag)
-            e.accept()
-
-    def mouseReleaseEvent(self, e):
-        self._drag = None
-
-
-# ============================================================
-#  侧栏的一项
-# ============================================================
-class NavButton(QFrame):
-    """侧栏的一项：图标 + 名字。
-
-    鼠标放到整项上 → 图标弹一下；选中时底色高亮、文字和图标转成强调色。
-    """
-
-    clicked = Signal()
-
-    def __init__(self, parent, icon, text, height=40):
-        super().__init__(parent)
-        self.setFixedHeight(height)
-        self.setCursor(Qt.PointingHandCursor)
-        self._active = False
-        self._hover = False
-
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(14, 0, 12, 0)
-        lay.setSpacing(10)
-
-        self.icon_widget = IconWidget(self, name=icon, size=18, role="TEXT")
-        lay.addWidget(self.icon_widget)
-
-        self.label = QLabel(text)
-        self.label.setStyleSheet(label_qss(T.TEXT, 14))
-        self.label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        lay.addWidget(self.label)
-        lay.addStretch(1)
-
-        self._hh = HoverHelper(self, self._on_hover)
-
-    def _on_hover(self, on):
-        self._hover = on
-        self.icon_widget.set_hover(on)
-        self.update()
-
-    def set_active(self, active):
-        self._active = bool(active)
-        self.label.setStyleSheet(
-            label_qss(T.ACCENT if self._active else T.TEXT, 14))
-        self.icon_widget.set_color(role="ACCENT" if self._active else "TEXT")
-        self.update()
-
-    def mousePressEvent(self, e):
-        if e.button() == Qt.LeftButton:
-            self.clicked.emit()
-            e.accept()
-
-    def paintEvent(self, e):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing, True)
-        p.setPen(Qt.NoPen)
-        if self._active:
-            c = QColor(T.ACCENT)
-            c.setAlpha(45)
-            p.setBrush(c)
-            p.drawRoundedRect(self.rect(), 8, 8)
-        elif self._hover:
-            p.setBrush(QColor(255, 255, 255, 28))
-            p.drawRoundedRect(self.rect(), 8, 8)
-        p.end()
-
-
-# ============================================================
-#  左侧栏（磨砂玻璃）
-# ============================================================
-class Sidebar(QFrame):
-    def __init__(self, win, items, on_select):
-        super().__init__(win)
-        self.win = win
-        self.setFixedWidth(190)
-        self._blur = None
-        self._glass = bool((win.state.settings or {}).get("sidebar_glass", True))
-        self._items = items
-        self._on_select = on_select
-
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(10, 14, 10, 14)
-        lay.setSpacing(4)
-
-        self.buttons = []
-        self.nav_dots = {}          # 导航名 -> 小红点（检测到新版本时挂在「设置」上）
-        for i, (icon, name) in enumerate(items):
-            b = NavButton(self, icon, name)
-            b.clicked.connect(lambda idx=i: self._on_select(idx))
-            lay.addWidget(b)
-            self.buttons.append(b)
-            self.nav_dots[name] = RedDot(b)
-
-        lay.addStretch(1)
-
-        # ---- 公告（放在导航和版本号之间，做一个独立入口）----
-        # 它不是"页面"，点一下是弹窗 —— 所以不参与 set_active 的高亮
-        self.notice_btn = NavButton(self, "megaphone", "公告")
-        self.notice_btn.clicked.connect(self._on_notice_click)
-        lay.addWidget(self.notice_btn)
-
-        # 未读小红点：浮在按钮右上角（做成按钮的子控件，跟着按钮走）
-        self.notice_dot = QLabel("●", self.notice_btn)
-        self.notice_dot.setStyleSheet(
-            "color:#E06C5A; font-size:13px; background:transparent;")
-        self.notice_dot.setFixedSize(16, 16)
-        self.notice_dot.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        self.notice_dot.hide()
-
-        # 左下角版本号。检测到新版本时会变成「检测到新版本」并闪红光
-        # 从 qt_pages.VERSION 取，别写死 —— 以前写死 V0.9，改版本号会漏掉这里
-        self.ver_label = QLabel("V" + _VERSION)
-        self.ver_label.setStyleSheet(label_qss(T.DIM, 12))
-        self.ver_label.setAlignment(Qt.AlignCenter)
-        self.ver_label.setCursor(Qt.PointingHandCursor)
-        self.ver_label.mousePressEvent = self._on_ver_click
-        lay.addWidget(self.ver_label)
-
-        self._upd_on = False
-        self._upd_ver = ""
-        self._upd_t = 0.0
-        self._upd_timer = QTimer(self)
-        self._upd_timer.setInterval(_BLINK_MS)
-        self._upd_timer.timeout.connect(self._blink_tick)
-
-        self.set_active(0)
-
-    # ---- 检测到新版本：闪烁提示 ----
-
-    def set_update_available(self, on, version=""):
-        """检测到新版本 → 左下角换成「检测到新版本」并一直闪红光"""
-        self._upd_on = bool(on)
-        self._upd_ver = str(version or "")
-        # 侧栏「设置」那一项也挂个红点（更新是在 设置→其它 里点的）
-        dot = getattr(self, "nav_dots", {}).get("设置")
-        if dot is not None:
-            dot.set_on(self._upd_on)
-        if self._upd_on:
-            self.ver_label.setText("检测到新版本")
-            self.ver_label.setToolTip(
-                (f"发现新版本 {self._upd_ver}" if self._upd_ver else "发现新版本")
-                + "，点这里去更新")
-            self._upd_t = 0.0
-            self._blink_tick()
-            self._upd_timer.start()
-        else:
-            self._upd_timer.stop()
-            self.ver_label.setText("V" + _VERSION)
-            self.ver_label.setStyleSheet(label_qss(T.DIM, 12))
-            self.ver_label.setToolTip("")
-
-    def _blink_tick(self):
-        """白 → 红 → 白 平滑来回，一个来回约 1.2 秒（不会太快晃眼）"""
-        self._upd_t += _BLINK_MS / _BLINK_PERIOD_MS
-        k = 0.5 - 0.5 * math.cos(2 * math.pi * self._upd_t)     # 0~1 平滑
-        white, red = QColor("#FFFFFF"), QColor(_BLINK_RED)
-        cur = QColor(int(white.red() + (red.red() - white.red()) * k),
-                     int(white.green() + (red.green() - white.green()) * k),
-                     int(white.blue() + (red.blue() - white.blue()) * k))
-        self.ver_label.setStyleSheet(
-            f"color:{cur.name()}; font-size:12px; font-weight:700;")
-
-    def _on_ver_click(self, _e=None):
-        if self._upd_on:
-            fn = getattr(self.win, "show_update_settings", None)
-            if callable(fn):
-                fn()
-
-    def _on_notice_click(self):
-        fn = getattr(self.win, "show_notice_page", None)
-        if callable(fn):
-            fn()
-
-    def set_notice_unread(self, unread):
-        """有没有未读公告 —— 有就在公告那一项右上角挂个红点"""
-        self.notice_dot.setVisible(bool(unread))
-        if unread:
-            self._place_dot()
-            self.notice_dot.raise_()
-
-    def _place_dot(self):
-        """把红点摆在按钮右上角（按钮大小定了之后才准）"""
-        b = self.notice_btn
-        self.notice_dot.move(max(0, b.width() - 20), 4)
-
-    def resizeEvent(self, e):
-        super().resizeEvent(e)
-        self._place_dot()
-
-    def showEvent(self, e):
-        super().showEvent(e)
-        self._place_dot()
-
-    def set_active(self, idx):
-        for i, b in enumerate(self.buttons):
-            b.set_active(i == idx)
-
-    def set_glass(self, on):
-        """毛玻璃开关：关掉就不模糊背景图，只压暗"""
-        self._glass = bool(on)
-        self.refresh_bg()
-
-    def refresh_bg(self):
-        self._blur = None
-        self.update()
-
-    def paintEvent(self, e):
-        # 侧栏 = 背景图上**对应位置**那一块 +（可选）模糊 + 压暗
-        #
-        # 关键：要从窗口坐标里取自己那一块，不能拿 self.rect()（那是自己的
-        # 局部坐标，永远从 0,0 开始）—— 否则背景图会整体上移一个标题条的高度，
-        # 看起来就是「侧栏的图错位了」。
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing, True)
-        p.setRenderHint(QPainter.SmoothPixmapTransform, True)
-
-        # 左下角跟着窗口一起圆角，否则整个窗口的左下角会被切成直角
-        r = self.rect()
-        path = QPainterPath()
-        path.moveTo(r.left(), r.top())
-        path.lineTo(r.right() + 1, r.top())
-        path.lineTo(r.right() + 1, r.bottom() - RADIUS_WINDOW + 1)
-        path.quadTo(r.right() + 1, r.bottom() + 1,
-                    r.right() - RADIUS_WINDOW + 1, r.bottom() + 1)
-        path.lineTo(r.left() + RADIUS_WINDOW, r.bottom() + 1)
-        path.quadTo(r.left(), r.bottom() + 1, r.left(), r.bottom() - RADIUS_WINDOW + 1)
-        path.closeSubpath()
-        p.setClipPath(path)
-
-        bg = self.win.background()
-        if bg.isNull():
-            p.fillRect(r, QColor(T.SIDEBAR))
-        else:
-            if self._blur is None:
-                # 自己在窗口里的位置（含标题条高度）
-                top_left = self.mapTo(self.win, QPoint(0, 0))
-                crop = bg.copy(QRect(top_left.x(), top_left.y(),
-                                     self.width(), self.height()))
-                self._blur = _blur(crop, 12) if getattr(self, "_glass", True) else crop
-            if self._blur is not None:
-                p.drawPixmap(0, 0, self._blur)
-            p.fillRect(r, QColor(12, 12, 14, 150))
-        p.end()
 
 
 # ============================================================
@@ -788,10 +466,10 @@ class MainWindow(QWidget):
         if self.bar_window is not None:
             self.bar_window.apply_appearance()
 
-    def open_data_dir(self):
+    def _open_dir(self, d):
+        """在文件管理器里打开一个目录（打不开就退回 explorer）"""
         import os
         import subprocess
-        d = paths.app_dir() / "data"
         try:
             d.mkdir(parents=True, exist_ok=True)
             os.startfile(str(d))          # noqa  Windows 专用
@@ -800,6 +478,14 @@ class MainWindow(QWidget):
                 subprocess.Popen(["explorer", str(d)])
             except Exception:
                 pass
+
+    def open_data_dir(self):
+        self._open_dir(paths.app_dir() / "data")
+
+    def open_log_dir(self):
+        """打开识别日志文件夹（一次运行一个文件，放在 data/识别日志/）"""
+        import detect_log
+        self._open_dir(detect_log.LOG_DIR)
 
     def set_sidebar_glass(self, on):
         """左侧栏毛玻璃开关（关掉就是纯色+压暗）"""
@@ -849,6 +535,9 @@ class MainWindow(QWidget):
 
     def _shutdown(self):
         """真正退出前：停监测、关子窗口、停接口"""
+        # ⚠ 先标记"正在退出"：这样 _shutdown 里那次 stop() 不会弹「本次小结」
+        #   （自动更新前也会走 _shutdown，同样不该弹窗）
+        self._quitting = True
         try:
             if self.state.monitoring:
                 self.state.stop()
@@ -927,6 +616,20 @@ class MainWindow(QWidget):
         # 文字**和颜色**都要跟着走（正在监测=绿、已暂停=红），
         # 以前这里把 color 丢掉了，所以标题条永远是灰的。
         self.state.status_changed.connect(self._on_title_status)
+        # 手动停止监测 → 弹「本次小结」（退出程序时不弹，见 _shutdown）
+        self.state.session_ended.connect(self._on_session_ended)
+
+    def _on_session_ended(self, rec):
+        """本次监测结束：弹一个小结（可以在设置里关掉）"""
+        try:
+            if getattr(self, "_quitting", False):
+                return                      # 正在退出，别弹
+            if not bool(self.state.settings.get("stop_summary", True)):
+                return
+            import qt_dialogs
+            qt_dialogs.StopSummaryDialog(self, rec, alpha=self.alpha).exec()
+        except Exception:
+            log_exc("qt_window 停止小结")
 
     def _on_title_status(self, text, color):
         """标题条左上角那行状态：跟启动页那张卡片用的是同一套文字和颜色"""

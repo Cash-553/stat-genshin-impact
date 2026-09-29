@@ -37,9 +37,14 @@ DEFAULT_SETTINGS = {
     "change_level": "标准",    # 画面变化灵敏度（界面显示用；真正生效的是 change_threshold）
     # 识别开关（文字识别：想统计什么就开什么）
     "enable_mora": True,             # 识别摩拉
+    # 摩拉单次计数上限：单次读数超过它就当"误读"丢掉（不统计）。
+    # 为什么需要：战斗时角色伤害数字会跟摩拉读数重叠，OCR 可能一次读到
+    # 「摩拉 12500」这种，把统计直接顶上天（几万甚至几十万）。
+    # 0 = 不限制（老行为）。
+    "mora_max_amount": 3000,
     "enable_material": True,         # 识别怪物素材
     "enable_artifact": True,         # 识别圣遗物（狗粮）
-    "log_detections": True,          # 每统计一笔就写进 data/识别日志.log
+    "log_detections": True,          # 每统计一笔就写进 data/识别日志/（一次运行一个文件）
     "materials_lib_version": 0,      # 材料库版本：低于 materials_db.LIB_VERSION 就重置一次
     "only_foreground": True,       # 只在原神窗口在前台时识别（切到其他应用停止识别）
     # 开发者选项（默认隐藏，不采集，不影响普通用户）
@@ -55,6 +60,11 @@ DEFAULT_SETTINGS = {
     "bg_dim": 0.0,                  # 背景图压暗程度（0~0.6，照片类背景图看不清字时用）
     "sidebar_glass": True,          # 左侧栏是否模糊（需要先设置背景图片）
     "panel_opacity": 0.5,           # 面板（卡片/侧边栏/按钮）透明度：0=全透明，1=不透明
+    # 界面整体缩放：1.0 / 1.1 / 1.25（高分屏字太小时放大用）。
+    # ⚠ 它是在**启动时**设 QT_SCALE_FACTOR 生效的 —— 改完要重启软件。
+    "ui_scale": 1.0,
+    # 停止监测时弹一个"本次小结"（时长 + 摩拉 / 材料 / 狗粮）
+    "stop_summary": True,
     # 桌面悬浮窗（统计条）：图标 + 开关 + 位置。
     # 外观样式（大小/圆角/底色/描边/颜色…）在 data/bar_items.json，见 bar_items.py
     "stat_bar": {

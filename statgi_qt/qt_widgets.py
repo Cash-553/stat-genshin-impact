@@ -10,11 +10,11 @@
 """
 from PySide6.QtCore import Qt, Signal, QRectF, QSize, QEvent, QVariantAnimation
 from PySide6.QtGui import QPainter, QColor
-from PySide6.QtWidgets import (QFrame, QLabel, QPushButton, QHBoxLayout,
-                               QVBoxLayout, QWidget, QSizePolicy)
+from PySide6.QtWidgets import (QComboBox, QFrame, QLabel, QPushButton,
+                               QHBoxLayout, QVBoxLayout, QWidget, QSizePolicy)
 
 from qt_theme import (RADIUS_CARD, RADIUS_BTN, card_qss, label_qss, title_qss,
-                      btn_qss)
+                      btn_qss, combo_qss)
 import qt_theme as T
 from qt_icon import (IconWidget, HoverHelper, has_icon, attach_hover,
                      icon_qicon)
@@ -153,6 +153,36 @@ def small_button(text, callback=None, alpha=150, kind="normal", icon=None,
     if callback is not None:
         b.clicked.connect(callback)
     return b
+
+
+def make_combo(items, width=150):
+    """通用下拉框。
+
+    （原来只住在 `qt_pages.BasePage._dd` 上。第 9 批拆设置标签页时，
+      新模块里的标签页也要它，而 qt_pages 反向依赖它们会成环 ——
+      所以就搬到这儿，BasePage._dd 改成调它，行为和外观一个字没变。）
+    """
+    d = QComboBox()
+    d.addItems([str(x) for x in items])
+    d.setFixedWidth(width)
+    d.setStyleSheet(combo_qss())
+    return d
+
+
+def right_wrap(*widgets):
+    """把几个控件包成一个整体，好塞进 SettingRow 的右边。
+
+    （原来住在 qt_pages.py。第 9 批拆设置页标签页时，
+      新的 `qt_settings_tabs` 也要用它 —— 留在 qt_pages 会形成循环 import，
+      而它本来就只是个通用小控件，所以搬到这里。）
+    """
+    w = QWidget()
+    lay = QHBoxLayout(w)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(8)
+    for x in widgets:
+        lay.addWidget(x)
+    return w
 
 
 def heading(text, parent=None):
@@ -323,10 +353,14 @@ class SettingRow(Card):
     """
 
     def __init__(self, parent=None, icon="", title="", desc="", right=None,
-                 alpha=150, height=70, icon_color=None):
+                 alpha=150, height=70, icon_color=None, tip=""):
         super().__init__(parent, alpha=alpha)
         if height:                       # height=None → 高度跟着内容走
             self.setFixedHeight(height)
+        # 鼠标悬停显示更详细的说明。设在卡片上就够了 ——
+        # Qt 里子控件自己没有 tooltip 时，会往上找到父控件的。
+        if tip:
+            self.setToolTip(tip)
         lay = QHBoxLayout(self)
         lay.setContentsMargins(14, 12, 14, 12)
         lay.setSpacing(12)
@@ -382,7 +416,7 @@ class SwitchAccordion(QWidget):
     toggled = Signal(bool)
 
     def __init__(self, parent=None, icon="", title="", desc="", alpha=150,
-                 checked=False, body=None):
+                 checked=False, body=None, tip=""):
         super().__init__(parent)
         self._open = False
         self._alpha = alpha
@@ -393,7 +427,7 @@ class SwitchAccordion(QWidget):
 
         # ---- 头部：图标 + 标题 + 说明 …… 开关 ----
         self.head = SubRow(self, icon=icon, title=title, desc=desc,
-                           right=None, alpha=alpha)
+                           right=None, alpha=alpha, tip=tip)
         self.title_label = self.head.title_label
         self.desc_label = self.head.desc_label
         self.switch = Switch(self.head, bool(checked))
@@ -460,9 +494,14 @@ class SubRow(Card):
     """
 
     def __init__(self, parent=None, icon="", title="", desc="", right=None,
-                 alpha=150, height=58, box=32, icon_color=None, desc_color=None):
+                 alpha=150, height=58, box=32, icon_color=None, desc_color=None,
+                 tip=""):
         super().__init__(parent, alpha=alpha)
         self.setFixedHeight(height)
+        # 鼠标悬停显示更详细的说明（子控件自己没有 tooltip 时会往上找，
+        # 所以设在卡片上就够了）
+        if tip:
+            self.setToolTip(tip)
         lay = QHBoxLayout(self)
         lay.setContentsMargins(12, 8, 12, 8)
         lay.setSpacing(10)
@@ -531,7 +570,7 @@ class Accordion(QWidget):
 
     def __init__(self, parent=None, icon="", title="", desc="", items=None,
                  body_widget=None, alpha=150, on_toggle=None, footer=None,
-                 item_alpha=None):
+                 item_alpha=None, tip=""):
         super().__init__(parent)
         # 兼容旧写法：有人把「内容控件」当成第 5 个位置参数传进来
         # （以前 body_widget 就在那个位置）。自动认出来，
@@ -551,6 +590,8 @@ class Accordion(QWidget):
 
         # ---- 主卡片：只有标题 ----
         self.header = Card(self, alpha=alpha)
+        if tip:
+            self.header.setToolTip(tip)
         self.v = QVBoxLayout(self.header)
         self.v.setContentsMargins(14, 12, 14, 12)
         self.v.setSpacing(8)
@@ -583,12 +624,16 @@ class Accordion(QWidget):
         self.item_cards = []
 
         # 规范写法：items 里每项是 (图标, 标题, 说明, 右边控件)
-        # 也可以给第 5 个元素指定说明颜色（红色警告用）
+        #   第 5 个元素 = 说明颜色（红色警告用，通常留 None）
+        #   第 6 个元素 = 鼠标悬停的详细说明
+        # ⚠ 顺序别搞混：把"悬停说明"放到第 5 位会被当成颜色塞进样式表，
+        #   Qt 会刷 "Could not parse stylesheet of object QLabel"（踩过一次）。
         for it in (items or []):
-            vals = list(it) + [None] * (5 - len(it))
+            vals = list(it) + [None] * (6 - len(it))
             ic_name, ti, de, right, dcolor = vals[0], vals[1], vals[2], vals[3], vals[4]
             card = SubRow(self.body, icon=ic_name, title=ti, desc=de,
-                          right=right, alpha=ia, desc_color=dcolor)
+                          right=right, alpha=ia, desc_color=dcolor,
+                          tip=vals[5] or "")
             bv.addWidget(card)
             self.item_cards.append(card)
 
