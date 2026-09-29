@@ -109,3 +109,6 @@ statgi_qt/说明.txt
 编辑器交接说明.md
 第4步-service契约.md
 重构步骤细化.md
+# 一次性生成脚本 / 根目录测试文件（跑程序不需要，2026-09-23 撤出）
+_tools_build_names.py
+test_event_lifecycle.py
