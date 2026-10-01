@@ -134,6 +134,17 @@ def run_detector(det, stop_ev, settings, out_queue):
                 except Exception:
                     pass
 
+            # 长时间抓不到画面 —— 大概率是游戏窗口关了 / 重启了 / 最小化了。
+            # 原来这种情况**完全静默**：界面上还写着「正在监测」，
+            # 其实一个都不识别，用户只能感觉「突然不识别了」。
+            # 这里每累计 60 次（约 3 秒）报一条状态，让界面能提示出来。
+            miss = getattr(det, "_grab_miss", 0)
+            if miss and miss % 60 == 1:
+                try:
+                    out_queue.put(("status", "找不到游戏窗口，已暂停识别"))
+                except Exception:
+                    pass
+
             stop_ev.wait(tick_interval(settings))
     finally:
         try:

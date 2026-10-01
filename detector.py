@@ -209,6 +209,9 @@ class Detector:
             try:
                 from capture import is_genshin_foreground
                 if not is_genshin_foreground():
+                    # ⚠ 这是**正常跳过**（用户切到别的窗口了），
+                    #   不能算「抓不到画面」—— 否则一切出去就报错，纯噪音
+                    self._grab_miss = 0
                     return None
             except Exception:
                 pass
@@ -216,15 +219,33 @@ class Detector:
         if self.window_hwnd is None or now - self._last_win_find > 10.0:
             self._last_win_find = now
             found = find_game_window_hwnd()
+            # ⚠ 找不到就**必须把旧句柄清掉**。
+            #   原来只在 found 为真时才赋值 —— 游戏重启 / 关掉再开之后，
+            #   旧句柄一直留着，之后每一轮都拿着一个死句柄去截图；
+            #   截图失败又被下面的 except 吞掉、return None，
+            #   界面上还显示「正在监测」，实际一个都不识别。
+            #   这就是用户反馈的「突然不识别」。
             if found:
                 self.window_hwnd, self.window_rect = found
+            else:
+                self.window_hwnd = None
+                self.window_rect = None
         if self.window_hwnd is None:
+            self._grab_miss = getattr(self, "_grab_miss", 0) + 1
             return None  # 还没找到游戏窗口
         try:
-            # PrintWindow 截取窗口本身内容（不包含覆盖在上面的 BetterGI 窗口）
-            return self.capture.grab(self.window_hwnd)
+            frame = self.capture.grab(self.window_hwnd)
         except Exception:
+            frame = None
+        if frame is None:
+            # 这一轮没抓到（窗口关了 / 最小化 / 句柄失效）→ 清掉句柄，
+            # 下一轮会重新去找；否则会一直卡在死句柄上
+            self.window_hwnd = None
+            self.window_rect = None
+            self._grab_miss = getattr(self, "_grab_miss", 0) + 1
             return None
+        self._grab_miss = 0
+        return frame
 
     def _change_score(self, frame_bgr):
         """

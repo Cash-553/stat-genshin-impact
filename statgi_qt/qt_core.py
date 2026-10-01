@@ -91,6 +91,11 @@ class AppState(QObject):
                     elif kind == "error":
                         self.stop()
                         self.status_changed.emit("监测出错已停止", BAD)
+                    elif kind == "status":
+                        # 只更新状态文字，**不停止** ——
+                        # 比如「找不到游戏窗口」（游戏关了/重启了），
+                        # 窗口回来之后下一轮自己就恢复了。
+                        self.status_changed.emit(str(payload), BAD)
             except queue.Empty:
                 pass
             except Exception:
