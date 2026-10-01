@@ -275,7 +275,7 @@ class Detector:
 
         打开方式：设置 → 关于 → 开发者选项 → 自动保存诊断截图。
         关着的时候下面那些 [DBG] 日志一行都不写（以前是常开，
-        每轮检测都往 data/debug.log 写，既费性能又一直涨）。
+        每轮检测都往 data/日志/诊断/ 写，既费性能又一直涨）。
         """
         try:
             return bool((getattr(self, "settings", None) or {}).get("save_debug", False))
@@ -283,10 +283,16 @@ class Detector:
             return False
 
     def _log(self, msg):
-        """把诊断日志写入 data/debug.log（打包版没有控制台，只能看文件）"""
+        """把诊断日志写入 data/日志/诊断/诊断_<日期>.log
+
+        （打包版没有控制台，只能看文件；按天分文件，不用在一个大文件里翻）
+        """
         try:
+            import time as _t
             from paths import app_dir
-            p = app_dir() / "data" / "debug.log"
+            d = app_dir() / "data" / "日志" / "诊断"
+            d.mkdir(parents=True, exist_ok=True)
+            p = d / ("诊断_%s.log" % _t.strftime("%Y%m%d"))
             import io
             with io.open(str(p), "a", encoding="utf-8") as f:
                 f.write(msg + "\n")

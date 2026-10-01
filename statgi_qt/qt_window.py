@@ -88,7 +88,7 @@ class MainWindow(QWidget):
     def _setup_extras(self):
         """主界面建好之后，把周边的东西装上。
 
-        每一块单独 try，并且把出错原因记进 data/error.log ——
+        每一块单独 try，并且把出错原因记进 data/日志/报错/ ——
         不用「except Exception: pass」把问题吞掉（那样只会得到
         "没装上"三个字，根本不知道为什么）。
         """

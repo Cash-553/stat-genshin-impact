@@ -60,7 +60,7 @@ def main():
     except Exception:
         pass
 
-    # 出错也记进 data/error.log
+    # 出错也记进 data/日志/报错/
     try:
         from errlog import install_hooks
         install_hooks()

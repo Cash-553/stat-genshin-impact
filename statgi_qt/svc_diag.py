@@ -193,7 +193,7 @@ def collect_diagnose(dest_dir=None):
     装进去的东西：
         环境概况.txt      版本 / 系统 / 屏幕 / 关键设置 / 数据文件
         设置.json         完整设置（方便复现）
-        报错日志.txt      data/error.log 的最后 400 行
+        报错日志.txt      data/日志/报错/ 里最新那个的最后 400 行
         识别日志_最近.txt  最近那个识别日志的最后 400 行
         traceback.txt     如果有 Qt/Python 的崩溃记录也带上
     """
@@ -216,9 +216,23 @@ def collect_diagnose(dest_dir=None):
                     z.write(sp, "设置.json")
                 except Exception:
                     pass
-            tail = _tail_lines(app / "data" / "error.log", 400)
-            if tail:
-                z.writestr("报错日志.txt", "".join(tail))
+            # 报错日志现在按天分文件放在 data/日志/报错/ 下 ——
+            # 取**今天**那个；今天的没有就取目录里最新的一个
+            # （用户往往是第二天才想起来打包反馈，当天的可能是空的）
+            ed = app / "data" / "日志" / "报错"
+            cand = None
+            if ed.is_dir():
+                files = sorted((p for p in ed.glob("*.log") if p.is_file()),
+                               key=lambda p: p.stat().st_mtime, reverse=True)
+                cand = files[0] if files else None
+            if cand is None:
+                # 兼容老位置（升级前留下的 data/error.log）
+                old = app / "data" / "error.log"
+                cand = old if old.exists() else None
+            if cand is not None:
+                tail = _tail_lines(cand, 400)
+                if tail:
+                    z.writestr("报错日志.txt", "".join(tail))
             cur = detect_log.current_file()
             if cur is not None:
                 tl = _tail_lines(cur, 400)

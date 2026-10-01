@@ -38,7 +38,7 @@ import paths
 
 DATA_DIR = paths.app_dir() / "data"
 # ★ 文件夹（不是单个文件了）
-LOG_DIR = DATA_DIR / "识别日志"
+LOG_DIR = DATA_DIR / "日志" / "识别"
 
 # 文件夹整体超过 20 MB 就清：删到 16 MB 以下（留点余量，别每启动一次都删）
 MAX_TOTAL_BYTES = 20 * 1024 * 1024

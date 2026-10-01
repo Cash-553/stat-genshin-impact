@@ -117,9 +117,27 @@ def run_detector(det, stop_ev, settings, out_queue):
             try:
                 det.tick()
                 err_streak = 0
-            except Exception:
+            except Exception as _e:
                 err_streak += 1
+                # 前几次把**真实异常**记下来。
+                # 原来这里只有一句 `except Exception:` —— 异常内容被彻底吞掉，
+                # 事后只知道「连错了 20 次」，不知道错的是什么，只能靠猜。
+                # 写进 data/日志/报错/报错_<日期>.log（同一条 30 秒去重）。
+                if err_streak <= 3:
+                    try:
+                        import errlog
+                        errlog.log_exc("识别循环")
+                    except Exception:
+                        pass
                 if err_streak > 20:
+                    try:
+                        import errlog
+                        errlog.log_msg(
+                            "识别循环",
+                            f"连续出错 {err_streak} 次，已停止监测"
+                            f"（最后一次：{type(_e).__name__}: {_e}）")
+                    except Exception:
+                        pass
                     try:
                         out_queue.put(("error", "连续识别失败"))
                     except Exception:
