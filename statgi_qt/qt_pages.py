@@ -147,9 +147,27 @@ class PageLaunch(BasePage):
         self.start_btn.setCursor(Qt.PointingHandCursor)
         self.start_btn.setStyleSheet(btn_qss("accent", self.alpha))
         self.start_btn.clicked.connect(self._on_start)
+
+        # ---- 暂停 / 继续（只在「监测中 / 暂停中」出现）----
+        # 跟「停止」的区别：**暂停不结束本次会话** ——
+        # 收益记录不写、小结不弹，继续时接着这一段跑，数据不清零。
+        self.pause_btn = QPushButton("暂停")
+        self.pause_btn.setFixedSize(88, 38)
+        self.pause_btn.setCursor(Qt.PointingHandCursor)
+        self.pause_btn.setStyleSheet(btn_qss("normal", self.alpha))
+        self.pause_btn.clicked.connect(self._on_pause)
+        self.pause_btn.setVisible(False)
+
+        _btn_box = QWidget()
+        _bl = QHBoxLayout(_btn_box)
+        _bl.setContentsMargins(0, 0, 0, 0)
+        _bl.setSpacing(8)
+        _bl.addWidget(self.pause_btn)
+        _bl.addWidget(self.start_btn)
+
         self.add(SettingRow(self, "play", "开始监测",
                             "自动找到游戏窗口并识别掉落收益",
-                            right_wrap(self.start_btn), alpha=self.alpha))
+                            right_wrap(_btn_box), alpha=self.alpha))
 
         # ---- 本次挂机（独立一张卡片，**只在监测时出现**）----
         # 四个数字**直接摆在这张卡片里**，里面不再套小框了 ——
@@ -267,13 +285,32 @@ class PageLaunch(BasePage):
             self.state.start(on_error=lambda msg: QMessageBox.information(self, "提示", msg))
         self._sync_button()
 
+    def _on_pause(self):
+        if getattr(self.state, "paused", False):
+            self.state.resume(
+                on_error=lambda msg: QMessageBox.information(self, "提示", msg))
+        else:
+            self.state.pause()
+        self._sync_button()
+
     def _sync_button(self):
-        txt = "停止" if self.state.monitoring else "开始"
+        mon = bool(self.state.monitoring)
+        paused = bool(getattr(self.state, "paused", False))
+        txt = "停止" if mon else "开始"
         if self.start_btn.text() != txt:       # 只有真的不一样才 setText
             self.start_btn.setText(txt)
         # 统计卡片跟着监测状态显示/隐藏：开始 -> 出现；停止 -> 消失。
         # 只在**状态真的变了**的时候动它，不用每次刷新都算一遍。
-        now = bool(self.state.monitoring)
+        # 暂停按钮：监测中显示「暂停」，暂停中显示「继续」，其余隐藏
+        show_pause = mon or paused
+        if self.pause_btn.isVisible() != show_pause:
+            self.pause_btn.setVisible(show_pause)
+        ptxt = "继续" if paused else "暂停"
+        if self.pause_btn.text() != ptxt:
+            self.pause_btn.setText(ptxt)
+
+        # 统计卡片：监测中或暂停中都显示（暂停时这一段的数据还留着）
+        now = mon or paused
         if now != getattr(self, "_last_monitoring", False):
             self._last_monitoring = now
             self._stat_shown = now

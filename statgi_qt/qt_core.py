@@ -51,6 +51,7 @@ class AppState(QObject):
         self._detect_thread = None
         self._detect_stop = None
         self._detect_queue = None
+        self.paused = False      # 暂停（区别于停止：会话还在）
         # 「连续失败计数」搬去 svc_capture.run_detector 了（本来也没人读它）
         self.detector = None
         self._sess_start_ts = None
@@ -175,6 +176,26 @@ class AppState(QObject):
         self._prewarm_ocr()
 
         # 优先自动找游戏窗口；找不到才退回手动框选的区域
+        ok, mode_text = self._spawn_detect(on_error)
+        if not ok:
+            return
+
+        self.monitoring = True
+        self.paused = False
+        self._monitor_start = time.monotonic()
+        self._sess_start_ts = time.time()
+        self._sess_snapshot = (
+            self.stats.mora, self.stats.artifact,
+            dict(self.stats.materials), dict(self.stats.normal_materials))
+        self.status_changed.emit(mode_text, GOOD)
+        self.force_refresh()
+
+    def _spawn_detect(self, on_error=None):
+        """找游戏窗口 + 起后台识别线程。返回 (成功?, 状态文字)。
+
+        start() 和 resume() 都用它 —— 暂停后继续时窗口可能已经换了，
+        所以**每次都要重新找**，不能缓存。
+        """
         region = None
         mode_text = "正在监测（自动识别游戏窗口）"
         try:
@@ -185,24 +206,67 @@ class AppState(QObject):
             region = self.settings.get("region")
             if not region:
                 if on_error:
-                    on_error("没有找到原神游戏窗口。\n\n请先打开游戏（用无边框窗口模式），再点开始监测。")
+                    on_error("没有找到原神游戏窗口。\n\n请先打开游戏"
+                             "（用无边框窗口模式），再点开始监测。")
                 self.status_changed.emit("未开始", DIM)
-                return
+                return False, mode_text
             mode_text = "正在监测"
 
-        # 启动后台检测线程
         self._detect_stop = threading.Event()
         self._detect_queue = queue.Queue()
         self._detect_thread = threading.Thread(
             target=self._detect_loop, args=(region,), daemon=True)
         self._detect_thread.start()
+        return True, mode_text
 
+    def pause(self):
+        """暂停：停掉识别，但**本次会话留着**。
+
+        跟 stop() 的区别就在这几行：
+            · **不调 `_record_session()`** —— 不写收益记录
+            · **不发 `session_ended`** —— 不弹「本次小结」
+            · **不动 `_sess_start_ts` / `_sess_snapshot`** —— 还是同一段
+        继续（resume）时接着这一段跑，数据不清零。
+
+        计时照常结算：把已跑的时间累加进 `stats.running_seconds`，
+        继续时从当前时刻重新起算 —— 所以「监测时间」只统计真正在识别的时长。
+        """
+        if not self.monitoring:
+            return
+        if self._monitor_start:
+            self.stats.running_seconds += int(time.monotonic()
+                                             - self._monitor_start)
+            try:
+                self.stats.save()
+            except Exception:
+                pass
+            self._monitor_start = None
+        self.monitoring = False
+        self.paused = True
+        if self._detect_stop is not None:
+            try:
+                self._detect_stop.set()
+            except Exception:
+                pass
+        self._detect_stop = None
+        self._detect_thread = None
+        self.status_changed.emit("已暂停", DIM)
+        self.force_refresh()
+
+    def resume(self, on_error=None):
+        """继续：接着暂停前那一段会话跑，收益记录不重开。"""
+        if not self.paused:
+            return
+        ok, mode_text = self._spawn_detect(on_error)
+        if not ok:
+            # 起不来（窗口没了）→ 退出暂停态，界面回到「未开始」，
+            # 但**会话状态仍然留着**，下次点开始还是接着这一段
+            self.paused = False
+            self.force_refresh()
+            return
+        self.paused = False
         self.monitoring = True
         self._monitor_start = time.monotonic()
-        self._sess_start_ts = time.time()
-        self._sess_snapshot = (
-            self.stats.mora, self.stats.artifact,
-            dict(self.stats.materials), dict(self.stats.normal_materials))
         self.status_changed.emit(mode_text, GOOD)
         self.force_refresh()
 
@@ -286,6 +350,7 @@ class AppState(QObject):
         # 先把状态标记成"已停止"，界面立刻就有反应；
         # 再通知后台线程退出（它可能正在跑一次 OCR，要等它跑完那一轮）
         self.monitoring = False
+        self.paused = False          # 停止＝真的结束这一段（跟暂停不同）
         self._monitor_start = None
         rec = self._record_session()
         if rec:
@@ -301,7 +366,7 @@ class AppState(QObject):
                 pass
         self._detect_stop = None
         self._detect_thread = None
-        self.status_changed.emit("已暂停", BAD)
+        self.status_changed.emit("已停止", BAD)
         self.force_refresh()
 
     def _record_session(self):
