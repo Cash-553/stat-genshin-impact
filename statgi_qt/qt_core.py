@@ -212,25 +212,62 @@ class AppState(QObject):
         ⚠ 分工：**线程 / 队列 / 谁造谁清 Detector 留在本类**，
           那一轮循环本身在 `svc_capture.run_detector`。
           搬走的只是「怎么跟识别器说话」，线程那套一个字没动。
+
+        **卡死自动重启**（2026-09-29 加）：
+            `run_detector` 返回 "failed" = 识别连续出错超过 3 秒，判定卡死。
+            这时**重建一个 Detector** 再跑，而不是直接停下等人来点 ——
+            重建会重新申请截图资源、重新找游戏窗口、重建 OCR 会话，
+            能兜住「资源耗尽 / 句柄失效」这一大类问题。
+
+            最多重启 3 次；还不行才真的停下并提示用户。
         """
         stop_ev = self._detect_stop
-        try:
-            det = svc_capture.make_detector(region, self.settings, self.stats)
-        except Exception as e:
+        restarts = 0
+        while True:
             try:
-                self._detect_queue.put(("error", str(e)))
+                det = svc_capture.make_detector(region, self.settings,
+                                                self.stats)
+            except Exception as e:
+                try:
+                    self._detect_queue.put(("error", str(e)))
+                except Exception:
+                    pass
+                return
+            self.detector = det
+            try:
+                why = svc_capture.run_detector(det, stop_ev, self.settings,
+                                               self._detect_queue)
+            finally:
+                # 只有"当前这个"才清空 —— 万一用户停完马上又开了一个，
+                # 旧线程收尾时不能把新 detector 抹掉
+                if self.detector is det:
+                    self.detector = None
+
+            # 用户点了停止，或者不是「卡死」→ 正常收工
+            if stop_ev.is_set() or why != "failed":
+                return
+
+            restarts += 1
+            if restarts > svc_capture.MAX_RESTARTS:
+                try:
+                    self._detect_queue.put(
+                        ("error",
+                         f"识别反复失败，已自动重试 "
+                         f"{svc_capture.MAX_RESTARTS} 次仍未恢复"))
+                except Exception:
+                    pass
+                return
+
+            try:
+                self._detect_queue.put(
+                    ("status",
+                     f"识别出错，正在自动重试（第 {restarts}/"
+                     f"{svc_capture.MAX_RESTARTS} 次）…"))
             except Exception:
                 pass
-            return
-        self.detector = det
-        try:
-            svc_capture.run_detector(det, stop_ev, self.settings,
-                                     self._detect_queue)
-        finally:
-            # 只有"当前这个"才清空 —— 万一用户停完马上又开了一个，
-            # 旧线程收尾时不能把新 detector 抹掉
-            if self.detector is det:
-                self.detector = None
+            # 缓一下再重建；用户中途点停止就立刻退出
+            if stop_ev.wait(svc_capture.RESTART_WAIT):
+                return
 
     def reset_monitor_start(self):
         """清空监测时间后，让计时从 0 重新累计"""

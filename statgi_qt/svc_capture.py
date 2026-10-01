@@ -24,9 +24,20 @@
 ⚠ 为什么这里的 import 都写在**函数体里**（懒加载）：
    跟原来的写法一致 —— `detector` 会拖进 onnxruntime，启动时不该付这个代价。
 """
+import time
+
 import paths
 
 ICONS_DIR = paths.icons_dir()
+
+# 「卡死」判定：识别连续出错持续这么多秒，就认为卡住了，交给上层重启
+STUCK_SECONDS = 3.0
+
+# 卡死之后最多自动重启几次；用完还不行才真停下并提示用户
+MAX_RESTARTS = 3
+
+# 每次重启前等多久（秒）
+RESTART_WAIT = 5.0
 
 
 # ============================================================ 屏幕 / 窗口
@@ -104,11 +115,22 @@ def run_detector(det, stop_ev, settings, out_queue):
       · 每轮末尾 `stop_ev.wait(间隔)`
       · **无论如何最后 `det.close()`**
 
-    `out_queue` 里塞两种消息（塞不进去就忽略，跟原来一样）：
-        ("event", (时间戳, 描述))   ("error", "连续识别失败")
+    `out_queue` 里塞三种消息（塞不进去就忽略，跟原来一样）：
+        ("event", (时间戳, 描述))   ("error", 说明)   ("status", 说明)
+
+    **返回值**：
+        "stop"    用户点了停止（或 stop_ev 被设）—— 正常结束
+        "failed"  连续出错持续超过 `STUCK_SECONDS` 秒，判定卡死
+                  —— 调用方（AppState._detect_loop）据此决定要不要重启
+
+    为什么"卡死"按**时间**判、不按次数判：
+        次数阈值会跟着 tick_interval 变（50ms 时 20 次是 1 秒，
+        改成 200ms 就变成 4 秒），语义不稳定。按时间判才是"卡了 3 秒"。
     """
     last_ts = None
     err_streak = 0
+    err_since = None          # 这一串错误是从什么时候开始的
+    why = "stop"
     # ⚠ `close()` 必须在 finally 里 —— 原代码就是 try/finally。
     #   写成"循环后面的普通语句"的话，中途抛异常（比如 det.last_event 炸了）
     #   就会跳过 close，句柄泄漏。线程交界处别省这一层。
@@ -117,31 +139,33 @@ def run_detector(det, stop_ev, settings, out_queue):
             try:
                 det.tick()
                 err_streak = 0
+                err_since = None
             except Exception as _e:
+                now = time.time()
+                if err_since is None:
+                    err_since = now
                 err_streak += 1
                 # 前几次把**真实异常**记下来。
                 # 原来这里只有一句 `except Exception:` —— 异常内容被彻底吞掉，
-                # 事后只知道「连错了 20 次」，不知道错的是什么，只能靠猜。
-                # 写进 data/日志/报错/报错_<日期>.log（同一条 30 秒去重）。
+                # 事后只知道「连错了 N 次」，不知道错的是什么，只能靠猜。
                 if err_streak <= 3:
                     try:
                         import errlog
                         errlog.log_exc("识别循环")
                     except Exception:
                         pass
-                if err_streak > 20:
+                # 连续出错持续超过 STUCK_SECONDS 秒 → 判定卡死，交给上层重启
+                if now - err_since >= STUCK_SECONDS:
                     try:
                         import errlog
                         errlog.log_msg(
                             "识别循环",
-                            f"连续出错 {err_streak} 次，已停止监测"
+                            f"连续出错 {err_streak} 次、持续 "
+                            f"{now - err_since:.1f} 秒，判定卡死"
                             f"（最后一次：{type(_e).__name__}: {_e}）")
                     except Exception:
                         pass
-                    try:
-                        out_queue.put(("error", "连续识别失败"))
-                    except Exception:
-                        pass
+                    why = "failed"
                     break
 
             ev = det.last_event
@@ -169,6 +193,7 @@ def run_detector(det, stop_ev, settings, out_queue):
             det.close()
         except Exception:
             pass
+    return why
 
 
 def apply_live_settings(det, settings):
