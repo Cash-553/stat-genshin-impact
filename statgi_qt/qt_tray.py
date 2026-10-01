@@ -122,7 +122,9 @@ class Tray(QObject):
         menu.addSeparator()
         self.act_start = QAction("开始监测", menu)
         self.act_start.setIcon(icon_qicon("play", 14))
-        self.act_start.triggered.connect(lambda: win.state.start())
+        # 用 toggle 而不是 start —— 暂停中点「开始监测」应该是**继续**，
+        # 直接 start() 会重开一段，暂停前那段白挂
+        self.act_start.triggered.connect(lambda: win.state.toggle())
         menu.addAction(self.act_start)
         self.act_stop = QAction("停止监测", menu)
         self.act_stop.setIcon(icon_qicon("pause", 14))
@@ -167,7 +169,10 @@ class Tray(QObject):
         win.state.status_changed.connect(self._sync)
 
     def _sync(self, *_a):
-        on = self.win.state.monitoring
+        # 「开着」= 监测中【或】暂停中 —— 暂停中仍算这一段还在，
+        # 菜单不能让「开始监测」可点（一点就重开一段）
+        on = (self.win.state.monitoring
+              or getattr(self.win.state, "paused", False))
         self.act_start.setEnabled(not on)
         self.act_stop.setEnabled(on)
         # 统计条那一条：开着就写"隐藏统计条"

@@ -539,7 +539,8 @@ class MainWindow(QWidget):
         #   （自动更新前也会走 _shutdown，同样不该弹窗）
         self._quitting = True
         try:
-            if self.state.monitoring:
+            # 暂停中也要 stop() —— 否则这次挂机的收益记录不会写
+            if self.state.monitoring or getattr(self.state, "paused", False):
                 self.state.stop()
         except Exception:
             pass

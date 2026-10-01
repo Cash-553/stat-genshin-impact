@@ -163,6 +163,11 @@ class AppState(QObject):
     def toggle(self):
         if self.monitoring:
             self.stop()
+        elif getattr(self, "paused", False):
+            # ⚠ 暂停中按热键＝**继续**，不能走 start()。
+            #   start() 会把 _sess_start_ts / _sess_snapshot 重置成新的一段，
+            #   等于把暂停前挂的那段收益记录丢掉。
+            self.resume()
         else:
             self.start()
 
@@ -339,7 +344,10 @@ class AppState(QObject):
         self.force_refresh()
 
     def stop(self):
-        if not self.monitoring:
+        # ⚠ 暂停中也要能停：暂停时 monitoring 已经是 False，
+        #   如果这里直接 return，关程序时 _record_session() 就不会跑，
+        #   这一整段挂机的收益记录就丢了。
+        if not self.monitoring and not getattr(self, "paused", False):
             return
         if self._monitor_start:
             self.stats.running_seconds += int(time.monotonic() - self._monitor_start)
