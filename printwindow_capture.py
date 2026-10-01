@@ -346,8 +346,18 @@ def _bitblt(hwnd):
             return None
         try:
             mem_dc = gdi32.CreateCompatibleDC(hdc)
+            if not mem_dc:
+                return None
             bmp = gdi32.CreateCompatibleBitmap(hdc, w, h)
-            if not mem_dc or not bmp:
+            if not bmp:
+                # ⚠ 这里**必须**把 mem_dc 删掉。
+                #   原来写成 `if not mem_dc or not bmp: return None` ——
+                #   CreateCompatibleBitmap 失败时 mem_dc 就泄漏了。
+                #   而它失败**往往正是因为 GDI 句柄快用光**，
+                #   于是每失败一次又多漏一个 → 恶性循环 → 挂机几小时后
+                #   所有截图路径全部失败（用户反馈的「突然不识别」）。
+                #   上面 _capture_into_dc 那个是写对的，这边漏了。
+                gdi32.DeleteDC(mem_dc)
                 return None
             old = gdi32.SelectObject(mem_dc, bmp)
             gdi32.BitBlt(mem_dc, 0, 0, w, h, hdc, 0, 0, SRCCOPY)
