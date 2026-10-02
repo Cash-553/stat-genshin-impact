@@ -1,23 +1,23 @@
 {
-  "version": "0.9.3",
-  "notes": "· 设置页新增搜索框\n· 新增停止监测后弹出「本次小结」\n· 新增「界面缩放」\n· 识别日志改版\n· 新增维护工具\n· 托盘右键菜单补全\n· 新增「摩拉单次计数上限」\n· 修复悬浮窗编辑器里「隐藏这一项」后开关状态不同步的问题\n· 修复切回启动页时按钮状态不刷新的问题\n· 界面绘制与内存占用小幅优化",
+  "version": "0.9.4",
+  "notes": "· 修复跨天挂机时收益记录算错的问题\n· 修复收益记录偶发保存失败后静默丢失的问题\n· 修复同一条监测记录可能重复出现的问题\n· 新增更省资源的截图频率默认值，降低挂机时的性能占用\n· 降低长时间运行产生的日志体积",
   "url_github": "https://github.com/Cash-553/stat-genshin-impact/releases",
   "url_gitee": "https://gitee.com/Cash553/stat-genshin-impact/releases",
   "update": {
-    "size": 126495231,
-    "sha256": "67361ac61a8a7d096dbe79cb9fe0bf7c330bfa39b8b84b4c3317232c9717506e",
+    "size": 126504173,
+    "sha256": "316624e73b60f47b554772bd97b6fd55f8f15747eaf808122ef00916c313fcd6",
     "sources": [
       {
         "label": "Gitee（国内快）",
         "parts": [
-          "https://gitee.com/Cash553/stat-genshin-impact/releases/download/v0.9.3/StatGI_v0.9.3.part1",
-          "https://gitee.com/Cash553/stat-genshin-impact/releases/download/v0.9.3/StatGI_v0.9.3.part2"
+          "https://gitee.com/Cash553/stat-genshin-impact/releases/download/v0.9.4/StatGI_v0.9.4.part1",
+          "https://gitee.com/Cash553/stat-genshin-impact/releases/download/v0.9.4/StatGI_v0.9.4.part2"
         ]
       },
       {
         "label": "GitHub",
         "parts": [
-          "https://github.com/Cash-553/stat-genshin-impact/releases/download/v0.9.3/StatGI_v0.9.3.zip"
+          "https://github.com/Cash-553/stat-genshin-impact/releases/download/v0.9.4/StatGI_v0.9.4.zip"
         ]
       }
     ]
