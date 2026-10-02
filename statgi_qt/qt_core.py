@@ -56,6 +56,10 @@ class AppState(QObject):
         self.detector = None
         self._sess_start_ts = None
         self._sess_snapshot = None
+        # 跨天结转：「会话开始 → 换日前」那段已经赚到的增量先寄存在这里，
+        # 换日之后 `_sess_snapshot` 会被重设成 0，结束时两段相加才算得完整。
+        # 结构固定成 {"mora": int, "artifact": int, "materials": {名字: 数量}}
+        self._sess_carry = None
 
         # ---- 上一轮的数据快照：用来判断"到底变了没有" ----
         self._last = None
@@ -105,10 +109,23 @@ class AppState(QObject):
         # 2) 跨过换日时间就自动换日
         #    设置里可以把「换日刷新数据」关掉 —— 关了就完全不换日，
         #    数据一直累着，直到手动清空。
+        #
+        #    ⚠ 换日会把今日计数清零（mora / artifact / materials 全归 0）。
+        #      挂机跨天时「本次会话」是横跨两个自然日的，如果不管，
+        #      结束时算增量就成了 max(0, 0 - 换日前的 5000) = 0 —— 一整晚白挂。
+        #      所以必须**在 check_day() 之前**把今日快照留下来（调用之后
+        #      stats.mora 已经是 0，再读就晚了），交给 _carry_session 结转。
         try:
             if bool((self.settings or {}).get("rollover_enabled", True)):
+                # 只有真有一段会话在跑时才需要留快照（否则白拷贝几份 dict）
+                live = bool(self.monitoring or getattr(self, "paused", False))
+                pre = ((self.stats.mora, self.stats.artifact,
+                        dict(self.stats.materials),
+                        dict(self.stats.normal_materials)) if live else None)
                 if self.stats.check_day():
                     self._last = None
+                    if live and pre is not None:
+                        self._carry_session(pre)
         except Exception:
             pass
 
@@ -192,6 +209,7 @@ class AppState(QObject):
         self._sess_snapshot = (
             self.stats.mora, self.stats.artifact,
             dict(self.stats.materials), dict(self.stats.normal_materials))
+        self._sess_carry = self._new_carry()   # 新的一段挂机 = 从零开始结转
         self.status_changed.emit(mode_text, GOOD)
         self.force_refresh()
 
@@ -377,40 +395,127 @@ class AppState(QObject):
         self.status_changed.emit("已停止", BAD)
         self.force_refresh()
 
+    # ================= 跨天结转 =================
+
+    @staticmethod
+    def _new_carry():
+        """一份空的结转累加器"""
+        return {"mora": 0, "artifact": 0, "materials": {}}
+
+    def _carry_session(self, pre):
+        """换日那一刻：把「会话开始 → 换日前」的增量收进 `_sess_carry`。
+
+        **必须在 `stats.check_day()` 之后、且用换日前的快照 `pre` 来算** ——
+        换日已经把今日计数清零了，拿现在的 stats 算出来永远是 0。
+
+        算完把 `_sess_snapshot` 重设成 0，这样结束时的「换日后增量」不会
+        把换日前那段重复算一遍（两段相加才是完整的一次挂机）。
+
+        ⚠ `_sess_start_ts` **不要重置** —— 这一段挂机还没结束，
+          收益记录里的时长要照旧从会话开始算。
+        """
+        if not self._sess_snapshot:
+            return
+        m0, a0, mat0, norm0 = self._sess_snapshot
+        carry = self._sess_carry or self._new_carry()
+        carry["mora"] += max(0, int(pre[0]) - int(m0))
+        carry["artifact"] += max(0, int(pre[1]) - int(a0))
+        merged = {}
+        for k, v in list(pre[2].items()) + list(pre[3].items()):
+            merged[k] = merged.get(k, 0) + v
+        for k, v in list(mat0.items()) + list(norm0.items()):
+            merged[k] = merged.get(k, 0) - v
+        mats = carry["materials"]
+        for k, v in merged.items():
+            if v > 0:
+                mats[k] = mats.get(k, 0) + v
+        self._sess_carry = carry
+        # 换日后的新基线 = 清零后的 0（时长基线不在这里 —— 它走墙上时间）
+        self._sess_snapshot = (0, 0, {}, {})
+
     def _record_session(self):
         """把这次监测的收益差值写进「收益记录」
 
         返回刚写进去的那条记录 dict（没写就返回 None）——
         窗口拿它弹「本次小结」（`session_ended` 信号）。
+
+        ⚠ 跨天挂机：这次会话可能横跨了换日（`stats` 被清零过），
+          所以收益 = **`_sess_carry`（换日前那段）+ 换日后的增量**，
+          少加一段记录里就会缺一整晚（见 `_carry_session`）。
+          时间轴不受影响 —— `_sess_start_ts` 跨天没动过，时长照旧一整段。
+
+        ⚠ **写进文件里了才算数**（2026-09-30 修）：
+          以前不管写没写成，`finally` 都把基线/起点/结转擦干净 ——
+          而落盘那一步（`sessions._save`）是**出错也不吭声**的，
+          于是"没存进去"和"存进去了"在调用方看来一模一样：
+          界面照样弹小结、其实 `sessions.json` 里什么都没有，
+          而且现场已经清空、**再也补不回来**，报错日志里也没痕迹。
+          现在：先看记录条数有没有真的涨、再决定清不清现场；
+          没写成就**留着现场**（下次停的时候还能再试一次），并记进报错日志。
         """
         rec = None
+        recorded = False
         try:
             if not self._sess_snapshot:
+                recorded = True         # 压根没有会话，没什么可清的
                 return None
             if not self._sess_start_ts:
+                recorded = True
                 return None
             m0, a0, mat0, norm0 = self._sess_snapshot
+            carry = self._sess_carry or self._new_carry()
             m1, a1 = self.stats.mora, self.stats.artifact
             mat1 = dict(self.stats.materials)
             norm1 = dict(self.stats.normal_materials)
-            delta = {}
+            delta = dict(carry["materials"])
             for k, v in list(mat1.items()) + list(norm1.items()):
                 delta[k] = delta.get(k, 0) + v
             for k, v in list(mat0.items()) + list(norm0.items()):
                 delta[k] = delta.get(k, 0) - v
             delta = {k: v for k, v in delta.items() if v > 0}
+            gained_mora = carry["mora"] + max(0, m1 - m0)
+            gained_artifact = carry["artifact"] + max(0, a1 - a0)
             seconds = int(time.time() - self._sess_start_ts)
-            if seconds < 5 and not delta and m1 == m0 and a1 == a0:
-                return None         # 什么都没干，不记
+            if (seconds < 5 and not delta and not gained_mora
+                    and not gained_artifact):
+                # 什么都没干：不记，而且**现场也要清掉** ——
+                # 留着的话，停止之后新赚的那点收益会被算进这段已经结束的会话。
+                self._sess_snapshot = None
+                self._sess_start_ts = None
+                self._sess_carry = None
+                recorded = True
+                return None
             rec = svc_records.make_record(
                 self._sess_start_ts, time.time(), seconds,
-                max(0, m1 - m0), max(0, a1 - a0), delta)
+                gained_mora, gained_artifact, delta)
+            before = len(svc_records.load_sessions())
             svc_records.add_session(rec)
+            recorded = len(svc_records.load_sessions()) > before
+            if not recorded:
+                rec = None              # 以为写进去了，其实文件没变
+                try:
+                    # 落盘那一步是"出错也不吭声"的（sessions._save），
+                    # 这里必须自己喊一声，否则事后完全没有线索。
+                    import errlog
+                    errlog.log_msg(
+                        "写收益记录",
+                        f"收益记录没能写进文件（读了 {before} 条、写完还是 "
+                        f"{before} 条）—— 现场已保留，下次停止时会再试一次")
+                except Exception:
+                    pass
         except Exception:
             rec = None
-        finally:
+            recorded = False
+            try:
+                import errlog
+                errlog.log_exc("写收益记录")
+            except Exception:
+                pass
+        if recorded:
+            # 只有真存进文件了才擦现场 —— 失败就留着，别把一整晚丢掉
             self._sess_snapshot = None
             self._sess_start_ts = None
+            self._sess_carry = None
         return rec
 
     @staticmethod

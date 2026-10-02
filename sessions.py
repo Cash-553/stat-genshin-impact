@@ -57,8 +57,23 @@ def save_sessions(items):
 
 
 def add_session(record):
-    """追加一条记录，返回更新后的列表"""
+    """追加一条记录，返回更新后的列表。
+
+    ⚠ **同一条记录（id 相同）不会存两遍**（2026-09-30 加）。
+
+    起因：`qt_core._record_session()` 判断"到底写进去没有"的办法是
+    **回读一遍数条数**，没涨就留着现场、下次再试。万一遇到
+    "其实写了、但回读没读到"（文件被占用 / 杀毒软件拦一下 / 慢盘），
+    就会重试 → 同一条挂机记录在「收益记录」里出现两遍、数字一模一样。
+    所以这里按 `record_key` 认一下，已经在文件里就不再追加。
+
+    ⚠ 认的是 `record_key`（有 id 用 id，老记录用「开始|结束」），
+      跟收藏夹 / 改名那条路用的是同一个标识，不会认错人。
+    """
     items = load_sessions()
+    key = record_key(record)
+    if key and any(record_key(r) == key for r in items):
+        return items                # 已经在了，别存第二遍
     items.append(record)
     save_sessions(items)
     return items

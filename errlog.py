@@ -37,10 +37,15 @@ LOG_ROOT_NAME = "日志"
 ERROR_DIR_NAME = "报错"
 
 _seen = {}
-_last_clean = 0.0
 
-# 单个报错日志的软上限：超过就把旧行砍掉（按天分文件之后一般到不了）
-_MAX_LINES = 4000
+# 单个报错日志的大小上限（2026-09-30 改成按**大小**收，不再只看时间）：
+#   以前只有"每 600 秒检查一次、超过 4000 行才收"，而收的动作又只在
+#   `log_exc()` 里才有 —— 实测连写 1200 条，文件已经 6000 行了还没被收。
+#   真出个"每秒都触发的错"（窗口一直找不到 / 截图一直失败），10 分钟就能
+#   堆出几十万行、上百 MB；用户点「一键收集问题信息」时要读它就是等着卡。
+#   现在：每次写完顺手看一眼大小，超过 MAX 就砍到 KEEP（跟 detect_log 一个思路）。
+_MAX_BYTES = 1024 * 1024            # 1 MB 就收
+_KEEP_BYTES = 512 * 1024            # 收到 512 KB（只留最近这段）
 
 
 def log_root():
@@ -80,6 +85,9 @@ def _write(text):
     try:
         with io.open(str(p), "a", encoding="utf-8") as f:
             f.write(text + "\n")
+        # 写完顺手看大小 —— 大了就当场收，别等 10 分钟那一趟
+        if p.stat().st_size > _MAX_BYTES:
+            _trim(p)
     except Exception:
         pass
     try:
@@ -89,13 +97,27 @@ def _write(text):
 
 
 def _trim(path):
-    """日志太大就留最近一半，避免单日文件无限增长"""
+    """日志太大就只留最近这段，避免单日文件无限增长。
+
+    跟 `detect_log._trim` 一个写法（按字节切、从换行处切），
+    区别只是这里按"报错日志"自己的上限。
+
+    ⚠ 先看大小再动手：一旦超过上限，**每次写都会走到这里** ——
+      不做这个判断的话就是每写一行都把整个文件读一遍、重写一遍
+      （日志越多越慢，正好在最需要它不拖后腿的时候拖后腿）。
+    """
     try:
-        with io.open(str(path), "r", encoding="utf-8", errors="ignore") as f:
-            lines = f.readlines()
-        if len(lines) > _MAX_LINES:
-            with io.open(str(path), "w", encoding="utf-8") as f:
-                f.writelines(lines[-_MAX_LINES // 2:])
+        if path.stat().st_size <= _KEEP_BYTES:
+            return
+        raw = io.open(str(path), "rb").read()
+        if len(raw) <= _KEEP_BYTES:
+            return
+        cut = raw[-_KEEP_BYTES:]
+        nl = cut.find(b"\n")        # 从换行处切开，别把一行截成半截
+        if nl >= 0:
+            cut = cut[nl + 1:]
+        with io.open(str(path), "wb") as f:
+            f.write("...\n（更早的报错已自动清理）\n".encode("utf-8") + cut)
     except Exception:
         pass
 
@@ -105,7 +127,6 @@ def log_exc(where=""):
 
     `where` 是一句人话，说明"在哪出的错"（比如「识别循环」「qt_window 公告」）。
     """
-    global _last_clean
     try:
         now = time.time()
         key = where or "?"
@@ -119,11 +140,6 @@ def log_exc(where=""):
         else:
             _write("[%s] %s（没有异常信息）" % (time.strftime("%Y-%m-%d %H:%M:%S"),
                                               key))
-        if now - _last_clean > 600:
-            _last_clean = now
-            p = _log_path()
-            if p is not None:
-                _trim(p)
     except Exception:
         pass
 

@@ -187,13 +187,15 @@ class RecognizeTab(SettingsTab):
     def __init__(self, parent, cfg, alpha):
         super().__init__(parent, cfg, alpha)
 
-        self.tick_entry = QLineEdit(str(self.cfg.get("tick_interval", 50)))
+        # 兜底值跟 config_manager.DEFAULT_SETTINGS["tick_interval"] 一致（100）。
+        # ⚠ 改了默认值记得同步改这里，否则"设置项缺失"时两个地方对不上。
+        self.tick_entry = QLineEdit(str(self.cfg.get("tick_interval", 100)))
         self.tick_entry.setFixedWidth(90)
         self.tick_entry.setAlignment(Qt.AlignCenter)
         self.tick_entry.setStyleSheet(entry_qss())
         self.tick_entry.editingFinished.connect(self._on_tick)
         self.row("timer", "检测间隔",
-                 "画面检测间隔，单位毫秒（10~5000，默认 50）", self.tick_entry,
+                 "画面检测间隔，单位毫秒（10~5000，默认 100）", self.tick_entry,
                  tip="程序多久看一次屏幕（毫秒）。它只做**便宜的**画面差异比较，"
                      "真正耗时的文字识别另有节流，所以调小不一定更吃 CPU。\n"
                      "越小＝越能及时察觉掉落提示出现；\n"

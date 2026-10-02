@@ -97,11 +97,16 @@ def make_detector(region, settings, stats):
 
 
 def tick_interval(settings):
-    """两轮识别之间睡多久（秒）。下限 20ms，读不到设置就 50ms。"""
+    """两轮识别之间睡多久（秒）。下限 20ms。
+
+    读不到设置就按 100ms 兜底 —— 跟 `config_manager.DEFAULT_SETTINGS`
+    里的 `tick_interval` 保持一致（2026-09-30 由 50 改成 100，
+    见那个键旁边的说明：截图是整条识别路上最贵的一步）。
+    """
     try:
-        return max(0.02, int(settings.get("tick_interval", 50)) / 1000.0)
+        return max(0.02, int(settings.get("tick_interval", 100)) / 1000.0)
     except Exception:
-        return 0.05
+        return 0.1
 
 
 def run_detector(det, stop_ev, settings, out_queue):
@@ -124,7 +129,7 @@ def run_detector(det, stop_ev, settings, out_queue):
                   —— 调用方（AppState._detect_loop）据此决定要不要重启
 
     为什么"卡死"按**时间**判、不按次数判：
-        次数阈值会跟着 tick_interval 变（50ms 时 20 次是 1 秒，
+        次数阈值会跟着 tick_interval 变（100ms 时 20 次是 2 秒，
         改成 200ms 就变成 4 秒），语义不稳定。按时间判才是"卡了 3 秒"。
     """
     last_ts = None
