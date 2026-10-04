@@ -32,12 +32,12 @@ import json
 import sys
 import threading
 import time
-import urllib.parse
-import urllib.request
 
 from PySide6.QtCore import QObject, Signal
 
 import paths
+import urllib.parse
+import urllib.request
 
 # ---- 公告文件在仓库里的位置（相对仓库根目录）----
 # 发布版/ 在 .gitignore 里，但「公告」这个子文件夹专门放行了

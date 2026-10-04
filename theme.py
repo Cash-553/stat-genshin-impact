@@ -5,7 +5,6 @@
 颜色从 config/settings.json 的「外观设置」读取，未设置时用默认值。
 所有界面文件都从这里取色，保持一致。改外观后需重启程序生效。
 """
-import sys
 
 # Win11 Fluent Dark 预设色板
 BG_PRESETS = {

@@ -4,20 +4,10 @@
 从 qt_bar_editor.py 拆出来的（第 4 批，纯搬运）。
 `_lab` 从 qt_bar_common 借。"""
 
-from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
-import copy
-import json
-from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-                               QPushButton, QCheckBox, QComboBox, QLineEdit,
-                               QSlider, QScrollArea, QFrame, QWidget,
-                               QStackedWidget, QColorDialog, QMessageBox,
-                               QInputDialog, QMenu, QListWidget, QListWidgetItem,
-                               QFileDialog)
+from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLineEdit, QListWidget
 import qt_theme as T
-from qt_widgets import SettingRow, Accordion, small_button, Switch
-from qt_window import NavButton
-import icons_lib
+from qt_widgets import small_button
 from qt_bar_common import _lab
 
 

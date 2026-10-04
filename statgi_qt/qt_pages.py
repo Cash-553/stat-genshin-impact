@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """StatGI Qt 版 · 五个页面
 
-启动 / 收益统计条 / 收益记录 / 设置 / 公告。
+启动 / 收益统计条 / 收益细则 / 设置 / 公告 / 收益记录。
 （今日统计不单独一页了，收在启动页「开始监测」那张折叠卡片里。）
 
 刷新原则（很重要）：
@@ -25,9 +25,11 @@ import qt_settings_tabs
 import svc_capture
 import svc_settings
 import svc_records
+import svc_daily
+from qt_daily_chart import DailyBarChart
 from qt_widgets import (Card, SettingRow, SubRow, Accordion,
                         heading, right_wrap, make_combo,
-                        set_btn_icon, small_button,
+                        set_btn_icon, small_button, bind_cb,
                         IconButton, RedDot, msg_info)
 from qt_icon import IconWidget, attach_hover
 
@@ -37,7 +39,7 @@ from qt_icon import IconWidget, attach_hover
 # ⚠ 这里**必须**继续把 VERSION 转发出来：`qt_window` / `qt_sidebar` /
 #   `qt_titlebar` / `qt_navbtn` / `qt_bg` 都是从 `qt_pages` 拿它的。
 #   （第 9 批拆设置标签页时，本文件自己已经不用它了。）
-from app_info import VERSION, APP_NAME          # noqa: E402,F401
+from app_info import VERSION
 
 # 颜色下拉框里那一项「自定义颜色…」（选了会开取色器）
 #
@@ -166,7 +168,7 @@ class PageLaunch(BasePage):
         _bl.addWidget(self.start_btn)
 
         self.add(SettingRow(self, "play", "开始监测",
-                            "自动找到游戏窗口并识别掉落收益",
+                            "自动定位游戏窗口并识别掉落收益",
                             right_wrap(_btn_box), alpha=self.alpha))
 
         # ---- 本次挂机（独立一张卡片，**只在监测时出现**）----
@@ -211,12 +213,12 @@ class PageLaunch(BasePage):
         rl.addWidget(self.clear_dd)
         rl.addWidget(self.clear_btn)
         self.add(SettingRow(self, "trash", "清空",
-                            "选择清空范围后点击右侧按钮，不影响收益记录",
+                            "选择清空范围后点右侧按钮执行；不影响收益细则与收藏夹",
                             row, alpha=self.alpha))
 
         # 重新框选（折叠区）
         self.reselect = Accordion(
-            self, "crosshair", "重新框选", "手动指定识别区域，通常无需设置",
+            self, "crosshair", "重新框选", "手动指定识别区域；通常无需设置",
             items=[
                 ("crosshair", "重新框选区域", "在屏幕上手动框出掉落提示所在的区域",
                  small_button("框选", self._on_reselect, self.alpha,
@@ -515,7 +517,7 @@ class PageBar(BasePage):
         set_btn_icon(self.open_btn, "chart-column", 15, color="#08222E")
         self.open_btn.clicked.connect(self._toggle_bar)
         self.add(SettingRow(self, "monitor", "桌面悬浮窗",
-                            "常驻桌面的小窗口：摩拉 / 材料 / 狗粮 三个格子，图标在上、数量在下",
+                            "常驻桌面的悬浮窗：摩拉 / 材料 / 狗粮三格，图标在上、数值在下",
                             right_wrap(self.open_btn), alpha=self.alpha))
 
         # 透明度（改完立即生效：直接设统计条窗口的 alpha）
@@ -529,7 +531,7 @@ class PageBar(BasePage):
         self.opacity_label.setStyleSheet(label_qss(T.ACCENT, 13))
         self.opacity.valueChanged.connect(self._on_opacity)
         self.add(SettingRow(self, "contrast", "统计条透明度",
-                            "向左调节透明度更高，减少对游戏画面的遮挡",
+                            "向左调高透明度，减少对游戏画面的遮挡",
                             right_wrap(self.opacity, self.opacity_label), alpha=self.alpha))
 
         # ---- 悬浮窗样式 ----
@@ -619,7 +621,7 @@ class PageBar(BasePage):
 #  收益记录
 # ============================================================
 class PageRecords(BasePage):
-    title = "收益记录"
+    title = "收益细则"
 
     def __init__(self, win):
         super().__init__(win)
@@ -964,7 +966,7 @@ class PageRecords(BasePage):
         mb.setSpacing(4)
         # ⚠ 材料明细**先不建**（懒加载）—— 这一条很重要：
         #   以前是建卡片时就把**所有**材料行都建出来（哪怕卡片是收起的），
-        #   一条记录几十上百种材料 = 几百个控件；切到「收益记录」页要重建
+        #   一条记录几十上百种材料 = 几百个控件；切到「收益细则」页要重建
         #   全部卡片，于是"只有 4 条记录点开也卡一下"（用户 2026-09-29 反馈）。
         #   现在改成**第一次展开时才建**（只建一次，之后复用）。
         mats_box._filled = False
@@ -1156,6 +1158,210 @@ def fmt_duration(sec):
     if m:
         return f"{m}分{s}秒"
     return f"{s}秒"
+
+
+# ============================================================
+#  收益记录（柱状图）
+# ============================================================
+class PageDaily(BasePage):
+    """收益记录：一根柱子 = 一天，看摩拉 / 狗粮。
+
+    用户 2026-10-04 定的口径：
+        · 两个「界面」：摩拉 和 狗粮（上面切换）
+        · **默认近 30 天**
+        · 保持深色（不照搬 DeepSeek 的浅色）
+        · **不要跳转**（点柱子不做任何事，只看悬停数字）
+        · **没有收益的那天直接跳过**（不画零高柱）
+
+    数据来自 `svc_daily.daily_totals()`（读收益记录按天加起来）。
+    """
+
+    title = "收益记录"
+
+    # (字段, 按钮文字)
+    METRICS = (("mora", "摩拉", ""),
+               ("artifact", "狗粮", ""))
+
+    def __init__(self, win):
+        super().__init__(win)
+        self._metric = "mora"
+        self._month = None            # None = 还没定，refresh 时选最新的有数据的月
+        self._data = None
+        self._sig = None
+        self._months = []
+
+        card = Card(alpha=self.alpha)
+        cl = QVBoxLayout(card)
+        cl.setContentsMargins(18, 14, 18, 14)
+        cl.setSpacing(10)
+
+        # ---- 第一行：左边切指标，右边选月份 ----
+        # 用户 2026-10-04 定的：按**自然月**看（默认显示有数据的那个月），
+        # 不要"从今天倒数 N 天"，也不要"全部" —— 挂久了全部的数据太多。
+        top = QHBoxLayout()
+        top.setSpacing(8)
+        self._metric_btns = {}
+        for key, text, _unit in self.METRICS:
+            # ⚠ 必须用 bind_cb 包一层：clicked 会塞一个 checked(False) 进来，
+            #   直接写 `lambda k=key:` 会让 k 变成 False —— 症状是
+            #   "点了狗粮就再也切不回摩拉"（2026-10-04 用户报的）。
+            b = small_button(text, bind_cb(self._pick_metric, key),
+                             self.alpha, width=74)
+            self._metric_btns[key] = b
+            top.addWidget(b)
+        top.addStretch(1)
+        self.month_combo = make_combo([], width=150)
+        self.month_combo.currentIndexChanged.connect(self._on_month_changed)
+        top.addWidget(self.month_combo)
+        cl.addLayout(top)
+
+        # ---- 第二行：合计（大字）+ 单位；下面一行小字写天数/平均/最高 ----
+        line = QHBoxLayout()
+        line.setSpacing(6)
+        self.total_label = QLabel("—")
+        self.total_label.setStyleSheet(T.title_qss(26))
+        line.addWidget(self.total_label)
+        self.unit_label = QLabel("")
+        self.unit_label.setStyleSheet(label_qss(T.DIM, 12))
+        line.addWidget(self.unit_label, 0, Qt.AlignBottom)
+        line.addStretch(1)
+        cl.addLayout(line)
+        # ⚠ 小字单独一行、左对齐 —— 塞进上面那行的右边会跟大字对不齐
+        #   （两个标签的垂直对齐方式不同，渲染出来会错开一截，真截图看出来的）
+        self.sub_label = QLabel("")
+        self.sub_label.setStyleSheet(label_qss(T.DIM, 12))
+        self.sub_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        cl.addWidget(self.sub_label)
+
+        # ---- 图 ----
+        # 高度**封顶**：不然卡片会把图拉成一根很长的竖条，比例就不像那张参考图了
+        self.chart = DailyBarChart(unit="")
+        self.chart.setMinimumHeight(210)
+        self.chart.setMaximumHeight(340)
+        cl.addWidget(self.chart, 1)
+
+        self.add(card, 1)
+
+        hint = QLabel("按天汇总收益细则；只画有收益的那些天，"
+                      "跨零点的挂机算在开始那天")
+        hint.setStyleSheet(label_qss(T.DIM, 11))
+        self.add(hint)
+        # 挂机时数据会变，但只有本页可见时才刷（别的页一律不刷）
+        self._timer = QTimer(self)
+        self._timer.setInterval(30000)
+        self._timer.timeout.connect(self._auto_refresh)
+        self._sync_buttons()
+
+    # ---------- 交互 ----------
+    def _pick_metric(self, key):
+        if key != self._metric:
+            self._metric = key
+            self._sync_buttons()
+            self._apply()
+
+    def _on_month_changed(self, idx):
+        try:
+            key = self.month_combo.itemData(idx)
+        except Exception:
+            key = None
+        if key and key != self._month:
+            self._month = key
+            self.refresh(reload_months=False)
+
+    def _sync_buttons(self):
+        for key, b in self._metric_btns.items():
+            b.setStyleSheet(btn_qss("accent" if key == self._metric
+                                    else "normal", self.alpha))
+
+    def _fill_months(self, months):
+        """把月份填进下拉框（**别触发回调**，否则切月会递归）"""
+        self._months = months
+        keys = [m["key"] for m in months]
+        if self._month not in keys:
+            # 默认：有数据的**最新那个月**（用户 2026-10-04 定的）
+            self._month = keys[0] if keys else None
+        self.month_combo.blockSignals(True)
+        try:
+            self.month_combo.clear()
+            for m in months:
+                tag = "（本月）" if m["key"] == time.strftime("%Y-%m") else ""
+                self.month_combo.addItem(f"{m['label']}{tag}", m["key"])
+            if self._month in keys:
+                self.month_combo.setCurrentIndex(keys.index(self._month))
+        finally:
+            self.month_combo.blockSignals(False)
+
+    # ---------- 数据 ----------
+    def _signature(self):
+        """数据没变就不重建（跟收益细则页一个套路）"""
+        try:
+            rows = svc_records.load_sessions() or []
+            return (len(rows),
+                    sum(int(r.get("mora", 0) or 0) for r in rows),
+                    sum(int(r.get("artifact", 0) or 0) for r in rows))
+        except Exception:
+            return None
+
+    def refresh(self, reload_months=True):
+        try:
+            if reload_months or not self._months:
+                self._fill_months(svc_daily.month_options())
+            rows, summary = svc_daily.daily_totals(month=self._month)
+        except Exception as e:
+            rows, summary = [], {}
+            try:
+                import errlog
+                errlog.log_exc("收益记录页刷新")
+            except Exception:
+                pass
+            self.sub_label.setText(f"读取失败：{type(e).__name__}")
+        self._data = (rows, summary)
+        self._sig = self._signature()
+        self._apply()
+        self._loaded_month = self._month
+
+    def _apply(self):
+        """按当前选中的指标，把图和大字重画一遍（不重新读数据）"""
+        rows, summary = (self._data or ([], {}))
+        self.chart.set_rows(rows, self._metric)
+        val = int(summary.get(self._metric, 0) or 0)
+        self.total_label.setText(f"{val:,}" if rows else "—")
+        self.unit_label.setText(
+            {"mora": "摩拉", "artifact": "狗粮"}.get(self._metric, "")
+            if rows else "")
+        if not rows:
+            self.sub_label.setText("还没有收益")
+            return
+        avg = int(summary.get(f"avg_{self._metric}", 0) or 0)
+        peak = summary.get("peak") or {}
+        peak_v = int((peak or {}).get(self._metric, 0) or 0)
+        bits = [f"{summary.get('days', 0)} 天有收益",
+                f"平均每天 {avg:,}"]
+        if peak_v > 0 and peak.get("date"):
+            bits.append(f"最高 {peak['date']}（{peak_v:,}）")
+        self.sub_label.setText("　·　".join(bits))
+
+    # ---------- 生命周期 ----------
+    def _auto_refresh(self):
+        if not self.isVisible():
+            return
+        if self._signature() != self._sig:
+            self.refresh()
+
+    def on_show(self):
+        changed_month = self._month != getattr(self, "_loaded_month", None)
+        if not changed_month and self._data is not None \
+                and self._signature() == self._sig:
+            return
+        self.refresh()
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self._timer.start()
+
+    def hideEvent(self, e):
+        self._timer.stop()
+        super().hideEvent(e)
 
 
 # ============================================================
@@ -1750,14 +1956,23 @@ class PageNotice(BasePage):
 
 # ============================================================
 def build_pages(win):
-    """页面顺序要和侧栏对应：
-       0 启动  1 收益统计条  2 收益记录  3 设置  4 公告
-       前 4 个是侧栏导航项，「公告」是单独那个入口（在导航下面）
-       （「今日统计」原来是单独一页，现在收在启动页「开始监测」的折叠卡片里）"""
+    """页面栈的顺序（**代码里的顺序**）：
+       0 启动  1 收益统计条  2 收益细则  3 设置  4 公告  5 收益记录
+
+    ⚠ **新页一律追加在末尾**，别插进中间 —— 0~4 这几个下标被一堆测试和
+      渲染脚本写死引用了（`_morph` 里 15 个文件），插一页它们全指错页。
+      侧栏想把它显示在第几个，写在 `qt_window` 的 `_nav_to_page` 那张表里。
+    """
     return [PageLaunch(win), PageBar(win),
-            PageRecords(win), PageSettings(win), PageNotice(win)]
+            PageRecords(win), PageSettings(win), PageNotice(win),
+            PageDaily(win)]
 
 
-# 公告页在栈里的下标（侧栏那个「公告」按钮要用）
-NOTICE_PAGE_INDEX = 4
+# 页面在栈里的下标（**追加新页时只动这里**，别写死数字）
+LAUNCH_PAGE_INDEX = 0      # 启动
+BAR_PAGE_INDEX = 1         # 收益统计条
+RECORDS_PAGE_INDEX = 2     # 收益记录
+SETTINGS_PAGE_INDEX = 3    # 设置（标题栏那个「设置」齿轮要用）
+NOTICE_PAGE_INDEX = 4      # 公告（侧栏下面那个单独入口）
+DAILY_PAGE_INDEX = 5       # 每日收益（侧栏映射表要用）
 

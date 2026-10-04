@@ -10,20 +10,8 @@
    frameWidth 当成 1、顺手画一圈边框 —— 现象就是「标签文字外面多一个圆角细框」。
    必须显式声明 background/border 才能压掉。"""
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
-import copy
-import json
-from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-                               QPushButton, QCheckBox, QComboBox, QLineEdit,
-                               QSlider, QScrollArea, QFrame, QWidget,
-                               QStackedWidget, QColorDialog, QMessageBox,
-                               QInputDialog, QMenu, QListWidget, QListWidgetItem,
-                               QFileDialog)
+from PySide6.QtWidgets import QLabel
 import qt_theme as T
-from qt_widgets import SettingRow, Accordion, small_button, Switch
-from qt_window import NavButton
-import icons_lib
 
 
 def _lab(text, size=13, bold=False, color=None):

@@ -3,20 +3,12 @@
 
 从 qt_dialogs.py 拆出来的（第 2 批，纯搬运）。
 入口在「设置 → 开发 → 材料库 → 材料名单 [编辑…]」。"""
-import os
-from PySide6.QtCore import Qt, QRect
-from PySide6.QtGui import QGuiApplication, QPainter, QColor, QPen, QPixmap
-from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
-                               QLabel, QPushButton, QFileDialog, QMessageBox,
-                               QWidget, QFrame, QListWidget, QListWidgetItem,
-                               QLineEdit, QCheckBox, QComboBox, QSlider,
-                               QPlainTextEdit, QScrollArea)
-import config_manager
-import paths
-from qt_theme import (TEXT, DIM, ACCENT, CARD, BG, BORDER, panel_alpha, label_qss,
-                      btn_qss, combo_qss, slider_qss)
-from qt_widgets import Card, set_btn_icon
-from qt_icon import IconWidget
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+                               QMessageBox, QListWidget, QListWidgetItem, QLineEdit,
+                               QCheckBox)
+from qt_theme import TEXT, DIM, ACCENT, BG, BORDER, label_qss, btn_qss
 import svc_capture
 
 

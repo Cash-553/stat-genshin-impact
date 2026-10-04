@@ -12,7 +12,6 @@
     export_settings()     把设置 / 名单 / 悬浮窗配置导出成一个 zip
     import_settings()     从 zip 导回来（先自动备份现在那份）
 """
-import json
 import os
 import platform
 import shutil
@@ -22,8 +21,12 @@ import zipfile
 from pathlib import Path
 
 import paths
-
-APP_NAME = "StatGI"
+# 版本号和程序名从**叶子模块** `app_info` 取。
+# ⚠ 原来这里是 `APP_NAME = "StatGI"` 写死的，另外两处还
+#   `from qt_pages import VERSION` —— 那是**服务层反向依赖 UI 层**
+#   （为了一个版本号去 import 1577 行的界面模块，还跟
+#   qt_settings_tabs 一起绕出 3 元循环依赖）。2026-10-04 改掉。
+from app_info import APP_NAME, VERSION
 # 导出 / 导入包里带的文件（相对项目根目录）
 EXPORT_FILES = (
     ("config/settings.json", "设置"),
@@ -125,10 +128,6 @@ def clear_logs(keep_current=False):
 def diagnose_text():
     """一份"环境概况"，出问题时先看这个"""
     lines = []
-    try:
-        from qt_pages import VERSION
-    except Exception:
-        VERSION = "未知"
     lines.append(f"{APP_NAME} {VERSION}")
     lines.append(f"打包时间：{time.strftime('%Y-%m-%d %H:%M:%S')}")
     lines.append("")
@@ -253,10 +252,6 @@ def export_settings(dest_zip):
         if dest_zip.suffix.lower() != ".zip":
             dest_zip = dest_zip.with_suffix(".zip")
         dest_zip.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            from qt_pages import VERSION
-        except Exception:
-            VERSION = "?"
         names = []
         with zipfile.ZipFile(dest_zip, "w", zipfile.ZIP_DEFLATED) as z:
             for rel, label in EXPORT_FILES:

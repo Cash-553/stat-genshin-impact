@@ -136,10 +136,10 @@ class Tray(QObject):
         self.act_bar.setIcon(icon_qicon("chart-column", 14))
         self.act_bar.triggered.connect(win.toggle_stat_bar)
         menu.addAction(self.act_bar)
-        self.act_records = QAction("查看收益记录", menu)
+        self.act_records = QAction("查看收益细则", menu)
         self.act_records.setIcon(icon_qicon("clipboard-list", 14))
         self.act_records.triggered.connect(
-            lambda: _goto_page(win, "收益记录"))
+            lambda: _goto_page(win, "收益细则"))
         menu.addAction(self.act_records)
         self.act_settings = QAction("打开设置", menu)
         self.act_settings.setIcon(icon_qicon("settings", 14))

@@ -19,6 +19,7 @@ import json
 import time
 import urllib.parse
 import urllib.request
+import urllib.error
 
 # 仓库信息（改这里就能换仓库）
 GH_REPO = "Cash-553/stat-genshin-impact"

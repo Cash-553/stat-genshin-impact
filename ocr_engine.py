@@ -97,8 +97,37 @@ class OcrEngine:
             pass
 
     def _preprocess(self, frame_bgr):
+        """识别前预处理：灰度 → 对比度增强 → 平滑放大 → 锐化。
+
+        **2026-10-04 改版：不再二值化。** 依据是拿用户的录屏做的实测
+        （33 行「获得」文字，真值肉眼核对过）：
+
+            旧做法（先二值化、再马赛克放大）      读对 12/33 = 36%
+            现在这套（增强+锐化，不做二值化）      读对 22/33 = 67%
+
+        典型的错法：把「霓」认成 冕/舜/凳/冤/囊/麓 —— 复杂字放进纯黑白图里
+        笔画会粘连，而 RapidOCR 这类模型本来就是在自然图像上训练的。
+        忠实回放（按软件真实节奏喂帧）也确认：原始读数明显更干净、
+        锚点「获得」照样认得出、耗时没有变慢。
+
+        ⚠ **想回退**：把本函数第一行改成
+              return self._preprocess_binarize(frame_bgr)
+          旧算法原样保留在 `_preprocess_binarize` 里，一个字符都没改。
         """
-        识别前预处理：灰度 + 自适应阈值 + 放大。
+        gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+        # 对比度增强：处理"半透明面板压在亮背景上"这类对比度不均的情况
+        eq = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(gray)
+        big = cv2.resize(eq, None, fx=self._upscale, fy=self._upscale,
+                         interpolation=cv2.INTER_CUBIC)
+        # 锐化：把笔画边缘提出来（不放大就直接锐化会被噪声放大）
+        blur = cv2.GaussianBlur(big, (0, 0), 3)
+        sharp = cv2.addWeighted(big, 1.6, blur, -0.6, 0)
+        return cv2.cvtColor(sharp, cv2.COLOR_GRAY2BGR)
+
+    def _preprocess_binarize(self, frame_bgr):
+        """**旧做法（2026-10-04 之前用的）**：灰度 + 自适应阈值 + 马赛克放大。
+
+        保留着，方便随时回退（见 `_preprocess` 的说明）。
         用自适应阈值（adaptiveThreshold）而非全局 Otsu，
         更擅长处理游戏里"文字被深色/浅色背景遮挡、对比度不均"的情况——每个小区域各自取阈值，
         不会再因为整帧只取一个折中阈值而把低对比度的字吞掉。

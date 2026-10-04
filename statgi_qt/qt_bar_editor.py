@@ -15,12 +15,10 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 import copy
 import json
-from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-                               QPushButton, QCheckBox, QComboBox, QLineEdit,
-                               QSlider, QScrollArea, QFrame, QWidget,
-                               QStackedWidget, QColorDialog, QMessageBox,
-                               QInputDialog, QMenu, QListWidget, QListWidgetItem,
-                               QFileDialog)
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
+                               QCheckBox, QComboBox, QLineEdit, QSlider, QScrollArea,
+                               QFrame, QWidget, QStackedWidget, QColorDialog,
+                               QMessageBox, QInputDialog, QMenu, QFileDialog)
 import qt_theme as T
 from qt_widgets import SettingRow, Accordion, small_button, Switch
 from qt_window import NavButton

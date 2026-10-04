@@ -18,13 +18,11 @@
 import hashlib
 import os
 import subprocess
-import sys
 import time
-import urllib.parse
-import urllib.request
 import zipfile
 
 import paths
+import urllib.request
 
 TIMEOUT = 30           # 单个分卷最多等几秒（大文件要久一点）
 UA = {"User-Agent": "StatGI"}

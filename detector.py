@@ -16,10 +16,8 @@
 import time
 import re
 import cv2
-import numpy as np
 
 import materials_db
-from capture import ScreenCapture
 from printwindow_capture import WindowCapture, find_game_window_hwnd
 from dataset_collector import DatasetCollector
 from ocr_engine import OcrEngine

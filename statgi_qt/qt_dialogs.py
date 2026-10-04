@@ -17,8 +17,9 @@
   靠 StatGI.spec 的 pathex 解析），拆包要全仓库改 import + 动 spec。
   见 重构步骤细化.md 约束 1。
 """
-from qt_dlg_icons import (ICONS_DIR, SLOTS, IconManagerDialog,
-                          _auto_trim, builtin_name, custom_name)
+from qt_dlg_icons import IconManagerDialog
 from qt_dlg_material import MaterialDialog
 from qt_dlg_region import RegionSelector, select_region
 from qt_dlg_record import NameListDialog, RecordEditDialog, StopSummaryDialog
+# 2026-10-04 新增：卡片式弹窗基类 + 退出确认窗
+from qt_dlg_card import CardDialog, ExitDialog

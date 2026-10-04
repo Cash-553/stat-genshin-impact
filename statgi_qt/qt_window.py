@@ -11,27 +11,23 @@ config/settings.json —— 跟 Tk 版共用同一份设置。
 """
 
 import os
-import math
-from PySide6.QtCore import Qt, QRectF, QRect, QPoint, QTimer, Signal
+from PySide6.QtCore import Qt, QRectF, QRect, Signal
 from PySide6.QtGui import QPainter, QPainterPath, QPixmap, QColor, QIcon
-from PySide6.QtWidgets import (QWidget, QFrame, QLabel, QPushButton, QVBoxLayout,
-                               QHBoxLayout, QStackedWidget, QMessageBox)
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget,
+                               QMessageBox, QDialog)
 import config_manager
 import paths
-from qt_pages import NOTICE_PAGE_INDEX, VERSION as _VERSION
-from qt_theme import (HEADER, RADIUS_WINDOW, panel_alpha, label_qss, rgba,
-                      btn_qss)
+from qt_pages import (NOTICE_PAGE_INDEX, SETTINGS_PAGE_INDEX, DAILY_PAGE_INDEX,
+                      RECORDS_PAGE_INDEX, LAUNCH_PAGE_INDEX, BAR_PAGE_INDEX)
+from qt_theme import RADIUS_WINDOW, panel_alpha, label_qss, rgba
 import qt_theme as T
-from qt_icon import IconWidget, HoverHelper, attach_hover
-from qt_widgets import RedDot
-from qt_bg import _cover, _blur, load_background
+from qt_bg import _cover, load_background
 from qt_titlebar import TitleBar
 from qt_navbtn import NavButton
 from qt_sidebar import Sidebar
 # 三个闪烁常量也一起转发 —— 它们内部只有 Sidebar 在用，
 # 但留在这儿可以保证 `qt_window` 对外露出的名字跟拆之前**一个不差**
 # （`_morph\api_snapshot.py` 会盯着这个）。
-from qt_sidebar import _BLINK_MS, _BLINK_PERIOD_MS, _BLINK_RED
 
 # ============================================================
 #  注意：TitleBar / NavButton / Sidebar / 背景图工具 都已经搬走了
@@ -515,23 +511,25 @@ class MainWindow(QWidget):
         if behavior == "exit":
             self._shutdown()
             return super().closeEvent(e)
-        box = QMessageBox(self)
-        box.setWindowTitle("退出")
-        box.setText("要关闭程序，还是最小化到托盘？")
-        box.setInformativeText("最小化后监测会继续运行，想彻底退出就选「关闭程序」。")
-        b_exit = box.addButton("关闭程序", QMessageBox.DestructiveRole)
-        b_tray = box.addButton("最小化到托盘", QMessageBox.AcceptRole)
-        box.addButton("取消", QMessageBox.RejectRole)
-        box.exec()
-        clicked = box.clickedButton()
-        if clicked is b_exit:
+        # 「每次询问」→ 卡片式确认窗（2026-10-04 用户要求换掉原来的 QMessageBox）
+        from qt_dlg_card import ExitDialog
+        dlg = ExitDialog(self, alpha=self.alpha)
+        if dlg.exec() != QDialog.Accepted:
+            e.ignore()
+            return
+        choice = dlg.chosen() or "tray"
+        # 勾了「不再提醒我」→ 把这次的选择存成 close_behavior，以后直接照办
+        if dlg.check_checked():
+            try:
+                self.state.settings["close_behavior"] = choice
+                config_manager.save_settings(self.state.settings)
+            except Exception:
+                log_exc("记住关闭行为")
+        if choice == "exit":
             self._shutdown()
             return super().closeEvent(e)
-        if clicked is b_tray:
-            e.ignore()
-            self.hide()
-            return
         e.ignore()
+        self.hide()
 
     def _shutdown(self):
         """真正退出前：停监测、关子窗口、停接口"""
@@ -557,11 +555,10 @@ class MainWindow(QWidget):
             pass
         try:
             if self.api_server is not None:
-                # ApiServer 没有 stop()，直接关它内部那个 werkzeug 服务器
-                srv = (getattr(self.api_server, "_server", None)
-                       or getattr(self.api_server, "server", None))
-                if srv is not None:
-                    srv.shutdown()
+                # `ApiServer.stop()` 早就有（api_server.py）——
+                # 这里原来写着"没有 stop()"、伸手去掏它的私有属性 `_server`，
+                # 是过期代码（而且那个 `getattr(..., "server")` 兜底的名字根本不存在）。
+                self.api_server.stop()
         except Exception:
             pass
 
@@ -589,13 +586,22 @@ class MainWindow(QWidget):
         for p in self.pages:
             self.stack.addWidget(p)
 
+        # 侧栏顺序 ↔ 页面栈顺序**不是**一回事：页面栈里新页一律追加在末尾
+        # （见 `qt_pages.build_pages` 的说明），侧栏想显示在第几个就写在这张表里。
+        # 下标是 `build_pages` 的返回顺序。
+        self._nav_to_page = [LAUNCH_PAGE_INDEX, BAR_PAGE_INDEX,
+                             RECORDS_PAGE_INDEX, DAILY_PAGE_INDEX,
+                             SETTINGS_PAGE_INDEX]
+        self._page_to_nav = {p: n for n, p in enumerate(self._nav_to_page)}
+
         self.sidebar = Sidebar(
             self,
             # 「今日统计」不单独一页了 —— 挪到「启动」页那张卡片下面的
             # 折叠区里（点开就看到时间/摩拉/材料/狗粮四个数）。
             [("rocket", "启动"), ("chart-column", "收益统计条"),
-             ("clipboard-list", "收益记录"), ("settings", "设置")],
-            self.show_page)
+             ("clipboard-list", "收益细则"), ("chart-bar", "收益记录"),
+             ("settings", "设置")],
+            self._on_nav)
         body.addWidget(self.sidebar)
 
         # 后台线程查到的更新结果 → 主线程刷新提示
@@ -621,7 +627,12 @@ class MainWindow(QWidget):
         self.state.session_ended.connect(self._on_session_ended)
 
     def _on_session_ended(self, rec):
-        """本次监测结束：弹一个小结（可以在设置里关掉）"""
+        """本次监测结束：弹一个小结（可以在设置里关掉）
+
+        2026-10-04：小结弹窗换成了卡片式（圆角 ✕ + 整宽确定）。
+        中途曾按用户要求加过「查看收益记录 / 查看每日收益 / 继续监测」几个
+        单选项，**看过效果之后用户又让删掉了**，所以这里不再有分支。
+        """
         try:
             if getattr(self, "_quitting", False):
                 return                      # 正在退出，别弹
@@ -653,14 +664,22 @@ class MainWindow(QWidget):
             from errlog import log_exc
             log_exc("on_hide")
         self.stack.setCurrentIndex(idx)
-        # 公告页不在导航里（是侧栏下面那个单独入口），
-        # 所以在公告页时把导航的高亮全部清掉
-        self.sidebar.set_active(-1 if idx == NOTICE_PAGE_INDEX else idx)
+        # 高亮侧栏里对应的那一项。查表是因为**侧栏顺序 ≠ 页面栈顺序**
+        # （新页追加在栈末尾）；公告页不在导航里 → -1 = 全部取消高亮。
+        self.sidebar.set_active(self._page_to_nav.get(idx, -1))
         page = self.pages[idx]
         # 页面第一次显示时让它自己刷新一次（各页自己实现）
         fn = getattr(page, "on_show", None)
         if callable(fn):
             fn()
+
+    def _on_nav(self, nav_idx):
+        """侧栏点了第 nav_idx 项 → 切到它映射的那一页"""
+        try:
+            self.show_page(self._nav_to_page[nav_idx])
+        except Exception:
+            from errlog import log_exc
+            log_exc("qt_window 侧栏导航")
 
     # ============================================================
     #  检测到新版本
@@ -681,8 +700,11 @@ class MainWindow(QWidget):
 
     def show_update_settings(self):
         """点侧栏那个闪烁的「检测到新版本」→ 跳到 设置→其它→版本更新"""
-        self.show_page(3)
-        p = self.pages[3] if len(self.pages) > 3 else None
+        # ⚠ 用常量，别写死 3：新页一律**追加在页面栈末尾**，
+        #   但"哪一页是设置"由 `qt_pages.SETTINGS_PAGE_INDEX` 说了算。
+        self.show_page(SETTINGS_PAGE_INDEX)
+        p = (self.pages[SETTINGS_PAGE_INDEX]
+             if len(self.pages) > SETTINGS_PAGE_INDEX else None)
         fn = getattr(p, "goto_update", None)
         if callable(fn):
             fn()

@@ -20,8 +20,9 @@ import time
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QHBoxLayout,
-                               QLabel, QLineEdit, QMessageBox, QProgressBar,
-                               QPushButton, QSlider, QVBoxLayout, QWidget)
+                               QFrame, QLabel, QLineEdit, QMessageBox,
+                               QProgressBar, QPushButton, QSlider,
+                               QVBoxLayout, QWidget)
 
 from qt_theme import (btn_qss, entry_qss, label_qss, rgba, slider_qss)
 import qt_theme as T
@@ -30,7 +31,9 @@ import svc_capture
 import svc_names
 from qt_widgets import (Accordion, Card, RedDot, SettingRow, Switch,
                         SwitchAccordion, level_name, level_value, make_combo,
-                        msg_info, right_wrap, set_btn_icon, small_button)
+                        msg_info, right_wrap, set_btn_icon, small_button,
+                        bind_cb)
+from qt_dlg_card import CardDialog
 from app_info import VERSION
 
 # 颜色下拉框里那一项「自定义颜色…」（选了会开取色器）
@@ -105,7 +108,7 @@ class LiveTab(SettingsTab):
         self.obs_sw = Switch(self, bool(self.cfg.get("obs_api_enabled", True)))
         self.obs_sw.toggled.connect(self._on_obs)
         self.row("radio", "直播数据接口",
-                 "为 OBS 及直播页面提供数据；关闭后直播端无数据",
+                 "为 OBS 浏览器源提供实时数据接口；关闭后直播端无数据",
                  self.obs_sw,
                  tip="在本机开启一个只读的数据接口，OBS 的浏览器源、直播计时条"
                      "都从这里取数。\n"
@@ -124,7 +127,7 @@ class LiveTab(SettingsTab):
         copy_btn.setStyleSheet(btn_qss("normal", self.alpha))
         copy_btn.clicked.connect(self._copy_obs)
         self.row("monitor", "收益条地址",
-                 "在 OBS 中添加「浏览器源」并粘贴该地址（建议 340×200）",
+                 "OBS 浏览器源地址，建议尺寸 340×200",
                  right_wrap(self.obs_addr, copy_btn),
                  tip="这是**只有收益条**的地址（摩拉 / 材料 / 狗粮 / 监测时间）。\n"
                      "在 OBS 里添加「浏览器源」，粘贴此地址，建议尺寸 340×200。\n"
@@ -137,7 +140,7 @@ class LiveTab(SettingsTab):
         self.api_entry.setStyleSheet(entry_qss())
         self.api_entry.editingFinished.connect(self._on_api_port)
         self.row("plug", "接口端口",
-                 "修改后即时生效；OBS 端地址需同步更新", self.api_entry,
+                 "接口监听端口；修改即时生效，OBS 端需同步更新", self.api_entry,
                  tip="数据接口监听的本地端口，范围 1024~65535，默认 8765。\n"
                      "改完立即重启接口；若有别的程序占用该端口，接口会起不来，"
                      "换一个端口即可。\n"
@@ -195,7 +198,7 @@ class RecognizeTab(SettingsTab):
         self.tick_entry.setStyleSheet(entry_qss())
         self.tick_entry.editingFinished.connect(self._on_tick)
         self.row("timer", "检测间隔",
-                 "画面检测间隔，单位毫秒（10~5000，默认 100）", self.tick_entry,
+                 "画面采样间隔（毫秒）；取值 10~5000，默认 100", self.tick_entry,
                  tip="程序多久看一次屏幕（毫秒）。它只做**便宜的**画面差异比较，"
                      "真正耗时的文字识别另有节流，所以调小不一定更吃 CPU。\n"
                      "越小＝越能及时察觉掉落提示出现；\n"
@@ -209,7 +212,7 @@ class RecognizeTab(SettingsTab):
                        int(self.cfg.get("ocr_interval", 150) or 150), config_manager.DEFAULT_OCR_LEVEL))
         self.ocr_dd.currentTextChanged.connect(self._on_ocr_interval)
         self.row("search", "文字识别频率",
-                 "文字识别间隔，越快响应越及时、越慢越省电", self.ocr_dd,
+                 "文字识别间隔（毫秒）；数值越小响应越快、占用越高", self.ocr_dd,
                  tip="OCR 的节流档位（性能 100 / 标准 150 / 省电 250 / 极致省电 500 毫秒）。\n"
                      "文字识别本身较慢（一次约 0.6 秒），这是**主要**的性能开销来源。\n"
                      "档位越高越省电，但收获提示淡出得快时可能来不及读全。\n"
@@ -231,7 +234,7 @@ class RecognizeTab(SettingsTab):
                        config_manager.DEFAULT_CHANGE_LEVEL))
         self.change_dd.currentTextChanged.connect(self._on_change_level)
         self.row("sliders-horizontal", "画面变化灵敏度",
-                 "画面变化判定阈值，越灵敏响应越快、耗电越高", self.change_dd,
+                 "画面变化判定阈值；越灵敏响应越快、占用越高", self.change_dd,
                  tip="判定「画面变了、该跑一次文字识别」的阈值。\n"
                      "档位：性能 1.0 / 标准 2.0 / 省电 4.0 / 极致省电 8.0（数值越小越灵敏）。\n"
                      "调得太灵敏时，战斗特效、伤害数字跳动都会被当成「画面变了」，"
@@ -244,7 +247,7 @@ class RecognizeTab(SettingsTab):
                                       else "1.5 秒"))
         self.event_dd.currentTextChanged.connect(self._on_event_window)
         self.row("repeat", "防重复窗口",
-                 "同一提示消失超过该时长后再次出现，计为新掉落", self.event_dd,
+                 "同一名称消失超过该时长后再次出现，计为新掉落", self.event_dd,
                  tip="同一条收获提示「消失」超过这个时长后再次出现，才算一次新的掉落，"
                      "用来防止 OCR 漏读、提示淡出被误判成多次拾取。\n"
                      "提示淡出较慢、或跨零点挂机时，可适当调大；\n"
@@ -270,7 +273,7 @@ class RecognizeTab(SettingsTab):
             self.kind_switches[key] = sw
             kind_items.append((ic_name, name, desc, sw, None, tip))
         self.kind_acc = Accordion(self, "target", "识别哪几样",
-                                  "勾选需要识别的物品种类",
+                                  "选择需要统计的物品种类",
                                   items=kind_items, alpha=self.alpha,
                                   tip="关掉某一类的识别开关后，该类物品即使被认出来也不会入账，"
                                       "可以省下对应的处理开销。\n"
@@ -337,7 +340,7 @@ class BehaviorTab(SettingsTab):
         self.only_fg.toggled.connect(
             lambda v: self.cfg.set("only_foreground", bool(v)))
         self.row("crosshair", "只在原神前台时识别",
-                 "仅原神处于前台时识别，切出后自动暂停", self.only_fg,
+                 "仅在原神处于前台时识别；切出后自动暂停", self.only_fg,
                  tip="开启后，原神窗口不在前台时直接跳过这一轮：不截图、不识别，"
                      "既省性能，也避免把浏览器/聊天窗口上的文字当成掉落。\n"
                      "关掉它＝任何窗口在前台都照常识别，只在多开或特殊录屏场景下需要。")
@@ -347,7 +350,7 @@ class BehaviorTab(SettingsTab):
             "ask": "每次询问", "tray": "最小化到托盘", "exit": "直接退出"
         }.get(str(self.cfg.get("close_behavior", "ask")), "每次询问"))
         self.close_dd.currentTextChanged.connect(self._on_close_behavior)
-        self.row("x", "点右上角 ✕ 时", "点击关闭按钮时的行为", self.close_dd,
+        self.row("x", "点右上角 ✕ 时", "点击标题栏关闭按钮时的行为", self.close_dd,
                  tip="决定点窗口右上角 ✕ 之后发生什么：\n"
                      "· 每次询问 —— 弹窗让你选，防止误关；\n"
                      "· 最小化到托盘 —— 窗口收起但程序继续运行，监测不中断；\n"
@@ -380,7 +383,7 @@ class BehaviorTab(SettingsTab):
         hk_tip.setWordWrap(True)
 
         self.hotkey_acc = Accordion(self, "keyboard", "全局热键",
-                                    "全局生效，游戏内也可触发",
+                                    "系统级热键，游戏内同样生效",
                                     items=hk_items, footer=hk_tip,
                                     alpha=self.alpha,
                                     tip="热键在系统范围内生效，游戏全屏时同样可用。\n"
@@ -511,7 +514,7 @@ class StatsTab(SettingsTab):
                 "填 0 表示不限制。")
         self.mora_cap_entry.setToolTip(_tip)
         _r = self.row("coins", "摩拉单次计数上限",
-                      "单次识别读数超过该值即判为误读并丢弃；0 表示不限制",
+                      "单次读数上限；超过即判为误读并丢弃，0 为不限制",
                       self.mora_cap_entry, tip=_tip)
 
         # ---- 换日刷新数据（折叠卡片，默认收起）----
@@ -551,10 +554,10 @@ class StatsTab(SettingsTab):
              "这样不会半夜打到一半被归档。"),
         ]
         self.ro_acc = Accordion(self, "sunrise", "换日刷新数据",
-                                "按设定时间归档当日数据并重新开始统计",
+                                "到达设定时间后归档当日数据并重新开始统计",
                                 items=ro_items, alpha=self.alpha,
                                 tip="换日＝把当日统计归档，并从零开始累计新的一天。\n"
-                                    "归档后的历史仍可在「收益记录」页查到，不会被删除。")
+                                    "归档后的历史仍可在「收益细则」页查到，不会被删除。")
         self.add_card(self.ro_acc)
 
         # ---- 识别名单 ----
@@ -622,8 +625,11 @@ class StatsTab(SettingsTab):
             # 「配置名单」那张卡片（内容区的真正内容）
             # ⚠ 图标名要写**存在的**：icons 里没有 "list"，写错了 Qt 会把名字
             #   当**文字**画出来（这里以前就画着"list"四个字母）。
+            # ⚠ 原来这里是 `lambda k=key: self._open_filter(k)` ——
+            #   clicked 塞进来的 checked(False) 会把 k 顶掉，点这张卡片
+            #   实际是 `_open_filter(False)`（2026-10-04 顺手修掉）。
             cfg_btn = small_button(
-                "配置名单", lambda k=key: self._open_filter(k), self.alpha,
+                "配置名单", bind_cb(self._open_filter, key), self.alpha,
                 icon="file-text", width=104, height=30)
             cfg_acc = Accordion(
                 body, "file-text", "配置名单",
@@ -936,6 +942,100 @@ class UpgradeTab(SettingsTab):
         self._win = win
         self.update_checked.connect(self._update_result)
 
+        # ---- 版本卡片（hero）----
+        # 2026-10-04 改版：原来这一页只有两行、底下大半页空白，用户说"太丑"。
+        # 现在把版本号、状态、按钮、进度、更新说明全收进**一张卡片**，
+        # 跟新的卡片弹窗一个调性（大号版本号 + 状态胶囊 + 强调色按钮）。
+        card = Card(self, alpha=self.alpha)
+        cl = QVBoxLayout(card)
+        cl.setContentsMargins(18, 16, 18, 16)
+        cl.setSpacing(10)
+
+        top = QHBoxLayout()
+        top.setSpacing(10)
+        self.ver_label = QLabel(f"StatGI {VERSION}")
+        self.ver_label.setStyleSheet(T.title_qss(26))
+        top.addWidget(self.ver_label)
+        top.addStretch(1)
+        self.state_pill = QLabel("还没检测")
+        self.state_pill.setStyleSheet(self._pill_qss(T.DIM))
+        top.addWidget(self.state_pill, 0, Qt.AlignTop)
+        cl.addLayout(top)
+
+        self.detail_label = QLabel("点「检测更新」去网上比对最新版本（需联网）")
+        self.detail_label.setStyleSheet(label_qss(T.DIM, 12))
+        self.detail_label.setWordWrap(True)
+        cl.addWidget(self.detail_label)
+
+        btns = QHBoxLayout()
+        btns.setSpacing(8)
+        self.update_btn = QPushButton("检测更新")
+        # 用最小宽度而不是固定 130 —— 固定宽度会让按钮比文字宽一大截，
+        # 挂在它右上角的红点看着就像挂在卡片上了
+        self.update_btn.setMinimumWidth(108)
+        self.update_btn.setFixedHeight(34)
+        self.update_btn.setCursor(Qt.PointingHandCursor)
+        self.update_btn.setStyleSheet(btn_qss("accent", self.alpha))
+        set_btn_icon(self.update_btn, "refresh-cw", 15, color="#08222E")
+        self.update_btn.clicked.connect(self._on_check_update)
+        btns.addWidget(self.update_btn)
+
+        self.page_btn = QPushButton("打开发布页")
+        self.page_btn.setMinimumWidth(108)
+        self.page_btn.setFixedHeight(34)
+        self.page_btn.setCursor(Qt.PointingHandCursor)
+        self.page_btn.setStyleSheet(btn_qss("normal", self.alpha))
+        set_btn_icon(self.page_btn, "globe", 15)
+        self.page_btn.clicked.connect(self._open_release_page)
+        self.page_btn.setEnabled(False)          # 还不知道地址，检测到再亮
+        btns.addWidget(self.page_btn)
+        btns.addStretch(1)
+        cl.addLayout(btns)
+
+        # ---- 下载进度（只有真在下载时才出现）----
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.setFixedHeight(18)
+        self.progress.setTextVisible(True)
+        self.progress.setStyleSheet(
+            f"QProgressBar {{ background:{rgba('#FFFFFF', 20)}; border:none;"
+            f" border-radius:9px; text-align:center; color:{T.TEXT};"
+            f" font-size:11px; }}"
+            f"QProgressBar::chunk {{ background:{T.ACCENT}; border-radius:9px; }}")
+        self.progress.hide()
+        cl.addWidget(self.progress)
+
+        # ---- 更新说明（发现新版本时才出现）----
+        self.notes_box = QFrame()
+        self.notes_box.setStyleSheet(
+            f"QFrame {{ background:{rgba('#FFFFFF', 12)}; border:none;"
+            f" border-radius:10px; }}")
+        nl = QVBoxLayout(self.notes_box)
+        nl.setContentsMargins(14, 12, 14, 12)
+        nl.setSpacing(8)
+        self.notes_title = QLabel("")
+        self.notes_title.setStyleSheet(label_qss(T.ACCENT, 14, True))
+        nl.addWidget(self.notes_title)
+        self.notes_label = QLabel("")
+        self.notes_label.setWordWrap(True)
+        self.notes_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.notes_label.setStyleSheet(label_qss(T.TEXT, 13))
+        nl.addWidget(self.notes_label)
+        self.go_btn = QPushButton("立即更新")
+        self.go_btn.setFixedHeight(34)
+        self.go_btn.setCursor(Qt.PointingHandCursor)
+        self.go_btn.setStyleSheet(btn_qss("accent", self.alpha))
+        self.go_btn.clicked.connect(self._on_go_update)
+        nl.addWidget(self.go_btn)
+        self.notes_box.hide()
+        cl.addWidget(self.notes_box)
+
+        self.add_card(card)
+        # ⚠ 侧栏点红点要滚到这一行 —— `update_row` 这个名字必须留着
+        self.update_row = card
+        # 检测到新版本时挂个红点（挂在**按钮**右上角，不是整张卡片上）
+        self.update_dot = RedDot(self.update_btn)
+
         # ---- 更新渠道 ----
         # 国内用 Gitee 快；GitHub 的 API 有每小时 60 次的限流，
         # 所以版本信息走的是仓库里的 version.json（raw 地址，不限流）。
@@ -947,7 +1047,7 @@ class UpgradeTab(SettingsTab):
              "github": "GitHub"}.get(_cur, "自动"))
         self.channel_dd.currentTextChanged.connect(self._on_update_channel)
         self.row("globe", "更新渠道",
-                 "更新检测与下载页来源（国内推荐 Gitee）",
+                 "更新检测与安装包下载源；国内推荐 Gitee",
                  self.channel_dd,
                  tip="决定「检测更新」走哪个下载源：\n"
                      "· 自动 —— 按网络情况在 Gitee / GitHub 之间挑一个能用的；\n"
@@ -955,41 +1055,51 @@ class UpgradeTab(SettingsTab):
                      "· GitHub —— 更新说明与发布页在 GitHub 上时选它。\n"
                      "版本信息本身走仓库里的说明文件，不限流；"
                      "只有下载安装包才走上面选的源。")
+        self._info = None            # 最近一次检测结果（「立即更新」要用）
 
-        # ---- 检测更新 ----
-        upd_row = QWidget()
-        ul = QHBoxLayout(upd_row)
-        ul.setContentsMargins(0, 0, 0, 0)
-        ul.setSpacing(8)
-        self.update_btn = QPushButton("检测更新")
-        # 用最小宽度而不是固定 130 —— 固定宽度会让按钮比文字宽一大截，
-        # 挂在它右上角的红点看着就像挂在卡片上了
-        self.update_btn.setMinimumWidth(108)
-        self.update_btn.setFixedHeight(32)
-        self.update_btn.setCursor(Qt.PointingHandCursor)
-        self.update_btn.setStyleSheet(btn_qss("normal", self.alpha))
-        set_btn_icon(self.update_btn, "search", 15)
-        self.update_btn.clicked.connect(self._on_check_update)
-        self.update_status = QLabel("")
-        self.update_status.setStyleSheet(label_qss(T.DIM, 12))
-        ul.addWidget(self.update_btn)
-        ul.addWidget(self.update_status)
-        self.update_row = self.row("refresh-cw", "版本更新",
-                                   f"当前版本 v{VERSION}，检测需联网", upd_row,
-                                   tip="点「检测更新」会去网上比对最新版本（需联网）。\n"
-                                       "发现新版本时可以一键更新：程序自动下载、"
-                                       "校验、替换并重新启动。\n"
-                                       "**设置与收益数据不会被覆盖**。\n"
-                                       "检测到新版本时，左下角会闪红光提示。")
-        # 检测到新版本时挂个红点 —— 挂在**「检测更新」按钮**的右上角，
-        # 不是整张卡片的右上角（挂卡片上离按钮太远，指不准是哪个）
-        self.update_dot = RedDot(self.update_btn)
+    # ---- 小工具 ----
+
+    @staticmethod
+    def _pill_qss(color):
+        """状态胶囊（圆角小标签）"""
+        return (f"color:{color}; background:{rgba(color, 40)};"
+                f" border-radius:10px; padding:4px 12px;"
+                f" font-family:'{T.FONT}'; font-size:12px; font-weight:600;")
+
+    def _set_state(self, text, color, detail=""):
+        self.state_pill.setText(str(text))
+        self.state_pill.setStyleSheet(self._pill_qss(color))
+        if detail:
+            self.detail_label.setText(str(detail))
+            self.detail_label.setStyleSheet(label_qss(T.DIM, 12))
+
+    def _open_release_page(self):
+        url = str((self._info or {}).get("url", "") or "").strip()
+        if url:
+            try:
+                __import__("webbrowser").open(url)
+            except Exception:
+                pass
+
+    def _on_go_update(self):
+        """卡片上那个「立即更新」"""
+        info = self._info or {}
+        try:
+            import qt_updater
+            up = qt_updater.update_info_from({"update": info.get("update")})
+        except Exception:
+            up = None
+        if up:
+            self._do_auto_update(up, info.get("version", ""))
 
     # ---- 处理器（原来混在 PageSettings 文件尾部那一堆里）----
 
     def _on_check_update(self):
-        self.update_status.setText("正在检测…")
-        self.update_status.setStyleSheet(label_qss(T.DIM, 12))
+        self._set_state("正在检测…", T.DIM, "正在联网比对，请稍候…")
+        try:
+            self.update_btn.setEnabled(False)     # 别让用户连点
+        except Exception:
+            pass
         import threading
         import qt_update
 
@@ -1009,25 +1119,32 @@ class UpgradeTab(SettingsTab):
     def _update_result(self, info, reason):
         import qt_update
         if not info:
-            self.update_status.setText(f"检测失败：{qt_update.reason_text(reason)}")
-            self.update_status.setStyleSheet(label_qss("#E06C5A", 12))
+            self._set_state("检测失败", "#E06C5A",
+                            f"{qt_update.reason_text(reason)}"
+                            "　·　点「检测更新」重试")
+            self.update_btn.setEnabled(True)
             return
         ver = info.get("version", "")
         used = qt_update.CHANNEL_NAMES.get(info.get("channel", ""), "")
+        self._info = info
+        self.update_btn.setEnabled(True)
+        self.page_btn.setEnabled(bool(str(info.get("url", "") or "").strip()))
         if not info.get("is_newer"):
             # 远端不比本地新（包括远端更旧的情况）—— 都算「已是最新」
-            self.update_status.setText(f"已是最新版本（{VERSION}）· 来自 {used}")
-            self.update_status.setStyleSheet(label_qss("#6CCB5F", 12))
+            self._set_state("已是最新", "#6CCB5F",
+                            f"当前 {VERSION}　·　来自 {used}"
+                            f"　·　{time.strftime('%H:%M')} 检测")
+            self.notes_box.hide()
             return
-        self.update_status.setText(f"发现新版本 {ver}（来自 {used}）")
-        self.update_status.setStyleSheet(label_qss(T.ACCENT, 12))
-        self._ask_update(info)
+        self._set_state(f"发现新版本 {ver}", T.ACCENT,
+                        f"当前 {VERSION} → {ver}　·　来自 {used}")
+        self._show_update_available(info)
 
-    def _ask_update(self, info):
-        """发现新版本。
+    def _show_update_available(self, info):
+        """发现新版本 —— **就在卡片里展开说明**，不再弹一个朴素对话框。
 
-        有自动更新信息（version.json 里带了分卷地址）→ 给「立即更新」；
-        没带 → 只给「打开下载页」，跟以前一样。
+        2026-10-04 改版：原来发现新版本会弹 QDialog，跟新界面风格不搭；
+        现在信息直接铺在卡片上（更新说明可选中复制），按钮也在这张卡片里。
         """
         ver = info.get("version", "")
         notes = str(info.get("notes", "") or "").strip()
@@ -1037,62 +1154,21 @@ class UpgradeTab(SettingsTab):
         except Exception:
             up = None
 
-        dlg = QDialog(self)
-        dlg.setWindowTitle("发现新版本")
-        dlg.setMinimumWidth(470)
-        v = QVBoxLayout(dlg)
-        v.setContentsMargins(20, 18, 20, 16)
-        v.setSpacing(10)
-
-        t = QLabel(f"发现新版本 {ver}")
-        t.setStyleSheet(label_qss(T.ACCENT, 18, True))
-        v.addWidget(t)
-
         size_txt = ""
         if up and up.get("size"):
-            size_txt = f"（安装包约 {up['size']/1024/1024:.0f} MB）"
-        body = QLabel(f"当前版本 {VERSION}　→　{ver} {size_txt}\n\n"
-                      + (f"更新内容：\n{notes}" if notes else ""))
-        body.setWordWrap(True)
-        body.setStyleSheet(label_qss(T.TEXT, 13))
-        v.addWidget(body)
+            size_txt = f"（安装包约 {up['size'] / 1024 / 1024:.0f} MB）"
+        self.notes_title.setText(f"新版本 {ver} 更新内容{size_txt}")
+        self.notes_label.setText(notes or "（这次没有写更新说明）")
+        # 没有自动更新信息（version.json 里没带分卷地址）→ 只能去发布页手动下
+        self.go_btn.setVisible(bool(up))
+        if not up:
+            self.detail_label.setText(
+                f"当前 {VERSION} → {ver}　·　点右边「打开发布页」手动下载")
+        self.notes_box.show()
 
-        if up:
-            tip = QLabel("点击「立即更新」将自动下载并完成替换：\n"
-                         "程序自动退出 → 完成替换 → 自动重新启动。\n"
-                         "设置与收益数据不会被覆盖。")
-            tip.setWordWrap(True)
-            tip.setStyleSheet(label_qss(T.DIM, 12))
-            v.addWidget(tip)
-
-        row = QHBoxLayout()
-        url = str(info.get("url", "") or "").strip()
-        if url:
-            b_page = QPushButton("打开下载页")
-            b_page.setFixedHeight(34)
-            b_page.setCursor(Qt.PointingHandCursor)
-            b_page.setStyleSheet(btn_qss("normal", self.alpha))
-            b_page.clicked.connect(lambda: __import__("webbrowser").open(url))
-            row.addWidget(b_page)
-        row.addStretch(1)
-        b_later = QPushButton("以后再说")
-        b_later.setFixedHeight(34)
-        b_later.setCursor(Qt.PointingHandCursor)
-        b_later.setStyleSheet(btn_qss("normal", self.alpha))
-        b_later.clicked.connect(dlg.reject)
-        row.addWidget(b_later)
-        if up:
-            b_go = QPushButton("立即更新")
-            b_go.setFixedHeight(34)
-            b_go.setMinimumWidth(120)
-            b_go.setCursor(Qt.PointingHandCursor)
-            b_go.setStyleSheet(btn_qss("accent", self.alpha))
-            b_go.clicked.connect(dlg.accept)
-            row.addWidget(b_go)
-        v.addLayout(row)
-
-        if dlg.exec() == QDialog.Accepted and up:
-            self._do_auto_update(up, ver)
+    def _ask_update(self, info):
+        """兼容旧调用：现在不弹窗了，直接在卡片里展开"""
+        self._show_update_available(info)
 
     def _do_auto_update(self, up, ver):
         """下载 → 合并 → 校验 → 解压 → 交给「更新.bat」去替换
@@ -1108,43 +1184,27 @@ class UpgradeTab(SettingsTab):
             msg = Signal(str)
             done = Signal(bool, str)
 
-        dlg = QDialog(self)
-        dlg.setWindowTitle("正在更新")
-        dlg.setMinimumWidth(470)
-        dlg.setWindowFlag(Qt.WindowCloseButtonHint, False)
-        v = QVBoxLayout(dlg)
-        v.setContentsMargins(20, 18, 20, 16)
-        v.setSpacing(10)
-
-        lb = QLabel(f"正在下载 StatGI {ver}…")
-        lb.setStyleSheet(label_qss(T.TEXT, 14))
-        v.addWidget(lb)
-
-        bar = QProgressBar()
-        bar.setRange(0, 100)
-        bar.setFixedHeight(18)
-        bar.setStyleSheet(
-            f"QProgressBar {{ background:{rgba('#FFFFFF', 20)}; border:none;"
-            f" border-radius:9px; text-align:center; color:{T.TEXT}; font-size:11px; }}"
-            f"QProgressBar::chunk {{ background:{T.ACCENT}; border-radius:9px; }}")
-        v.addWidget(bar)
-
-        log = QLabel("准备中…")
-        log.setWordWrap(True)
-        log.setStyleSheet(label_qss(T.DIM, 12))
-        v.addWidget(log)
-
+        dlg = self._make_progress_dialog(ver, (up or {}).get("size", 0),
+                                         info.get("notes", ""))
         sig = Sig()
-        state = {"dir": None}
+        state = {"dir": None, "cancel": False, "msg": "准备中…", "prog": (0, 0)}
+        # ⚠ 「取消」以前是**假的**：点了只是把窗关掉，下载线程照样跑完，
+        #   然后照样问你"现在开始更新？"、照样关软件 —— 点取消反而更懵。
+        #   现在真的取消：拒绝即置位，`on_fin` 看到就掉头。
+        dlg.rejected.connect(lambda: state.__setitem__("cancel", True))
 
         def on_p(p, t):
-            if t > 0:
-                pct = max(0, min(100, int(p * 100 / t)))
-                bar.setValue(pct)
-                bar.setFormat(f"{pct}%　{p/1024/1024:.0f} / {t/1024/1024:.0f} MB")
+            # 进度、速度、MB 都在弹窗里自己算（它内部有采样窗口）
+            dlg.set_progress(p, t)
+
+        def on_msg(s):
+            # 更新器说的话（正在校验 / 正在解压…）—— 直接显示在速度那一行；
+            # 下载中紧接着的进度回调会把它盖回"速度 …"，所以不会打架
+            state["msg"] = str(s)
+            dlg.set_status(str(s))
 
         sig.progress.connect(on_p)
-        sig.msg.connect(log.setText)
+        sig.msg.connect(on_msg)
 
         def work():
             try:
@@ -1156,6 +1216,8 @@ class UpgradeTab(SettingsTab):
                 sig.done.emit(False, str(e))
 
         def on_fin(ok, err):
+            if state["cancel"]:
+                return                    # 用户取消了，什么都别做
             if not ok:
                 QMessageBox.warning(self, "更新没做成",
                                     f"{err}\n\n当前版本不受影响，可稍后重试，"
@@ -1168,16 +1230,8 @@ class UpgradeTab(SettingsTab):
                 QMessageBox.warning(self, "更新没做成", f"准备更新脚本失败：{e}")
                 dlg.reject()
                 return
-            if QMessageBox.question(
-                    self, "更新已准备好",
-                    f"新版本 {ver} 已经下载好了。\n\n"
-                    "点「确定」后：\n"
-                    "  · 软件会自动关闭\n"
-                    "  · 自动完成替换（将弹出命令行窗口，请勿关闭）\n"
-                    "  · 更新完自动重新打开\n\n"
-                    "设置与收益数据不会被覆盖。\n\n现在开始更新？"
-            ) != QMessageBox.Yes:
-                dlg.reject()
+            dlg.accept()
+            if not self._make_ready_dialog(ver):
                 return
             if not qt_updater.launch_updater(bat):
                 QMessageBox.warning(self, "启动更新失败",
@@ -1204,11 +1258,45 @@ class UpgradeTab(SettingsTab):
         threading.Thread(target=work, daemon=True).start()
         dlg.exec()
 
+    def _make_progress_dialog(self, ver, size=0, notes=""):
+        """下载进度弹窗（旋转图标 + 进度条 + 速度 + 上面轮播公告/宝典）。
+
+        2026-10-04 按用户草图重做；抽成方法是为了能**单独渲染/测试** ——
+        不然它藏在「点立即更新 → 后台线程 → 信号」这条链路里，谁也看不见。
+        """
+        from qt_update_progress import UpdateProgressDialog
+        return UpdateProgressDialog(self, alpha=self.alpha, ver=ver,
+                                    size=size, notes=notes)
+
+    def _make_ready_dialog(self, ver):
+        """下载完 → 问「现在开始更新吗」（也是卡片式，跟前面一致）"""
+        dlg = self._build_ready_dialog(ver)
+        return dlg.exec() == QDialog.Accepted
+
+    def _build_ready_dialog(self, ver):
+        """只搭不显示 —— 方便单独渲染/测试"""
+        dlg = CardDialog(self, alpha=self.alpha, title="更新已准备好",
+                         width=340)
+        dlg.set_subtitle(f"新版本 {ver} 已经下载好了。")
+        body = QLabel("点「现在更新」之后：\n"
+                      "· 软件自动关闭\n"
+                      "· 自动完成替换（会弹出一个命令行窗口，别关它）\n"
+                      "· 更新完自动重新打开\n\n"
+                      "设置与收益数据不会被覆盖。")
+        body.setWordWrap(True)
+        body.setStyleSheet(label_qss(T.TEXT, 13))
+        dlg.add_widget(body)
+        dlg.add_secondary("稍后再说", dlg.reject)
+        dlg.add_confirm("现在更新")
+        dlg.fit_to_subtitle(0.85)
+        return dlg
+
     def _on_update_channel(self, text):
         val = {"自动": "auto", "Gitee（国内快）": "gitee",
                "GitHub": "github"}.get(text, "auto")
         self.cfg.set("update_channel", val)
-        self.update_status.setText("")
+        # 换渠道后状态就不准了 —— 复位成"还没检测"
+        self._set_state("还没检测", T.DIM, "换了渠道，点「检测更新」重新比对")
 
 
 class DevTab(SettingsTab):
@@ -1226,12 +1314,12 @@ class DevTab(SettingsTab):
         self.dev_enabled = Switch(self, bool(self.cfg.get("developer_mode", False)))
         self.dev_enabled.toggled.connect(self._on_developer_mode)
         self.row("wrench", "开发者模式",
-                 "开启后显示下方的维护工具", self.dev_enabled,
+                 "开启后显示下方维护工具", self.dev_enabled,
                  tip="打开后才会显示下面的「开发者选项」（样本采集等维护工具）。\n"
                      "普通使用不需要开启；关闭后已采集的样本文件不会被删除。")
 
         # ---- 识别日志（一次运行一个文件，放在 data/识别日志/）----
-        # ⚠ 这三行**不放进「开发者选项」里** —— 它们是给普通用户反馈问题用的，
+        # ⚠ 这几行**不放进「开发者选项」里** —— 它们是给普通用户反馈问题用的，
         #   藏进开发者模式就等于没有。
         log_open = small_button("打开文件夹", self._open_log_dir, self.alpha,
                                 icon="folder-open", width=104)
@@ -1239,7 +1327,7 @@ class DevTab(SettingsTab):
                                  kind="danger", icon="trash", width=76)
         self.log_row = self.row(
             "file-text", "识别日志",
-            "每启动一次软件生成一个日志文件；文件夹超过 20 MB 自动删最早的",
+            "每次启动生成一个日志文件；目录超过 20 MB 自动清理最早文件",
             right_wrap(log_open, log_clear),
             tip="识别日志记的是**每一次判断**：认出了什么、原始文字是什么、"
                 "这一笔有没有入账。查「为什么没统计到 / 为什么统计多了」全靠它。\n"
@@ -1252,7 +1340,7 @@ class DevTab(SettingsTab):
         diag_btn = small_button("打包诊断信息", self._make_diagnose, self.alpha,
                                 icon="activity", width=140)
         self.row("activity", "出了问题怎么办",
-                 "把版本、设置、报错日志、识别日志打成一个包，方便反馈",
+                 "打包版本、设置、报错日志与识别日志，用于问题反馈",
                  diag_btn,
                  tip="点一下会生成一个 zip，里面是：\n"
                      "· 环境概况（版本 / 系统 / 屏幕缩放 / 关键设置 / 数据文件大小）；\n"
@@ -1267,7 +1355,7 @@ class DevTab(SettingsTab):
         imp_btn = small_button("导入…", self._import_settings, self.alpha,
                                icon="folder-open", width=92)
         self.row("database", "设置备份",
-                 "把设置、识别名单、悬浮窗配置打包；换电脑或重装时导入",
+                 "导出设置、识别名单与悬浮窗配置，用于迁移或重装后恢复",
                  right_wrap(exp_btn, imp_btn),
                  tip="**导出**：把设置 / 识别名单 / 悬浮窗配置（含预设）/ 收藏夹"
                      "打包成一个 zip，换电脑、重装、给朋友一份配置都用它。\n"
@@ -1277,8 +1365,7 @@ class DevTab(SettingsTab):
 
         # ---- 开发者选项：折叠卡片，每一项一张子卡片 ----
         self.dev_acc = Accordion(self, "flask-conical", "开发者选项",
-                                 "收集识别样本用于后续优化识别准确度；"
-                                 "截图只存本地，不上传、不入库",
+                                 "采集识别样本用于优化识别准确度；仅保存在本机，不上传、不入账",
                                  items=self._make_dev_items(), alpha=self.alpha,
                                  tip="这里的工具用于收集识别样本、排查识别问题，"
                                      "面向开发者与问题定位。\n"
@@ -1552,7 +1639,7 @@ class AppearanceTab(SettingsTab):
         self.alpha_label.setStyleSheet(label_qss(T.ACCENT, 13))
         self.alpha_slider.valueChanged.connect(self._on_alpha)
         self.row("contrast", "卡片透明度",
-                 "卡片、侧边栏与按钮的统一不透明度（0% 为全透明）",
+                 "卡片、侧边栏与按钮的统一不透明度；0% 为全透明",
                  right_wrap(self.alpha_slider, self.alpha_label),
                  tip="统一控制卡片、侧边栏、按钮的不透明度。\n"
                      "设成 0% 时几乎全透明（只剩文字），适合把窗口叠在游戏上；\n"
@@ -1570,7 +1657,7 @@ class AppearanceTab(SettingsTab):
         self.dim_label.setStyleSheet(label_qss(T.ACCENT, 13))
         self.dim_slider.valueChanged.connect(self._on_dim)
         self.row("moon", "背景压暗",
-                 "背景图对比度过高时调高，提升文字可读性（0% 不压暗）",
+                 "背景图压暗强度；对比度过高时可调高以提升可读性，0% 不压暗",
                  right_wrap(self.dim_slider, self.dim_label),
                  tip="给背景图盖一层暗色，让上面的文字更清楚。\n"
                      "风景、亮色照片类背景图通常需要 20%~40%；"
@@ -1591,7 +1678,7 @@ class AppearanceTab(SettingsTab):
         self.bg_name.setMaximumWidth(150)
         self._set_bg_name(cur)
         self.row("image", "自定义背景图片",
-                 "设为窗口背景图，卡片区域转为半透明",
+                 "设为窗口背景图；卡片区域自动转为半透明",
                  right_wrap(pic, clr, self.bg_name),
                  tip="选一张本地图片当窗口背景。设置后卡片区域转为半透明，"
                      "整体更贴近游戏画面。\n"
@@ -1609,12 +1696,12 @@ class AppearanceTab(SettingsTab):
         self.bg_dd.currentTextChanged.connect(self._on_bg_color)
         self.accent_dd.currentTextChanged.connect(self._on_accent_color)
         self.row("palette", "背景颜色",
-                 "窗口背景色；可选预设，也可以自己调一个颜色", self.bg_dd,
+                 "窗口背景色；可选预设或自定义", self.bg_dd,
                  tip="整个窗口的底色。选预设名即可；"
                      "选「自定义颜色…」会打开取色器。\n"
                      "改完立即生效（界面会重建一次，属于正常现象）。")
         self.row("rainbow", "强调色",
-                 "按钮、选中项与数值高亮色；可选预设，也可以自己调", self.accent_dd,
+                 "按钮、选中项与数值高亮色；可选预设或自定义", self.accent_dd,
                  tip="按钮、开关、选中项、数值高亮用的主色调。\n"
                      "与背景色搭配使用：深色背景配亮一点的强调色更清楚。\n"
                      "同样支持「自定义颜色…」，改完立即生效。")
@@ -1622,7 +1709,7 @@ class AppearanceTab(SettingsTab):
         self.sidebar_glass = Switch(self, bool(self.cfg.get("sidebar_glass", True)))
         self.sidebar_glass.toggled.connect(self._on_sidebar_glass)
         self.row("eye-off", "左侧栏毛玻璃效果",
-                 "需先设置背景图；对侧边栏做模糊与压暗处理", self.sidebar_glass,
+                 "对侧边栏做模糊与压暗处理；需先设置背景图", self.sidebar_glass,
                  tip="对左侧栏做模糊 + 压暗，做出磨砂玻璃质感（需要先设置背景图）。\n"
                      "关掉则左侧栏用纯色。\n"
                      "模糊有轻微性能开销，低配机器可以关掉。")
@@ -1634,7 +1721,7 @@ class AppearanceTab(SettingsTab):
         icon_btn.setStyleSheet(btn_qss("normal", self.alpha))
         icon_btn.clicked.connect(self._win.open_icon_manager)
         self.row("image", "统计条图标",
-                 "自定义统计条各格图标（摩拉 / 材料 / 狗粮）", icon_btn,
+                 "统计条各格图标（摩拉 / 材料 / 狗粮）", icon_btn,
                  tip="打开图标管理器，给桌面统计条每一格挑图标，"
                      "也可以用自己的图片替换。\n"
                      "改动只影响显示，不影响统计结果。")
@@ -1647,7 +1734,7 @@ class AppearanceTab(SettingsTab):
                 round(_sc, 2), "100%（默认）"))
         self.scale_dd.currentTextChanged.connect(self._on_ui_scale)
         self.row("monitor", "界面缩放",
-                 "整体放大界面，高分屏字太小时用；重启后生效", self.scale_dd,
+                 "整体缩放界面；高分屏字体过小时使用，重启后生效", self.scale_dd,
                  tip="把整个界面（文字、按钮、间距）一起放大，"
                      "适合 2K / 4K 笔记本上觉得字太小的情况。\n"
                      "· 100%（默认）—— 原始大小；\n"
@@ -1660,7 +1747,7 @@ class AppearanceTab(SettingsTab):
         self.stop_sum.toggled.connect(
             lambda v: self.cfg.set("stop_summary", bool(v)))
         self.row("chart-bar", "停止监测时显示小结",
-                 "停止后弹窗汇总本次时长与收益", self.stop_sum,
+                 "停止监测后弹窗汇总本次时长与收益", self.stop_sum,
                  tip="点「停止监测」后弹一个小窗，汇总**本次**这一段：\n"
                      "时长、摩拉、材料（总数 + 前几名）、狗粮。\n"
                      "数据是这次开始到停止之间的增量，跟当日累计无关。\n"

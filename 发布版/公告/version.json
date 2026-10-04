@@ -1,23 +1,23 @@
 {
-  "version": "0.9.4",
-  "notes": "· 修复跨天挂机时收益记录算错的问题\n· 修复收益记录偶发保存失败后静默丢失的问题\n· 修复同一条监测记录可能重复出现的问题\n· 新增更省资源的截图频率默认值，降低挂机时的性能占用\n· 降低长时间运行产生的日志体积",
+  "version": "0.9.5",
+  "notes": "· 识别更准：重做识别前的图像处理（不再二值化），实测读对率 36% → 67%\n· 「霓」这类笔画复杂的字不再被认成 冕 / 舜 / 凳 这些相近字\n· 认错的字会先按材料名单做相似度匹配，尽量归到正确名字上\n· 「未登记」日志去重，长时间挂机不再刷屏\n· 新增「收益记录」页：按月查看每日收益柱状图\n· 更新界面重做：旋转图标 + 进度条 + 公告与名言轮播\n· 关闭窗口、停止监测的弹窗改成卡片式\n· 修复摩拉 / 狗粮切换后无法切回的问题",
   "url_github": "https://github.com/Cash-553/stat-genshin-impact/releases",
   "url_gitee": "https://gitee.com/Cash553/stat-genshin-impact/releases",
   "update": {
-    "size": 126504173,
-    "sha256": "316624e73b60f47b554772bd97b6fd55f8f15747eaf808122ef00916c313fcd6",
+    "size": 126546361,
+    "sha256": "493765566d46a42daf9370b945dec200b0dc1734e5ec26d440bd85e22b9e774d",
     "sources": [
       {
         "label": "Gitee（国内快）",
         "parts": [
-          "https://gitee.com/Cash553/stat-genshin-impact/releases/download/v0.9.4/StatGI_v0.9.4.part1",
-          "https://gitee.com/Cash553/stat-genshin-impact/releases/download/v0.9.4/StatGI_v0.9.4.part2"
+          "https://gitee.com/Cash553/stat-genshin-impact/releases/download/v0.9.5/StatGI_v0.9.5.part1",
+          "https://gitee.com/Cash553/stat-genshin-impact/releases/download/v0.9.5/StatGI_v0.9.5.part2"
         ]
       },
       {
         "label": "GitHub",
         "parts": [
-          "https://github.com/Cash-553/stat-genshin-impact/releases/download/v0.9.4/StatGI_v0.9.4.zip"
+          "https://github.com/Cash-553/stat-genshin-impact/releases/download/v0.9.5/StatGI_v0.9.5.zip"
         ]
       }
     ]

@@ -3,20 +3,11 @@
 
 从 qt_window.py 拆出来的（第 3 批，纯搬运）。"""
 
-import os
-import math
-from PySide6.QtCore import Qt, QRectF, QRect, QPoint, QTimer, Signal
-from PySide6.QtGui import QPainter, QPainterPath, QPixmap, QColor, QIcon
-from PySide6.QtWidgets import (QWidget, QFrame, QLabel, QPushButton, QVBoxLayout,
-                               QHBoxLayout, QStackedWidget, QMessageBox)
-import config_manager
-import paths
-from qt_pages import NOTICE_PAGE_INDEX, VERSION as _VERSION
-from qt_theme import (HEADER, RADIUS_WINDOW, panel_alpha, label_qss, rgba,
-                      btn_qss)
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QFrame, QLabel, QPushButton, QHBoxLayout
+from qt_theme import HEADER, RADIUS_WINDOW, label_qss, rgba
 import qt_theme as T
-from qt_icon import IconWidget, HoverHelper, attach_hover
-from qt_widgets import RedDot
+from qt_icon import IconWidget
 
 
 # ============================================================

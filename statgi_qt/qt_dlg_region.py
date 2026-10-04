@@ -6,20 +6,10 @@
 ⚠ `select_region()` 内部是 `while not sel._done:` 转事件 ——
    离屏测试**千万不要直接调它**，没人点会永久卡住。
    要测就自己造 `RegionSelector`。"""
-import os
 from PySide6.QtCore import Qt, QRect
-from PySide6.QtGui import QGuiApplication, QPainter, QColor, QPen, QPixmap
-from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
-                               QLabel, QPushButton, QFileDialog, QMessageBox,
-                               QWidget, QFrame, QListWidget, QListWidgetItem,
-                               QLineEdit, QCheckBox, QComboBox, QSlider,
-                               QPlainTextEdit, QScrollArea)
-import config_manager
-import paths
-from qt_theme import (TEXT, DIM, ACCENT, CARD, BG, BORDER, panel_alpha, label_qss,
-                      btn_qss, combo_qss, slider_qss)
-from qt_widgets import Card, set_btn_icon
-from qt_icon import IconWidget
+from PySide6.QtGui import QGuiApplication, QPainter, QColor, QPen
+from PySide6.QtWidgets import QWidget
+from qt_theme import ACCENT
 
 
 class RegionSelector(QWidget):

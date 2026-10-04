@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""两个跟「收益记录」有关的弹窗。
+"""两个跟「收益细则」有关的弹窗。
 
    RecordEditDialog   改一条记录的名称 / 备注
    NameListDialog     配黑 / 白名单（决定"认出来了要不要记账"）
@@ -9,20 +9,13 @@
 ⚠ NameListDialog 跟「管理识别名单」的分工：
    names_db       决定**能不能识别**（认不出来的名字进不来）
    NameListDialog 决定**认出来了要不要记账**"""
-import os
-from PySide6.QtCore import Qt, QRect
-from PySide6.QtGui import QGuiApplication, QPainter, QColor, QPen, QPixmap
-from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
-                               QLabel, QPushButton, QFileDialog, QMessageBox,
-                               QWidget, QFrame, QListWidget, QListWidgetItem,
-                               QLineEdit, QCheckBox, QComboBox, QSlider,
-                               QPlainTextEdit, QScrollArea)
-import config_manager
-import paths
-from qt_theme import (TEXT, DIM, ACCENT, CARD, BG, BORDER, panel_alpha, label_qss,
-                      btn_qss, combo_qss, slider_qss)
-from qt_widgets import Card, set_btn_icon
-from qt_icon import IconWidget
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QGuiApplication, QColor
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
+                               QPushButton, QWidget, QListWidget, QLineEdit,
+                               QPlainTextEdit)
+from qt_theme import TEXT, DIM, ACCENT, BG, BORDER, label_qss, btn_qss
+from qt_dlg_card import CardDialog
 
 
 class RecordEditDialog(QDialog):
@@ -111,27 +104,25 @@ class RecordEditDialog(QDialog):
                 self.notes_edit.toPlainText().strip())
 
 
-class StopSummaryDialog(QDialog):
+class StopSummaryDialog(CardDialog):
     """停止监测后的「本次小结」。
 
     只在**手动停止**时弹（退出程序不弹，见 qt_window._shutdown），
     也可以在设置里关掉（`stop_summary`）。
 
-    内容 = 刚写进「收益记录」的那条：时长 / 摩拉 / 狗粮 / 材料（总数 + 前几名）。
+    内容 = 刚写进「收益细则」的那条：时长 / 摩拉 / 狗粮 / 材料（总数 + 种类数）。
     「复制」按钮把同样的内容做成纯文字放进剪贴板，方便贴到群里。
+
+    2026-10-04 改版（用户要求）：换成卡片式（圆角 + 右上角 ✕ + 整宽按钮），
+    并且**列出几个选项让用户选接下来干什么**（查看收益记录 / 查看每日收益 /
+    继续监测 / 什么都不做）。选完由 `qt_window` 去执行 —— 弹窗自己不碰主窗口。
     """
 
     def __init__(self, parent, rec, alpha=150, title="本次监测小结"):
-        super().__init__(parent)
+        super().__init__(parent, alpha=alpha, title=title or "本次监测小结")
         self._title = title or "本次监测小结"
-        self.setWindowTitle(self._title)
-        self.setMinimumWidth(430)
         self.alpha = alpha
         self._rec = rec or {}
-        self.setStyleSheet(f"""
-            QDialog {{ background: {BG}; }}
-            QLabel {{ color: {TEXT}; background: transparent; }}
-        """)
 
         import svc_records
         rec = self._rec
@@ -141,19 +132,9 @@ class StopSummaryDialog(QDialog):
         mats = {str(k): int(v) for k, v in (rec.get("materials") or {}).items()}
         mat_total = sum(mats.values())
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(18, 14, 18, 16)
-        root.setSpacing(10)
+        self.set_subtitle(f"{rec.get('start', '')}　→　{rec.get('end', '')}")
 
-        title = QLabel(self._title)
-        title.setStyleSheet(label_qss(TEXT, 16, True))
-        root.addWidget(title)
-
-        sub = QLabel(f"{rec.get('start', '')}　→　{rec.get('end', '')}")
-        sub.setStyleSheet(label_qss(DIM, 12))
-        root.addWidget(sub)
-
-        # ---- 三行数字 ----
+        # ---- 四个数字（保留原来的排法）----
         grid = QGridLayout()
         grid.setHorizontalSpacing(14)
         grid.setVerticalSpacing(6)
@@ -169,7 +150,7 @@ class StopSummaryDialog(QDialog):
             grid.addWidget(a, i, 0)
             grid.addWidget(b, i, 1)
         grid.setColumnStretch(2, 1)
-        root.addLayout(grid)
+        self.add_layout(grid)
 
         # ---- 材料：**只显示总数**，不列具体是哪些东西 ----
         # 用户 2026-09-29 要求：挂机常常十几个小时，材料种类能上百，
@@ -178,25 +159,13 @@ class StopSummaryDialog(QDialog):
         if mats:
             kinds = QLabel(f"共 {len(mats)} 种材料")
             kinds.setStyleSheet(label_qss(DIM, 12))
-            root.addWidget(kinds)
+            self.add_widget(kinds)
 
-        root.addSpacing(4)
-        bottom = QHBoxLayout()
-        copy_btn = QPushButton("复制")
-        copy_btn.setFixedSize(84, 32)
-        copy_btn.setCursor(Qt.PointingHandCursor)
-        copy_btn.setStyleSheet(btn_qss("normal", self.alpha))
-        copy_btn.clicked.connect(self._copy)
-        bottom.addWidget(copy_btn)
-        bottom.addStretch(1)
-        ok = QPushButton("知道了")
-        ok.setFixedSize(96, 32)
-        ok.setCursor(Qt.PointingHandCursor)
-        ok.setStyleSheet(btn_qss("accent", self.alpha))
-        ok.clicked.connect(self.accept)
-        bottom.addWidget(ok)
-        root.addLayout(bottom)
-
+        # ---- 让用户选接下来干什么 → **已按用户要求去掉**（2026-10-04）
+        # 用户看过效果之后说：「共几种材料下面那四个选项删掉，保留确定」。
+        # 所以这里只剩「复制」+「确定」；想加回来就在 `_pre` / `_opts` 里加。
+        self.add_secondary("复制", self._copy)
+        self.add_confirm("确定")
         self._text = self._as_text()
 
     def _as_text(self):

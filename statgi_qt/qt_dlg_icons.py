@@ -6,18 +6,13 @@
 
 ⚠ `_auto_trim` 在原文里紧挨着 MaterialDialog，但它**只有这里的
    IconManagerDialog 在用**，所以跟着搬过来了。"""
-import os
-from PySide6.QtCore import Qt, QRect
-from PySide6.QtGui import QGuiApplication, QPainter, QColor, QPen, QPixmap
-from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
-                               QLabel, QPushButton, QFileDialog, QMessageBox,
-                               QWidget, QFrame, QListWidget, QListWidgetItem,
-                               QLineEdit, QCheckBox, QComboBox, QSlider,
-                               QPlainTextEdit, QScrollArea)
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QPixmap
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
+                               QPushButton, QFileDialog, QMessageBox, QFrame)
 import config_manager
 import paths
-from qt_theme import (TEXT, DIM, ACCENT, CARD, BG, BORDER, panel_alpha, label_qss,
-                      btn_qss, combo_qss, slider_qss)
+from qt_theme import TEXT, DIM, ACCENT, panel_alpha, label_qss, btn_qss
 from qt_widgets import Card, set_btn_icon
 from qt_icon import IconWidget
 from qt_dlg_region import select_region

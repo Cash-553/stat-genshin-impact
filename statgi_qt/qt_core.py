@@ -434,7 +434,7 @@ class AppState(QObject):
         self._sess_snapshot = (0, 0, {}, {})
 
     def _record_session(self):
-        """把这次监测的收益差值写进「收益记录」
+        """把这次监测的收益差值写进「收益细则」
 
         返回刚写进去的那条记录 dict（没写就返回 None）——
         窗口拿它弹「本次小结」（`session_ended` 信号）。

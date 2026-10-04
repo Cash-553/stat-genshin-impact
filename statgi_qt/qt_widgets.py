@@ -136,12 +136,38 @@ def set_btn_icon(button, icon, size=15, role="TEXT", color=None):
     return button
 
 
+def bind_cb(fn, *args):
+    """把回调包成"忽略 Qt 额外参数"的版本，并把参数**当场固定住**。
+
+    ⚠ **为什么要有它（2026-10-04 真踩过）**：
+      `QPushButton.clicked` 会给槽函数**塞一个 `checked`（False）参数**。
+      所以下面这种写法是**错的**：
+
+          small_button("狗粮", lambda k=key: self._pick(k))     # ← k 收到的是 False！
+
+      Qt 会先看你的回调能不能收一个参数；能收就把 checked 传进去，
+      把你的默认值顶掉。症状很迷惑：**点了有反应，再点别的就没反应了**
+      （因为每次都传同一个 False，判断"值变了没"永远为假）。
+
+      项目里的老写法是 `lambda _c=False, k=key: ...` —— 把 checked 放第一位
+      收掉。能用，但太容易写漏（已经漏了两处）。新代码请用这个包一层：
+
+          small_button("狗粮", bind_cb(self._pick, key))
+
+      零参数的 `lambda: ...` 也是安全的（Qt 塞不进去）。
+    """
+    return lambda *a, **kw: fn(*args)
+
+
 def small_button(text, callback=None, alpha=150, kind="normal", icon=None,
                  width=None, height=30):
     """小按钮（折叠区里的操作用）
 
     width 是**最小**宽度，不是固定宽度 —— 用 setFixedWidth 的话
     图标 + 四个汉字就会把最后一个字裁掉（"恢复默认" → "恢复默"）。
+
+    ⚠ 回调会被 Qt 塞一个 `checked` 参数 —— 传带默认参数的 lambda 会被顶掉，
+      详见 `bind_cb` 的说明。
     """
     b = QPushButton(text)
     b.setFixedHeight(height)

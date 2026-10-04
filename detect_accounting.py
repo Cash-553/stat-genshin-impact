@@ -28,10 +28,15 @@ class Accounting:
     - `settings` ：设置字典，只用来透传给识别日志（日志里要记当时的开关状态）
     """
 
+    # 「未登记」同名去重窗口（秒）：同一个词 60 秒内只记一条日志
+    _REJECT_DEDUPE_SECONDS = 60.0
+
     def __init__(self, stats, dataset=None, settings=None):
         self.stats = stats
         self.dataset = dataset
         self.settings = settings if settings is not None else {}
+        # 「未登记」去重表：name -> [上次记录时间, 之后又出现几次]
+        self._rejected = {}
 
     # ------------------------------------------------------------ 对外两个入口
     def record(self, ev, frame, source):
@@ -54,8 +59,24 @@ class Accounting:
         """识别到但不在名单里的 —— 只写日志，不统计、不登记。
 
         这样翻日志能看出"哪些名字被丢掉了"，需要的话再手动加进名单。
+
+        ⚠ **同名 60 秒内只记一条**（2026-10-04 加）。
+        为什么：用户关录屏那 20 秒里，录屏软件的浮层文字（麦克风/亮点/…）
+        被反复认到，**同 4 个词被记了 30 多条**，把识别日志和新的
+        「识别明细」界面全刷满了 —— 真正有用的信息反而看不见。
+        现在同一个名字 60 秒内只写第一条，等它下次再出现时，
+        把"期间又出现 N 次"写进来源列 —— 次数信息没丢，噪音没了。
         """
-        self._log("未登记", name, count, 0, raw, "不在名单里")
+        now = time.time()
+        st = self._rejected.get(name)
+        if st is not None and now - st[0] < self._REJECT_DEDUPE_SECONDS:
+            st[1] += 1                      # 攒着，不写日志
+            return
+        extra = ""
+        if st is not None and st[1]:
+            extra = f"（期间又出现 {st[1]} 次，已合并）"
+        self._rejected[name] = [now, 0]
+        self._log("未登记", name, count, 0, raw, "不在名单里" + extra)
 
     def log_dropped(self, kind, name, count, amount, raw, reason):
         """一笔**判定为误读、没有统计**的读数 —— 只写识别日志。
