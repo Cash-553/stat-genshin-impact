@@ -1,3 +1,23 @@
+_mod_datas = []
+try:
+    import pathlib as _pl
+    _mroot = _pl.Path(SPECPATH) / "statgi_qt" / "modules"
+    for _f in _mroot.rglob("*.py"):
+        _mod_datas.append((str(_f), str(_f.parent.relative_to(_mroot.parent))))
+    print(f"[模块数据] 打包 {len(_mod_datas)} 个模块 .py 文件")
+except Exception as _e:
+    print("[模块数据] 收集失败：", _e)
+
+_mod_datas = []
+try:
+    import pathlib as _pl
+    _mroot = _pl.Path(SPECPATH) / "statgi_qt" / "modules"
+    for _f in _mroot.rglob("*.py"):
+        _mod_datas.append((str(_f), str(_f.parent.relative_to(_mroot.parent))))
+    print(f"[模块数据] 打包 {len(_mod_datas)} 个模块 .py 文件")
+except Exception as _e:
+    print("[模块数据] 收集失败：", _e)
+
 # -*- mode: python ; coding: utf-8 -*-
 # StatGI 打包配置 —— 文件夹版（onedir）
 #
@@ -12,11 +32,16 @@ datas = [('icons', 'icons'), ('models', 'models'), ('app_icon.ico', '.'),
          # （这个路径同时也是仓库里给 raw 地址读的那份 —— 见 qt_notice.NOTICE_REL）
          ('发布版/公告/notice.json', '.')]
 binaries = []
-hiddenimports = []
+hiddenimports = ['qt_module_repo', 'qt_sticky', 'qt_checklist']  # 函数内 import，显式声明防漏
+
 
 # rapidocr 自带模型和 onnxruntime 的 dll，必须整包收
 tmp_ret = collect_all('rapidocr_onnxruntime')
 datas += tmp_ret[0]
+# 2026-10-13: 把模块的 .py 一起打包 —— 打包版磁盘上没有 .py 时，
+# "按路径找模块代码"就失败了（表现：探测 BGI/OBS 探不到）
+datas += _mod_datas
+
 binaries += tmp_ret[1]
 hiddenimports += tmp_ret[2]
 
@@ -93,7 +118,9 @@ _DROP_KEYWORDS = (
     'qt6quick', 'qt6qml',           # QML / Quick
     '_avif',                        # AVIF 图片插件
     'qt6pdf',                       # PDF
-    'qt6network', 'qtnetwork',      # Qt 的网络模块
+    # 2026-10-13: 这里原来把 qt6network 也删了 —— 但单实例「再次双击图标
+    # 呼出主窗口」用的是 QLocalServer（属于 QtNetwork），删了那段就静默失效。
+    # 所以**不再删** QtNetwork。
 )
 _DROP_IMAGE_PLUGINS = ('qtiff', 'qicns', 'qgif', 'qsvg', 'qpdf')
 

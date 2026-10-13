@@ -30,7 +30,7 @@ from qt_daily_chart import DailyBarChart
 from qt_widgets import (Card, SettingRow, SubRow, Accordion,
                         heading, right_wrap, make_combo,
                         set_btn_icon, small_button, bind_cb,
-                        IconButton, RedDot, msg_info)
+                        IconBox, IconButton, RedDot, msg_info)
 from qt_icon import IconWidget, attach_hover
 
 # 版本号住在 app_info（叶子模块）里 —— 这样 qt_update 读版本时不必反向
@@ -1954,10 +1954,114 @@ class PageNotice(BasePage):
         # 切到本页时重新读一次（可能后台刚拉到新的）
         self.set_notices(qt_notice.load_all())
 
+class PageAutostart(BasePage):
+    """定时启动：到点自动拉起外部程序（默认 BetterGI）+ 自动开始/停止监测。
+
+    内容就是 `qt_settings_tabs.AutostartTab`（那个类单独测试过 68 条断言），
+    这里只负责"把它变成一个独立页面"：
+
+        · 用户 2026-10-12：**放到左侧栏当独立页面**，不要塞在设置里
+        · 顺便**限制卡片宽度** —— 原来铺满整个窗口，用户反馈"卡片太宽了"
+
+    侧栏想显示在第几个跟页面栈没关系，见 `qt_window._nav_to_page`。
+    """
+
+    title = "定时启动"
+
+    def __init__(self, win):
+        super().__init__(win)
+        # 跟设置页用同一个窄入口（读设置 / 写设置 / 推给正在跑的识别器）
+        self.cfg = svc_settings.Settings(win.state)
+
+        # ---------- 顶部警告：不是管理员 ----------
+        # 用户 2026-10-12 要求：没以管理员身份启动时，最上方要有个警告，
+        # 明说"无法创建/修改"定时任务。建/删任务确实要管理员（schtasks）。
+        self.warn_card = Card(self, alpha=self.alpha)
+        wl = QHBoxLayout(self.warn_card)
+        wl.setContentsMargins(14, 10, 14, 10)
+        wl.setSpacing(10)
+        self._warn_icon = IconBox("x", icon_color="#E06C5A")
+        wl.addWidget(self._warn_icon)
+        self.warn_label = QLabel("")
+        self.warn_label.setWordWrap(True)
+        self.warn_label.setStyleSheet(label_qss("#E06C5A", 12))
+        wl.addWidget(self.warn_label, 1)
+        # ③ 2026-10-13：提示卡片原来比下面的卡片宽一截（下面那排卡片在滚动区
+        #   里，右边被滚动条占了）→ 给提示也留出同样的右边距，宽度就对上了。
+        # ③ 2026-10-13：提示卡片比下面的卡片宽 10 来像素（下面那排卡片在滚动区
+        #   里，右边被滚动条占掉）→ 用右侧留白对齐（QSS 的 margin 不顶用 ✗）
+        self._wrap_warn = QWidget()
+        self._wlay = QHBoxLayout(self._wrap_warn)
+        # 左 5px = 卡片自己离视口的左内边距；右 5px + 10px = 卡片右边距 + 滚动条宽
+        # 量过：选项卡片 806，之前提示卡片 816（宽 10px ✗）
+        # 左 0：跟选项卡片对齐左边缘；右边 10+10 = 卡片右边距 + 滚动条宽
+        self._wlay.setContentsMargins(0, 0, 10, 0)
+        self._wlay.setSpacing(0)
+        self._wlay.addWidget(self.warn_card, 1)
+        self._wlay.addSpacing(10)
+        self.add(self._wrap_warn)
+
+        # ⚠ **必须套滚动区**：每行设置卡片是 `setFixedHeight(70)`，
+        #   窗口一缩小、容器装不下时 QVBoxLayout 会把这些固定高度的卡片
+        #   压到互相重叠（用户截图反馈"窗口又全叠一起了"就是这个）。
+        #   设置页的标签都套了 QScrollArea，这里照做 —— 装不下就滚动，不叠。
+        sc = QScrollArea()
+        sc.setWidgetResizable(True)
+        sc.setFrameShape(QFrame.NoFrame)
+        sc.setStyleSheet(scroll_qss())
+        sc.viewport().setAutoFillBackground(False)
+        self.scroll_area = sc   # 给"滚动置顶"用（别叫 scroll：跟 Qt 自带方法撞名）
+
+        holder = QWidget()
+        holder.setStyleSheet("background: transparent;")
+        hl = QHBoxLayout(holder)
+        hl.setContentsMargins(0, 0, 0, 0)
+        hl.setSpacing(0)
+        self.tab = qt_settings_tabs.AutostartTab(holder, self.cfg,
+                                                 self.alpha, win)
+        # 卡片宽度**跟设置页一致**：不加宽度上限、让它撑满内容区。
+        # （用户 2026-10-12：限到 700 之后比设置页窄一截，右边空了一条。
+        #   之前"太宽"的感觉来自它在设置标签页里那版，跟这里是两回事。）
+        self.tab.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        hl.addWidget(self.tab, 1)
+        sc.setWidget(holder)
+        self.add(sc, 1)
+        self._refresh_warn()
+        try:
+            self.tab.setup_sticky_cards(sc)
+        except Exception:
+            pass
+
+
+    def _refresh_warn(self):
+        """顶部警告只在**不是管理员**时显示"""
+        try:
+            import svc_autostart as A
+            admin = A.is_admin()
+        except Exception:
+            admin = True
+        if admin:
+            self.warn_card.setVisible(False)
+            return
+        self.warn_label.setText(
+            "未以管理员身份运行：无法创建或修改定时任务。"
+            "保存时会请求一次 UAC 授权；也可关闭本程序后，"
+            "右键 StatGI →「以管理员身份运行」。")
+        self.warn_card.setVisible(True)
+
+    def on_show(self):
+        """切到本页时刷一次状态（任务可能被别的程序改过）"""
+        self._refresh_warn()
+        try:
+            self.tab._refresh_state()
+        except Exception:
+            pass
+
+
 # ============================================================
 def build_pages(win):
     """页面栈的顺序（**代码里的顺序**）：
-       0 启动  1 收益统计条  2 收益细则  3 设置  4 公告  5 收益记录
+       0 启动  1 收益统计条  2 收益细则  3 设置  4 公告  5 收益记录  6 定时启动
 
     ⚠ **新页一律追加在末尾**，别插进中间 —— 0~4 这几个下标被一堆测试和
       渲染脚本写死引用了（`_morph` 里 15 个文件），插一页它们全指错页。
@@ -1965,7 +2069,7 @@ def build_pages(win):
     """
     return [PageLaunch(win), PageBar(win),
             PageRecords(win), PageSettings(win), PageNotice(win),
-            PageDaily(win)]
+            PageDaily(win), PageAutostart(win)]
 
 
 # 页面在栈里的下标（**追加新页时只动这里**，别写死数字）
@@ -1975,4 +2079,5 @@ RECORDS_PAGE_INDEX = 2     # 收益记录
 SETTINGS_PAGE_INDEX = 3    # 设置（标题栏那个「设置」齿轮要用）
 NOTICE_PAGE_INDEX = 4      # 公告（侧栏下面那个单独入口）
 DAILY_PAGE_INDEX = 5       # 每日收益（侧栏映射表要用）
+AUTOSTART_PAGE_INDEX = 6   # 定时启动（侧栏映射表要用）
 

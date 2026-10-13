@@ -10,9 +10,11 @@
   · 数据变了只发 stats_changed，页面自己去比"哪个数字不一样"，
     只改那一个标签；列表按名字增量更新，不重建控件
 """
+import os
 import queue
 import threading
 import time
+from datetime import datetime, timedelta
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
@@ -27,6 +29,47 @@ BAD = "#E06C5A"
 DIM = "#9A9A9A"
 
 ICONS_DIR = paths.icons_dir()
+
+
+
+def _bgi_log_tail(settings, n=20000):
+    """读 BGI 日志最后 n 行（拿不到就返回空）。
+
+    n 默认 20000：一组可能跑好几个小时、日志几万行，只看尾巴几百行会漏掉
+    「开始连续执行选中配置组」那一行 ✗
+    """
+    try:
+        import svc_autostart as _A
+        from pathlib import Path as _P
+        _p = _A.latest_bgi_log((settings or {}).get("bgi_dir") or "",
+                               (settings or {}).get("bgi_exe") or "")
+        if not _p:
+            return []
+        return _P(_p).read_text(encoding="utf-8", errors="replace").splitlines()[-n:]
+    except Exception:
+        return []
+
+
+def _bgi_group_started(settings, name):
+    """BGI 日志里有「开始连续执行选中配置组:"name"」→ 这一组刚开始跑"""
+    if not name:
+        return False
+    try:
+        return any("开始连续执行选中配置组" in l and name in l
+                   for l in _bgi_log_tail(settings))
+    except Exception:
+        return False
+
+
+def _bgi_group_ended(settings, name):
+    """BGI 日志里有「配置组 "name" 执行结束」→ 这一组跑完了"""
+    if not name:
+        return False
+    try:
+        return any("配置组" in l and "执行结束" in l and name in l
+                   for l in _bgi_log_tail(settings))
+    except Exception:
+        return False
 
 
 class AppState(QObject):
@@ -68,6 +111,15 @@ class AppState(QObject):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
         self._timer.start(200)
+
+        # ---- 定时启动的"到点自动开始/停止监测"（每 30 秒看一次）----
+        # ⚠ 这里只做两件事：看时间到没到、看目标程序还在不在。
+        #   **建/删 Windows 任务计划**那部分在 `svc_autostart`，由设置页触发。
+        self._auto_last_day = None      # 今天已经自动开始过了？（避免反复重启）
+        self._auto_miss = 0             # 连续几次没看到目标程序
+        self._auto_timer = QTimer(self)
+        self._auto_timer.timeout.connect(self._auto_check)
+        self._auto_timer.start(30_000)
 
     # ================= 数据 =================
     def snapshot(self):
@@ -140,6 +192,78 @@ class AppState(QObject):
         """要强制界面按最新数据刷一次（比如刚切到某页）"""
         self._last = None
         self._tick()
+
+    # ================= 定时启动（自动开始 / 停止监测）=================
+    # 做两件事（都只看设置，不改设置）：
+    #   ① 到点（设置里的时间 + 星期几 + 排除日期）且还没在监测 → 自动 start()
+    #   ② 在监测中、且"目标程序退出后自动停止"开着 → 连续几次看不到目标程序
+    #      就认为它跑完了 → stop()（会写记录、按设置弹本次小结）
+    #
+    # ⚠ 为什么不做成"到点才启动 StatGI 自己"：那要靠任务计划再拉一次本程序，
+    #   属于用户自己的选择（设置页里写了怎么加）。这里管的是"程序已经在跑"时
+    #   的自动开工/收工。
+    def _auto_check(self):
+        try:
+            import svc_autostart as A
+            c = A.cfg(self.settings)
+            if not c.get("enabled"):
+                self._auto_miss = 0
+                return
+
+            # ---- ①' 2026-10-13：**启动指定配置组时**自动开始监测 ----
+            # （用户要求：把"到点自动开始"改成按配置组；连续执行那边勾的那个组
+            #   一开始跑，这边就开始监测）
+            if (c.get("auto_monitor_group") and not self.monitoring
+                    and not getattr(self, "paused", False)
+                    and _bgi_group_started(c, c.get("auto_monitor_group"))):
+                self.status_changed.emit(
+                    "定时启动：配置组「" + str(c.get("auto_monitor_group"))
+                    + "」开始 → 自动开始监测", GOOD)
+                self.start()
+
+            # ---- ① 到点自动开始 ----
+            if c.get("auto_monitor") and not self.monitoring \
+                    and not getattr(self, "paused", False):
+                hhmm = A.parse_time(c.get("time"))
+                if hhmm and A.runs_today(c):
+                    now = datetime.now()
+                    due = now.replace(hour=hhmm[0], minute=hhmm[1],
+                                      second=0, microsecond=0)
+                    today = now.date().isoformat()
+                    # 到点后 30 分钟内都算"该开工了"（睡醒晚了也能赶上）
+                    if due <= now <= due + timedelta(minutes=30) \
+                            and self._auto_last_day != today:
+                        self._auto_last_day = today
+                        self.status_changed.emit(
+                            f"定时启动：到点（{c.get('time')}），自动开始监测", GOOD)
+                        self.start()
+
+            # ---- ②' 2026-10-13：**指定配置组结束后**停止监测 ----
+            # 依据是 BGI 日志里的「配置组 "X" 执行结束」（真实日志确认过）。
+            # stop() 之后 self.monitoring 变 False → 自然只触发一次 ✓
+            if (self.monitoring and c.get("stop_after_group")
+                    and _bgi_group_ended(c, c.get("stop_after_group"))):
+                self.status_changed.emit(
+                    "定时启动：配置组「" + str(c.get("stop_after_group"))
+                    + "」执行结束 → 自动停止监测", BAD)
+                self.stop()
+
+            # ---- ② 目标程序退出后自动停止 ----
+            if self.monitoring and c.get("auto_stop"):
+                exe = os.path.basename(str(c.get("bgi_exe") or "")) or "BetterGI.exe"
+                if A.bgi_running(exe):
+                    self._auto_miss = 0
+                else:
+                    self._auto_miss += 1
+                    # 30 秒一次，连续 4 次 ≈ 2 分钟 —— 给"重启换任务"留出余量
+                    if self._auto_miss >= 4:
+                        self._auto_miss = 0
+                        self.status_changed.emit(
+                            f"定时启动：{exe} 已退出，自动停止监测", BAD)
+                        self.stop()
+        except Exception:
+            # 这个功能坏了不能影响识别/统计
+            pass
 
     # ================= 设置 =================
     def set_setting(self, path, value):

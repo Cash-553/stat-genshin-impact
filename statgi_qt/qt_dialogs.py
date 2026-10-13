@@ -23,3 +23,7 @@ from qt_dlg_region import RegionSelector, select_region
 from qt_dlg_record import NameListDialog, RecordEditDialog, StopSummaryDialog
 # 2026-10-04 新增：卡片式弹窗基类 + 退出确认窗
 from qt_dlg_card import CardDialog, ExitDialog
+# 2026-10-04 新增：精确模式（外部数据源模块）管理窗
+from qt_dlg_precise import PreciseModeDialog  # noqa: F401
+# 2026-10-12 新增：日历选择弹窗（定时启动里挑「跳过日期」用）
+from qt_dlg_calendar import CalendarDialog  # noqa: F401

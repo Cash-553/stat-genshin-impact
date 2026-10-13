@@ -112,3 +112,15 @@ statgi_qt/说明.txt
 # 一次性生成脚本 / 根目录测试文件（跑程序不需要，2026-09-23 撤出）
 _tools_build_names.py
 test_event_lifecycle.py
+
+# 2026-10-13 不该进仓库的
+statgi_qt/_disabled_modules/
+_morph/_shot_*.png
+_morph/_tmp_smoke/
+_morph/_gallery*
+**/__pycache__/
+日志/
+自检.txt
+直播间美化_旧.html
+_tools_*.py
+irminsul_realtime_proposal/

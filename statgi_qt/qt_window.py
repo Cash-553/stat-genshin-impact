@@ -18,7 +18,8 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget
 import config_manager
 import paths
 from qt_pages import (NOTICE_PAGE_INDEX, SETTINGS_PAGE_INDEX, DAILY_PAGE_INDEX,
-                      RECORDS_PAGE_INDEX, LAUNCH_PAGE_INDEX, BAR_PAGE_INDEX)
+                      RECORDS_PAGE_INDEX, LAUNCH_PAGE_INDEX, BAR_PAGE_INDEX,
+                      AUTOSTART_PAGE_INDEX)
 from qt_theme import RADIUS_WINDOW, panel_alpha, label_qss, rgba
 import qt_theme as T
 from qt_bg import _cover, load_background
@@ -591,6 +592,7 @@ class MainWindow(QWidget):
         # 下标是 `build_pages` 的返回顺序。
         self._nav_to_page = [LAUNCH_PAGE_INDEX, BAR_PAGE_INDEX,
                              RECORDS_PAGE_INDEX, DAILY_PAGE_INDEX,
+                             AUTOSTART_PAGE_INDEX,
                              SETTINGS_PAGE_INDEX]
         self._page_to_nav = {p: n for n, p in enumerate(self._nav_to_page)}
 
@@ -600,6 +602,8 @@ class MainWindow(QWidget):
             # 折叠区里（点开就看到时间/摩拉/材料/狗粮四个数）。
             [("rocket", "启动"), ("chart-column", "收益统计条"),
              ("clipboard-list", "收益细则"), ("chart-bar", "收益记录"),
+             # 2026-10-12：定时启动从设置里搬出来，独立一页（用户要求）
+             ("clock", "定时启动"),
              ("settings", "设置")],
             self._on_nav)
         body.addWidget(self.sidebar)

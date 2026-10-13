@@ -16,5 +16,5 @@
         qt_pages   →  qt_update     （单向）
 """
 
-VERSION = "0.9.5"
+VERSION = "0.9.6"
 APP_NAME = "StatGI"

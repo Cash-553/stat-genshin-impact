@@ -109,7 +109,7 @@ def tick_interval(settings):
         return 0.1
 
 
-def run_detector(det, stop_ev, settings, out_queue):
+def run_detector(det, stop_ev, settings, out_queue, event_source=None):
     """跑识别循环，直到 `stop_ev` 被设。**这是后台线程的主体。**
 
     原样搬自 AppState._detect_loop 的循环体，语义一条没改：
@@ -122,6 +122,11 @@ def run_detector(det, stop_ev, settings, out_queue):
 
     `out_queue` 里塞三种消息（塞不进去就忽略，跟原来一样）：
         ("event", (时间戳, 描述))   ("error", 说明)   ("status", 说明)
+
+    **精确模式（2026-10-04 加）**：
+        开了 `settings["precise_mode"]` 且外部模块心跳新鲜时，**OCR 整条停掉**
+        （不截图、不预处理、不跑模型），改喂模块事件；模块掉线 30 秒自动回退 OCR。
+        判断与喂数据都在**本线程**里做 —— `DailyStats` 没有锁，跨线程写会撞车。
 
     **返回值**：
         "stop"    用户点了停止（或 stop_ev 被设）—— 正常结束
@@ -136,11 +141,63 @@ def run_detector(det, stop_ev, settings, out_queue):
     err_streak = 0
     err_since = None          # 这一串错误是从什么时候开始的
     why = "stop"
+
+    # ---- 精确模式：外部模块事件源（没装/没开就是 None，行为跟以前一模一样）----
+    ext = event_source
+    if ext is None:
+        ext = _make_event_source(settings)
+    paused = False            # 当前是不是"OCR 已停、模块在供数"
+
     # ⚠ `close()` 必须在 finally 里 —— 原代码就是 try/finally。
     #   写成"循环后面的普通语句"的话，中途抛异常（比如 det.last_event 炸了）
     #   就会跳过 close，句柄泄漏。线程交界处别省这一层。
     try:
         while stop_ev is not None and not stop_ev.is_set():
+            # ============ 精确模式：模块在线 → OCR 停掉，只喂模块事件 ============
+            # 开关是**每轮现读**的：用户刚在设置里打开/关掉不用重启监测就生效
+            try:
+                if settings.get("precise_mode", False):
+                    if ext is None:
+                        ext = _make_event_source(settings)
+                    elif not ext.enabled:
+                        ext.enabled = True
+                elif ext is not None and ext.enabled:
+                    ext.enabled = False
+                    if paused:
+                        paused = False
+                        _precise_log(settings, "精确模式已关闭，已恢复 OCR")
+                        _queue_put(out_queue, ("status", "精确模式已关闭，已恢复识别"))
+            except Exception:
+                pass
+
+            if ext is not None and ext.enabled:
+                if ext.online():
+                    if not paused:
+                        paused = True
+                        _precise_log(settings, "精确模式已接管，OCR 暂停")
+                        _queue_put(out_queue, ("status", "精确模式（模块）正在供数"))
+                    try:
+                        n = _pump_external(ext, det)
+                    except Exception:
+                        n = 0
+                        _precise_exc()
+                    ev = det.last_event
+                    if ev is not None and ev[0] != last_ts:
+                        last_ts = ev[0]
+                        _queue_put(out_queue, ("event", ev))
+                    stop_ev.wait(_precise_poll_seconds())
+                    continue
+                if paused:
+                    # 心跳过期 = 模块掉线/被关：自动回退 OCR，用户不该感觉到差别
+                    paused = False
+                    _precise_log(settings, "精确模式掉线，已回退 OCR")
+                    _queue_put(out_queue, ("status", "精确模式掉线，已回退识别"))
+            elif paused:
+                # 开关关了 / 事件源没了 —— 也要把状态提示回退掉
+                paused = False
+                _precise_log(settings, "精确模式退出，已回退 OCR")
+                _queue_put(out_queue, ("status", "精确模式退出，已回退识别"))
+
             try:
                 det.tick()
                 err_streak = 0
@@ -199,6 +256,78 @@ def run_detector(det, stop_ev, settings, out_queue):
         except Exception:
             pass
     return why
+
+
+# ============================================================ 精确模式
+def _make_event_source(settings):
+    """按设置造一个事件源；没开精确模式返回 None（调用方照旧跑 OCR）。
+
+    ⚠ 失败一律返回 None —— 这个功能坏了不能让识别整个起不来。
+    """
+    try:
+        if not settings.get("precise_mode", False):
+            return None
+        import svc_module
+        return svc_module.EventSource(enabled=True)
+    except Exception:
+        return None
+
+
+def _precise_poll_seconds():
+    try:
+        import svc_module
+        value = svc_module.POLL_SECONDS
+        return value
+    except Exception:
+        return 0.5
+
+
+def _queue_put(out_queue, msg):
+    try:
+        out_queue.put(msg)
+    except Exception:
+        pass
+
+
+def _precise_log(settings, text):
+    """把"暂停/恢复"写进识别日志 + 错误日志（事后能查某段数据是谁记的）"""
+    try:
+        import detect_log
+        detect_log.log_event("系统", "", 1, 0, "", text, settings)
+    except Exception:
+        pass
+    try:
+        import errlog
+        errlog.log_msg("精确模式", text)
+    except Exception:
+        pass
+
+
+def _precise_exc():
+    try:
+        import errlog
+        errlog.log_exc("精确模式喂数据")
+    except Exception:
+        pass
+
+
+def _pump_external(ext, det):
+    """把模块事件喂给 Detector（**必须在本线程调用**）。
+
+    事件**不在这里做名单校验** —— 交给 `det.apply_external()`，
+    它走的是和 OCR 完全相同的规则链（名单 / 纠错 / 黑白名单 / 未登记日志）。
+    返回真正记进去的笔数。
+    """
+    events, _reason = ext.read_new()
+    n = 0
+    for e in events:
+        try:
+            if det.apply_external(e.get("name", ""), e.get("count", 1),
+                                  e.get("kind", ""), source="精确模式"):
+                n += 1
+        except Exception:
+            _precise_exc()
+    return n
 
 
 def apply_live_settings(det, settings):

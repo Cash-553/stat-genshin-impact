@@ -381,6 +381,12 @@ class SettingRow(Card):
     def __init__(self, parent=None, icon="", title="", desc="", right=None,
                  alpha=150, height=70, icon_color=None, tip=""):
         super().__init__(parent, alpha=alpha)
+        # ⚠ 2026-10-13：卡片被"文字长度"撑宽过三次。原因是 QLabel 的
+        #   minimumSizeHint = 整段文字的宽度 → 说明一长，整行的最小宽度就跟着长，
+        #   窗口/DIP 一放大就超出视口，页面出现横向滚动条。
+        #   把说明和标题设成"水平方向忽略 sizeHint"（Ignored）→ 允许被压缩，
+        #   窄的时候文字会被裁掉一点，但**卡片宽度永远由窗口决定**，这才是我们要的。
+        from PySide6.QtWidgets import QSizePolicy as _SP
         if height:                       # height=None → 高度跟着内容走
             self.setFixedHeight(height)
         # 鼠标悬停显示更详细的说明。设在卡片上就够了 ——
@@ -400,8 +406,18 @@ class SettingRow(Card):
         mid = QVBoxLayout()
         mid.setSpacing(2)
         self.title_label = QLabel(title)
+        try:
+            self.title_label.setSizePolicy(_SP.Preferred, _SP.Preferred)
+            self.title_label.setMinimumWidth(0)
+        except Exception:
+            pass
         self.title_label.setStyleSheet(label_qss(T.TEXT, 15, True))
         self.desc_label = QLabel(desc)
+        try:
+            self.desc_label.setSizePolicy(_SP.Ignored, _SP.Preferred)
+            self.desc_label.setMinimumWidth(0)
+        except Exception:
+            pass
         self.desc_label.setStyleSheet(label_qss(T.DIM, 12))
         mid.addWidget(self.title_label)
         mid.addWidget(self.desc_label)

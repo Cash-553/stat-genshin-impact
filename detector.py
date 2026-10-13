@@ -711,12 +711,14 @@ class Detector:
             pass
         return added
 
-    def _apply_event(self, ev, frame, score=0.0, use_tracker=True):
+    def _apply_event(self, ev, frame, score=0.0, use_tracker=True, source=None):
         """
         把解析出的事件写入统计。返回是否统计到了新收益。
         use_tracker=True：走时间窗口去重（手动区域识别用）
         use_tracker=False：由调用方（seen 状态机）保证"新出现才统计"，
                            用于同类连续拾取（间隔可能小于去重窗口，不能用 tracker）
+        source=None：识别日志「来源」那栏的写法；None = 按调用方式自动取
+                     （区域扫描 / 行队列）。外部数据源会传"精确模式"。
 
         ⚠ 第 11 批（6.1 + 6.2）之后这个方法**只管"是不是新事件"**：
           记账 / 识别日志 / 训练样本都交给 `self.ledger`（`detect_accounting.Accounting`）。
@@ -724,24 +726,86 @@ class Detector:
           抽的时候行为一个字没改 —— 有 `_morph\\test_detector_apply.py`
           （29 条断言）盯着。
         """
+        src = source or self._record_source(use_tracker)
         added = False
         if ev["type"] == "mora":
             if not use_tracker or self.tracker.is_new_event("mora"):
-                self.last_event = self.ledger.record(
-                    ev, frame, self._record_source(use_tracker))
+                self.last_event = self.ledger.record(ev, frame, src)
                 added = True
         elif ev["type"] == "material":
             key = "material:" + ev["name"]
             if not use_tracker or self.tracker.is_new_event(key):
-                self.last_event = self.ledger.record(
-                    ev, frame, self._record_source(use_tracker))
+                self.last_event = self.ledger.record(ev, frame, src)
                 added = True
         elif ev["type"] == "artifact":
             if not use_tracker or self.tracker.is_new_event("artifact"):
-                self.last_event = self.ledger.record(
-                    ev, frame, self._record_source(use_tracker))
+                self.last_event = self.ledger.record(ev, frame, src)
                 added = True
         return added
+
+    # ------------------------------------------------------------ 外部数据源
+    def apply_external(self, name, count=1, kind="", source="精确模式"):
+        """外部模块（精确模式）喂进来的一笔收益 → 走**和 OCR 同一条**规则链。
+
+        为什么借用文本解析而不是自己写校验：
+            名单判定、名单纠错（`_fuzzy_match`）、黑白名单、`enable_*` 开关、
+            「未登记」日志 —— 这些规则全项目只有一份。复制一份出来迟早会走偏
+            （哪天名单格式改了，外部那条忘了跟着改，就成了"同一件事两套判定"）。
+
+        与 OCR 的差别只有一处：
+            摩拉**不套「单次读数上限」**。那条闸是防 OCR 把伤害数字读成摩拉的，
+            模块给的是准数，不该被它拦掉。
+
+        `kind` 取 `mora` / `artifact` / `material`（空 = 材料）。
+        返回 True 表示确实记了一笔。
+        """
+        kind = str(kind or "").strip().lower()
+        name = str(name or "").strip()
+        try:
+            count = int(count)
+        except Exception:
+            return False
+        if count < 1:
+            return False
+
+        # ---- 摩拉：直接记（不套 OCR 的读数上限）----
+        if kind == "mora" or name == "摩拉":
+            if not self.settings.get("enable_mora", True):
+                return False
+            ev = {"type": "mora", "key": "mora", "amount": count,
+                  "raw": f"[{source}] 摩拉×{count}"}
+            self.last_event = self.ledger.record(ev, None, source)
+            return True
+
+        # ---- 材料：拼成和 OCR 一样的文本行，走完整校验 ----
+        if kind != "artifact":
+            if not name:
+                return False
+            text = f"{name}×{count}" if count > 1 else name
+            ev = self._parse_text_event(text)
+            if ev is None:
+                return False
+            ev["raw"] = f"[{source}] {ev.get('raw', text)}"
+            self.last_event = self.ledger.record(ev, None, source)
+            return True
+
+        # ---- 狗粮：先按名字走文本链（认得出就是正常一笔）----
+        if not self.settings.get("enable_artifact", True):
+            return False
+        done = False
+        for _ in range(count):
+            ev = self._parse_text_event(name) if name else None
+            if ev is None:
+                # 模块明确声明是狗粮但名字认不出来 —— 按声明记，
+                # 但仍然要过黑白名单（不然外部源就成了绕过名单的后门）
+                if name and not self._filter_allows("artifact", name):
+                    break
+                ev = {"type": "artifact", "key": "artifact", "count": 1,
+                      "raw": f"[{source}] {name or '狗粮'}"}
+            ev["raw"] = f"[{source}] {ev.get('raw', name)}"
+            self.last_event = self.ledger.record(ev, None, source)
+            done = True
+        return done
 
     @staticmethod
     def _record_source(use_tracker):

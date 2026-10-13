@@ -7,6 +7,7 @@
 import json
 from pathlib import Path
 import paths
+import os
 
 # 项目根目录（打包成 EXE 后自动变成 EXE 所在文件夹）
 BASE_DIR = paths.app_dir()
@@ -71,6 +72,14 @@ DEFAULT_SETTINGS = {
     "ui_scale": 1.0,
     # 停止监测时弹一个"本次小结"（时长 + 摩拉 / 材料 / 狗粮）
     "stop_summary": True,
+    # ---- 精确模式（外部数据源模块）----
+    # 开了之后：装了模块且模块心跳新鲜时，**OCR 整条停掉**，改喂模块事件；
+    # 模块掉线 30 秒自动回退 OCR。默认关。
+    # ⚠ 主程序**不注入、不读游戏内存** —— 模块是用户自己另外下载的独立进程，
+    #   风险由使用者自担（见 _morph\外部数据源模块_设计.md）。
+    "precise_mode": False,
+    # 模块没覆盖到的类别用 OCR 兜底（默认关 = 完全按"模块在线就停 OCR"的口径）
+    "precise_fallback_ocr": False,
     # 桌面悬浮窗（统计条）：图标 + 开关 + 位置。
     # 外观样式（大小/圆角/底色/描边/颜色…）在 data/bar_items.json，见 bar_items.py
     "stat_bar": {
@@ -123,7 +132,26 @@ def load_settings():
 
 
 def save_settings(settings):
-    """保存设置到 config/settings.json"""
+    """保存设置到 config/settings.json
+
+    ★ 2026-10-13 加的**测试硬闸**：`smoke_env` 会设环境变量
+      `STATGI_SMOKE_TMP`；只要这个变量在，就往死里拦 —— 发现要写真实路径
+      直接拒绝并报出来。
+
+    为什么加：这天连着两次发现**调试/测试脚本把 autostart 状态写进了
+    用户的真配置**（都是我自己的渲染脚本干的）。路径打桩 + 退出兜底还不够，
+    这里再加一道"物理拦截"，让这种事**不可能**发生。
+    """
+    guard = os.environ.get("STATGI_SMOKE_TMP")
+    if guard:
+        try:
+            target = str(Path(SETTINGS_FILE).resolve()).lower()
+            root = str(Path(guard).resolve()).lower()
+        except Exception:
+            target = root = ""
+        if target and root and not target.startswith(root):
+            print(f"⚠ [测试硬闸] 拒绝把设置写进真实路径：{target}", flush=True)
+            return False
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     SETTINGS_FILE.write_text(
         json.dumps(settings, ensure_ascii=False, indent=2),
