@@ -1,11 +1,11 @@
 {
-  "version": "0.9.5",
-  "notes": "· 识别优化，优化文字识别前的图像处理\n· 新增「收益记录」页\n· 原「收益记录」列表页更名为「收益细则」\n· 重做小部分UI",
+  "version": "0.9.6",
+  "notes": "· 新增「定时启动」：可以快捷创建每日自动任务\n（「定时启动」为实验功能，有任何问题欢迎反馈）\n· 修复关机、注销、被强制结束进程时丢失收益记录的问题",
   "url_github": "https://github.com/Cash-553/stat-genshin-impact/releases",
   "url_gitee": "https://gitee.com/Cash553/stat-genshin-impact/releases",
   "update": {
-    "size": 126546361,
-    "sha256": "493765566d46a42daf9370b945dec200b0dc1734e5ec26d440bd85e22b9e774d",
+    "size": 124493652,
+    "sha256": "40e9574ff04cbe352789bb72eb337216337d7bf57530fe573877d953ae9d56d5",
     "sources": [
       {
         "label": "Gitee（国内快）",
