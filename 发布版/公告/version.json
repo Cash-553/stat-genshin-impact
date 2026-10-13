@@ -10,14 +10,14 @@
       {
         "label": "Gitee（国内快）",
         "parts": [
-          "https://gitee.com/Cash553/stat-genshin-impact/releases/download/v0.9.5/StatGI_v0.9.5.part1",
-          "https://gitee.com/Cash553/stat-genshin-impact/releases/download/v0.9.5/StatGI_v0.9.5.part2"
+          "https://gitee.com/Cash553/stat-genshin-impact/releases/download/v0.9.6/StatGI_v0.9.6.part1",
+          "https://gitee.com/Cash553/stat-genshin-impact/releases/download/v0.9.6/StatGI_v0.9.6.part2"
         ]
       },
       {
         "label": "GitHub",
         "parts": [
-          "https://github.com/Cash-553/stat-genshin-impact/releases/download/v0.9.5/StatGI_v0.9.5.zip"
+          "https://github.com/Cash-553/stat-genshin-impact/releases/download/v0.9.6/StatGI_v0.9.6.zip"
         ]
       }
     ]
