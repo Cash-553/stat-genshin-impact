@@ -1090,15 +1090,48 @@ class UpgradeTab(SettingsTab):
                 pass
 
     def _on_go_update(self):
-        """卡片上那个「立即更新」"""
+        """卡片上那个「立即更新」
+
+        ⚠ 2026-10-13 修：以前这里调 _do_auto_update 时，那个函数内部引用了
+          本函数的局部变量 info → NameError → 窗口模式下看不到报错 →
+          「按钮点了没反应」（0.9.5 就是这样，用户反馈"跟摆设一样"）。
+          现在：notes 用参数传 ✓；任何异常都**弹窗告诉用户** ✗不再悄悄死掉。
+        """
         info = self._info or {}
+        up = None
         try:
             import qt_updater
             up = qt_updater.update_info_from({"update": info.get("update")})
-        except Exception:
+        except Exception as e:
             up = None
-        if up:
-            self._do_auto_update(up, info.get("version", ""))
+            self._update_error(f"读取更新信息失败：{type(e).__name__}: {e}")
+            return
+        if not up:
+            self._update_error(
+                "这个版本没有准备自动更新包（清单里缺分卷地址）。\n"
+                "请点「打开发布页」手动下载新版。")
+            return
+        try:
+            self._do_auto_update(up, info.get("version", ""), info.get("notes", ""))
+        except Exception as e:
+            self._update_error(f"更新器启动失败：{type(e).__name__}: {e}")
+
+    def _update_error(self, msg):
+        """更新出错时**要让用户看见**（以前是悄悄死掉 ✗）"""
+        try:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self._win or self, "更新", str(msg) +
+                                "\n\n也可以点「打开发布页」手动下载更新。")
+        except Exception:
+            pass
+        try:
+            self._set_state("更新失败", "#E06C5A", str(msg).replace("\n", " "))
+        except Exception:
+            pass
+        try:
+            print("[更新] " + str(msg), flush=True)
+        except Exception:
+            pass
 
     # ---- 处理器（原来混在 PageSettings 文件尾部那一堆里）----
 
@@ -1178,7 +1211,7 @@ class UpgradeTab(SettingsTab):
         """兼容旧调用：现在不弹窗了，直接在卡片里展开"""
         self._show_update_available(info)
 
-    def _do_auto_update(self, up, ver):
+    def _do_auto_update(self, up, ver, notes=""):
         """下载 → 合并 → 校验 → 解压 → 交给「更新.bat」去替换
 
         下载在**后台线程**跑，进度通过信号发回主线程更新界面 ——
@@ -1192,8 +1225,9 @@ class UpgradeTab(SettingsTab):
             msg = Signal(str)
             done = Signal(bool, str)
 
-        dlg = self._make_progress_dialog(ver, (up or {}).get("size", 0),
-                                         info.get("notes", ""))
+        # ⚠ 以前这里写的是 info.get("notes") —— info 是**上一个函数**的局部
+        #   变量，会抛 NameError → 按钮点了毫无反应（0.9.5 同病）
+        dlg = self._make_progress_dialog(ver, (up or {}).get("size", 0), notes)
         sig = Sig()
         state = {"dir": None, "cancel": False, "msg": "准备中…", "prog": (0, 0)}
         # ⚠ 「取消」以前是**假的**：点了只是把窗关掉，下载线程照样跑完，
