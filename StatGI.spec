@@ -1,8 +1,14 @@
 _mod_datas = []
 import pathlib as _pl
+# ⚠ 2026-10-14：live / hang 改成"不内置"（用户能看见、能删、公开发布版不带）
+#   所以它们**不进**程序肚子；只有 bgi（内置）与 external（自带那份）进。
+_NOT_BUILTIN = ("live", "hang")
 for _folder in ("modules", "module_files"):
     _mroot = _pl.Path(SPECPATH) / "statgi_qt" / _folder
     for _f in _mroot.rglob("*.py"):
+        _parts = _f.relative_to(_mroot).parts
+        if _parts and _parts[0] in _NOT_BUILTIN:
+            continue
         _mod_datas.append((str(_f), str(_f.parent.relative_to(_mroot.parent))))
 
 # -*- mode: python ; coding: utf-8 -*-
