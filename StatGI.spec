@@ -1,22 +1,9 @@
 _mod_datas = []
-try:
-    import pathlib as _pl
-    _mroot = _pl.Path(SPECPATH) / "statgi_qt" / "modules"
+import pathlib as _pl
+for _folder in ("modules", "module_files"):
+    _mroot = _pl.Path(SPECPATH) / "statgi_qt" / _folder
     for _f in _mroot.rglob("*.py"):
         _mod_datas.append((str(_f), str(_f.parent.relative_to(_mroot.parent))))
-    print(f"[模块数据] 打包 {len(_mod_datas)} 个模块 .py 文件")
-except Exception as _e:
-    print("[模块数据] 收集失败：", _e)
-
-_mod_datas = []
-try:
-    import pathlib as _pl
-    _mroot = _pl.Path(SPECPATH) / "statgi_qt" / "modules"
-    for _f in _mroot.rglob("*.py"):
-        _mod_datas.append((str(_f), str(_f.parent.relative_to(_mroot.parent))))
-    print(f"[模块数据] 打包 {len(_mod_datas)} 个模块 .py 文件")
-except Exception as _e:
-    print("[模块数据] 收集失败：", _e)
 
 # -*- mode: python ; coding: utf-8 -*-
 # StatGI 打包配置 —— 文件夹版（onedir）

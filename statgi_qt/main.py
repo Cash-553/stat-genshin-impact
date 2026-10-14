@@ -191,9 +191,12 @@ def main():
             _lines = []
             try:
                 import svc_autostart as _A
+                import modules as _M
                 _lines.append("BGI   探测: " + repr(_A.detect_bgi()))
-                _lines.append("OBS   探测: " + repr(_A.detect_obs()))
-                _lines.append("Chrome探测: " + repr(_A.detect_chrome()))
+                _live = _M.load_logic("live")
+                _hang = _M.load_logic("hang")
+                _lines.append("OBS   探测: " + repr(_live.detect_obs() if _live else ""))
+                _lines.append("Chrome探测: " + repr(_hang.detect_chrome() if _hang else ""))
                 _b, _e = _A.detect_bgi()
                 _lines.append("BGI   组名: " + repr(_A.bgi_groups(_b, _e)))
                 for _n in ("bgi", "live", "hang"):

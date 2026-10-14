@@ -41,8 +41,11 @@ def _bgi_log_tail(settings, n=20000):
     try:
         import svc_autostart as _A
         from pathlib import Path as _P
-        _p = _A.latest_bgi_log((settings or {}).get("bgi_dir") or "",
-                               (settings or {}).get("bgi_exe") or "")
+        import modules
+        logic = modules.load_logic("bgi")
+        config = logic.monitor_settings(settings) if logic else {}
+        _p = _A.latest_bgi_log(config.get("bgi_dir") or "",
+                               config.get("bgi_exe") or "")
         if not _p:
             return []
         return _P(_p).read_text(encoding="utf-8", errors="replace").splitlines()[-n:]
@@ -206,6 +209,9 @@ class AppState(QObject):
         try:
             import svc_autostart as A
             c = A.cfg(self.settings)
+            import modules as _registry
+            _bgi = _registry.load_logic("bgi")
+            module_settings = _bgi.monitor_settings(c) if _bgi else {}
             if not c.get("enabled"):
                 self._auto_miss = 0
                 return
@@ -213,11 +219,11 @@ class AppState(QObject):
             # ---- ①' 2026-10-13：**启动指定配置组时**自动开始监测 ----
             # （用户要求：把"到点自动开始"改成按配置组；连续执行那边勾的那个组
             #   一开始跑，这边就开始监测）
-            if (c.get("auto_monitor_group") and not self.monitoring
+            if (module_settings.get("auto_monitor_group") and not self.monitoring
                     and not getattr(self, "paused", False)
-                    and _bgi_group_started(c, c.get("auto_monitor_group"))):
+                    and _bgi_group_started(c, module_settings.get("auto_monitor_group"))):
                 self.status_changed.emit(
-                    "定时启动：配置组「" + str(c.get("auto_monitor_group"))
+                    "定时启动：配置组「" + str(module_settings.get("auto_monitor_group"))
                     + "」开始 → 自动开始监测", GOOD)
                 self.start()
 
@@ -241,16 +247,16 @@ class AppState(QObject):
             # ---- ②' 2026-10-13：**指定配置组结束后**停止监测 ----
             # 依据是 BGI 日志里的「配置组 "X" 执行结束」（真实日志确认过）。
             # stop() 之后 self.monitoring 变 False → 自然只触发一次 ✓
-            if (self.monitoring and c.get("stop_after_group")
-                    and _bgi_group_ended(c, c.get("stop_after_group"))):
+            if (self.monitoring and module_settings.get("stop_after_group")
+                    and _bgi_group_ended(c, module_settings.get("stop_after_group"))):
                 self.status_changed.emit(
-                    "定时启动：配置组「" + str(c.get("stop_after_group"))
+                    "定时启动：配置组「" + str(module_settings.get("stop_after_group"))
                     + "」执行结束 → 自动停止监测", BAD)
                 self.stop()
 
             # ---- ② 目标程序退出后自动停止 ----
             if self.monitoring and c.get("auto_stop"):
-                exe = os.path.basename(str(c.get("bgi_exe") or "")) or "BetterGI.exe"
+                exe = os.path.basename(str(module_settings.get("bgi_exe") or "")) or "BetterGI.exe"
                 if A.bgi_running(exe):
                     self._auto_miss = 0
                 else:

@@ -1,62 +1,47 @@
-# 定时启动的模块（一个模块一个文件夹）
+# 定时运行模块说明
 
-> 目标：**删掉文件夹 = 删掉模块**。删完之后清单里没有它、界面不显示卡片、
-> 到点也不会执行它 —— 不是"藏起来"，是代码真的不在了。
+三个业务模块集中在 `statgi_qt/module_files/`，每个模块放在自己的目录中，由公共调度页面按模块注册信息加载。页面只负责通用设置和调用模块接口；模块自己的业务配置、界面、启动动作及重置逻辑应放在本目录对应的模块文件中。
 
-## 目录约定
+## 文件结构
 
-```
+```text
 modules/
-    __init__.py          加载器：扫描下面的文件夹，读 module.py 的元信息
-    common.py            模块共用的小工具（找 exe / 脱离启动 / bat 行）
-    <模块名>/
-        module.py        必需：元信息（有它才算"这个模块存在"）
-        logic.py         可选：干活的代码（探测、生成动作步骤）
-        ui.py            可选：界面卡片
+    __init__.py          模块注册表与动态加载器
+  common.py
+module_files/
+  <模块目录>/
+    module.py   模块名称、唯一 key、顺序和内置/外置标记
+    logic.py    模块自己的探测逻辑与 steps(config)
+    ui.py       模块自己的 build/collect/apply/toggle/reset/desc
 ```
 
-## module.py（必需）
+## 公共接口
 
-```python
-KEY = "hang"                  # 唯一标识（配置里用它，别乱改）
-NAME = "直播间挂机"           # 界面上显示的名字
-DESC = "到点用浏览器打开直播间页面挂机"
-BUILTIN = False               # True = 内置（只能开关，不能卸载）
-ORDER = 30                    # 界面上排前面的小
-```
+- `module.py`：提供 `KEY`、`NAME`、`DESC`、`BUILTIN`、`ORDER`。
+- `logic.steps(config)`：返回标准动作列表；可使用 `label`、`exe`、`args`、`url`、`steam_url`、`cwd`、`delay`、`kill_process` 和 `pre_delay`。
+- `logic.defaults()`：可选；声明该模块的默认配置字段，用于旧配置自动迁移和初始值。
+- `ui.build(tab)`：构建模块自己的卡片与设置，返回 `key`、`card`、`box`、`switch`。
+- `ui.collect(tab, config)`：把该模块界面字段写入配置。
+- `ui.apply(tab, enabled)`：更新该模块界面的启用状态和显隐。
+- `ui.toggle(tab, enabled)`：可选；实现模块自己的启停保存行为。
+- `ui.reset(tab, config)`：可选；卸载时清理模块自己的字段与控件。
+- `ui.desc(tab)`：可选；提供模块卡片摘要。
+- `ui.module_tools(tab)`：可选；提供该模块自己的工具按钮（如查看该程序日志）。
 
-## logic.py（可选）
+主页面不应根据模块 key 分支处理 OBS、浏览器或 BetterGI 字段。新增模块应通过注册信息和这些通用接口接入。删除某个可选模块时，应同时确认其他模块和公共内核不再直接引用它的业务字段。
 
-```python
-def steps(c):        # c = 自动运行配置 dict
-    """到点要执行什么。返回统一形状的列表：
-       {"label": 中文名, "exe": 程序路径 或 "", "args": [参数...],
-        "url": 网址 或 "", "steam_url": steam:// 链接 或 "", "delay": 秒}
-       不想执行就返回 []（装没装、开关开没开，自己在这里判断）"""
-```
+## 配置保存
 
-## ui.py（可选）
+公共调度项保存在 `autostart` 下；模块开关放在 `modules` 映射；各模块自己的设置放在 `module_config` 下，以模块 key 分区。旧版顶层模块字段会在读取时迁入对应分区。
 
-```python
-def build(tab):      # tab = AutostartTab（能拿 alpha / _c / 回调）
-    """造卡片，返回：{"key","box","switch","card","uninstall_card"…}"""
+## 当前模块
 
-def collect(tab, c):  """把界面上的值收进配置 dict c"""
-def apply(tab, on):   """按模块状态显隐自己的卡片"""
-def desc(tab):        """卡片下面那句说明"""
-```
+| 模块 | 主要职责 |
+|---|---|
+| `bgi` | BetterGI 路径、配置组及启动/监测动作 |
+| `live` | OBS 启动和开播参数 |
+| `hang` | 直播间网址与浏览器启动 |
 
-主程序（`AutostartTab`）只做三件事：调 `build()` 插进页面、调 `collect()` 收值、
-调 `apply()` 显隐 —— 它**不认识**模块里的具体字段。
+外部声明式模块仍由 `svc_modules.py` 处理；它不执行模块携带的任意 Python 代码。
 
-## 现状（2026-10-13）
-
-| 模块 | module.py | logic.py | ui.py |
-|---|---|---|---|
-| bgi | ✅ | ❌ 还在 svc_autostart | ❌ 还在 qt_settings_tabs |
-| live | ✅ | ✅ | ❌ 还在 qt_settings_tabs |
-| hang | ✅ | ✅ | ✅ **完整样板** |
-| external | ✅ | （用 svc_modules.py） | （弹窗里几行） |
-
-搬运顺序建议：live 的 ui → bgi 的 logic → bgi 的 ui。
-**每搬一刀都要跑 `_morph/test_autostart.py`**（剪多了编译器看不出来，只有测试能抓）。
+“打开目录”优先打开 `module_files/`；公共代码和说明保留在 `modules/`。

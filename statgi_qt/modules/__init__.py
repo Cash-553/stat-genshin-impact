@@ -1,20 +1,20 @@
 # -*- coding: utf-8 -*-
 """定时启动的模块目录：**一个模块一个文件夹**。
 
-    modules/bgi/module.py        BetterGI 模块（内置）
-    modules/live/module.py       直播插件（OBS）
-    modules/hang/module.py       直播间挂机
+    module_files/bgi/module.py        BetterGI 模块（内置）
+    module_files/live/module.py       直播插件（OBS）
+    module_files/hang/module.py       直播间挂机
     modules/external/module.py   外部导入模块（读 data/modules/*.sgmod.json）
 
-删掉某个文件夹 = 删掉那个模块（清单里没有、界面不显示、也不执行）。
-加载不上（没有 module.py / 元信息不全）的文件夹会被安静跳过 —— 不会因为
-一个坏文件夹把整个页面搞崩。
+模块由注册表发现；UI、逻辑和配置入口按唯一 key 动态加载。
+加载不上（没有 module.py / 元信息不全）的文件夹会被安静跳过。
 """
-import importlib
-import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+MODULE_FILES = HERE.parent / "module_files"
+# 保留 modules.bgi 等导入接口，业务文件集中存放。
+__path__.append(str(MODULE_FILES))
 
 
 def external_root():
@@ -38,6 +38,7 @@ def roots():
     ext = external_root()
     if ext.is_dir():
         out.append(ext)
+    out.append(MODULE_FILES)
     out.append(HERE)
     return out
 
@@ -52,7 +53,7 @@ def _iter_dirs():
             continue
         for d in subs:
             if (d.is_dir() and not d.name.startswith("_")
-                    and (d / "module.py").is_file() and d.name not in seen):
+                and (d / "module.py").is_file() and d.name not in seen):
                 seen.add(d.name)
                 yield d
 
@@ -73,10 +74,21 @@ def load_ui(key):
     通用：置顶功能靠它拿到"这个模块的开关卡片 + 选项区"，新模块自动生效。
     """
     import importlib.util
-    for root in roots():
-        f = root / key / "ui.py"
+    info = module_info(key)
+    if not info:
+        return None
+    folder = info["folder"]
+    preferred = Path(info["path"])
+    f = preferred / "ui.py"
+    candidates = [f] + [r / folder / "ui.py" for r in roots()
+                        if (r / folder / "ui.py") != f]
+    for f in candidates:
         try:
             if f.is_file():
+                # Nested module imports (e.g. `modules.bgi.logic`) use this
+                # directory as their package search path in source and frozen apps.
+                if str(f.parent.parent) not in __import__("sys").path:
+                    __import__("sys").path.insert(0, str(f.parent.parent))
                 spec = importlib.util.spec_from_file_location(
                     "statgi_ui_" + key, f)
                 mod = importlib.util.module_from_spec(spec)
@@ -112,6 +124,66 @@ def load_all():
             continue
     out.sort(key=lambda m: (m["order"], m["name"]))
     return out
+
+
+def module_info(key):
+    """模块唯一身份查询；界面、设置和调度均使用同一份扫描结果。"""
+    return next((m for m in load_all() if m["key"] == str(key)), None)
+
+
+def load_logic(key):
+    """读取模块逻辑；模块不存在或逻辑文件异常时返回 None。"""
+    import importlib.util
+    info = module_info(key)
+    if not info:
+        return None
+    folder = info["folder"]
+    preferred = Path(info["path"])
+    f = preferred / "logic.py"
+    candidates = [f] + [r / folder / "logic.py" for r in roots()
+                        if (r / folder / "logic.py") != f]
+    for f in candidates:
+        if not f.is_file():
+            continue
+        try:
+            spec = importlib.util.spec_from_file_location(
+                "statgi_logic_" + str(key), f)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod
+        except Exception:
+            continue
+    return None
+
+
+def load_config(key, settings):
+    """取模块自己的配置分区；模块之间不共享业务字段空间。"""
+    all_config = (settings or {}).get("module_config") or {}
+    value = all_config.get(str(key))
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def config_defaults(key):
+    """可选：从模块 logic 的 defaults() 读取模块默认设置。"""
+    logic = load_logic(key)
+    if logic is not None and hasattr(logic, "defaults"):
+        try:
+            value = logic.defaults()
+            return dict(value) if isinstance(value, dict) else {}
+        except Exception:
+            pass
+    return {}
+
+
+def save_config(key, settings, values):
+    """更新模块自己的配置分区，保留其他模块和公共调度配置。"""
+    if not isinstance(settings, dict):
+        raise TypeError("settings must be a dict")
+    all_config = settings.setdefault("module_config", {})
+    current = load_config(key, settings)
+    current.update(values or {})
+    all_config[str(key)] = current
+    return current
 
 
 def folder_of(key):

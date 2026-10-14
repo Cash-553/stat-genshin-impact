@@ -15,6 +15,10 @@ CHROME_CANDIDATES = (
 )
 
 
+def defaults():
+    return {"live_url": "", "chrome_exe": ""}
+
+
 def detect_chrome():
     """找 chrome.exe（找不到返回 ""，那就交给系统默认浏览器）"""
     p = common.first_existing(CHROME_CANDIDATES)
@@ -35,19 +39,21 @@ def available(c):
         mods = (c or {}).get("modules") or {}
         if not mods.get("hang", True):
             return False
-        if not (c or {}).get("hang_enabled", True):
-            return False
-        return bool(str((c or {}).get("live_url") or "").strip())
+        from modules import load_config
+        config = load_config("hang", c) or c or {}
+        return bool(str(config.get("live_url") or "").strip())
     except Exception:
         return False
 
 
 def steps(c):
     """到点要执行的动作：用浏览器打开直播间"""
-    if not available(c):
+    if not bool(((c or {}).get("modules") or {}).get("hang", True)):
         return []
-    url = str((c or {}).get("live_url") or "").strip()
-    chrome = str((c or {}).get("chrome_exe") or "").strip() or detect_chrome()
+    from modules import load_config
+    config = load_config("hang", c) or c or {}
+    url = str(config.get("live_url") or "").strip()
+    chrome = str(config.get("chrome_exe") or "").strip() or detect_chrome()
     return [{"label": "打开直播间", "exe": chrome,
              "args": ["--new-window", url] if chrome else [],
              "url": url, "steam_url": "", "delay": 0}]

@@ -9,7 +9,7 @@
     1. **Windows 任务计划**：按"每天几点 + 星期几"建/删任务（schtasks + XML），
        任务以最高权限运行（XML 里 RunLevel=HighestAvailable）→ 运行时不再弹 UAC
     2. **生成启动脚本**：exe 旁边的 `自动运行.bat`（UTF-8-BOM + chcp 65001）
-    3. **拉起 / 结束目标程序**：默认是 BetterGI 的 `--startGroups 开门 狗粮 锄地`
+    3. **拉起目标程序**：各模块按统一动作接口提供启动步骤
     4. **状态计算**：下次运行时间、今天要不要跳过（排除日期）
 
 ⚠ 两个跟原工具的**实质差别**（原工具在这两处有问题，移植时修掉）：
@@ -31,6 +31,7 @@ import json
 import os
 import re
 import subprocess
+import time
 import sys
 import tempfile
 import xml.sax.saxutils as sx
@@ -104,10 +105,6 @@ WEEKDAY_XML = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
                "Saturday", "Sunday"]
 BAT_NAME = "自动运行.bat"
 DEFAULT_TASK = "StatGI 自动运行"
-# 常见安装位置（探测用）
-BGI_HINTS = [r"D:\BetterGI", r"C:\BetterGI", r"D:\Program Files\BetterGI",
-             r"C:\Program Files\BetterGI"]
-
 # 设置里存的默认值（并进主设置文件 config/settings.json 的 "autostart" 键）
 DEFAULT = {
     "enabled": False,          # 总开关：勾上并保存才建任务
@@ -117,30 +114,12 @@ DEFAULT = {
     # ---- 模块（2026-10-12 用户要求：分模块，能开关/能卸载）----
     #   bgi  ：目标程序 + 配置组 + 自动监测，关掉这些选项就不显示也不执行
     #   live ：直播（OBS 开播 / 直播间挂机），可以**卸载**（卸载会清掉相关配置）
-    "modules": {"bgi": True},   # 只有 bgi 是内置常驻；别的模块靠文件夹
-    "groups": ["开门", "狗粮", "锄地"],   # 传给 BGI --startGroups 的配置组
-    "bgi_dir": "",
-    "bgi_exe": "",
+    "modules": {"bgi": True},   # 模块开关统一映射
     "task_name": DEFAULT_TASK,
-    "kill_existing_bgi": True,  # 先杀旧 BGI，避免双实例抢窗口
     "wake_to_run": False,       # 睡眠也唤醒跑
     "auto_monitor": True,       # ★ 本项目的加分项：到点自动开始监测
     "auto_stop": True,          # 旧：目标程序退出后自动停止监测（已被下面两个取代）
     "start_self": True,          # ★ 到点也自动启动 StatGI 自己（不开=没人记账）
-    "auto_monitor_group": "",    # ★ 启动这个配置组时自动开始监测（空=不自动开始）
-    "stop_after_group": "",      # ★ 这个配置组结束后停止监测（空=不自动停止）
-    # ---- 直播（2026-10-12 用户需求：到点顺便开播 + 挂直播间）----
-    # 推流地址/场景/画质全在 OBS 自己里配好，这里只管"启动它并开播"
-    "live_enabled": False,      # 到点是否执行下面这些直播动作
-    "obs_exe": "",              # obs64.exe；留空 = 自动探测
-    "obs_via_steam": False,     # 通过 Steam 启动（Steam 里才显示"正在运行"）
-    "obs_start_stream": True,   # 启动 OBS 时自动开始推流（--startstreaming）
-    "obs_minimize": True,       # 最小化到托盘（不挡游戏）
-    "live_url": "",             # 直播间地址，用浏览器打开挂机
-    "chrome_exe": "",           # 指定浏览器；留空 = 探测 Chrome，再不行用默认
-    "live_delay": 0,            # 延迟 N 秒再开播（等游戏先进去）
-    # 直播间挂机是**独立模块**（2026-10-12 用户要求从直播插件里切出来）
-    "hang_enabled": True,       # 该模块的开关；装上了默认就启用
     # 外部导入的模块：{模块key: 是否启用}（key 形如 ext:名字）
     "external_on": {},
 }
@@ -173,7 +152,8 @@ MODULES = _load_modules()
 
 
 def module_info(key):
-    for m in MODULES:
+    # 动态读取，避免应用启动后添加/移除模块时仍使用陈旧清单。
+    for m in _load_modules():
         if m["key"] == key:
             return m
     return {"key": key, "name": key, "builtin": False, "desc": ""}
@@ -189,23 +169,62 @@ def cfg(settings):
         raw = {}
     out = dict(DEFAULT)
     out.update({k: v for k, v in raw.items() if k in DEFAULT})
+    # 模块配置以 key 分区保存；旧版散落在顶层的字段在这里迁移一次。
+    raw_module_config = raw.get("module_config")
+    module_config = dict(raw_module_config) if isinstance(raw_module_config, dict) else {}
+    try:
+        import modules as _registry
+        for item in _registry.load_all():
+            key = item["key"]
+            current = module_config.get(key)
+            current = dict(current) if isinstance(current, dict) else {}
+            logic = _registry.load_logic(key)
+            defaults = logic.defaults() if logic and hasattr(logic, "defaults") else {}
+            for field in defaults:
+                if field not in current and field in raw:
+                    current[field] = raw[field]
+            if current:
+                module_config[key] = current
+    except Exception:
+        pass
+    out["module_config"] = module_config
     if not isinstance(out.get("weekdays"), list) or len(out["weekdays"]) != 7:
         out["weekdays"] = list(DEFAULT["weekdays"])
-    for k in ("groups", "exclude_dates"):
-        if not isinstance(out.get(k), list):
-            out[k] = list(DEFAULT[k])
+    if not isinstance(out.get("exclude_dates"), list):
+        out["exclude_dates"] = []
     if parse_time(out.get("time")) is None:
         out["time"] = DEFAULT["time"]
-    # 模块：坏值/缺键都回落到默认（默认两个都开）
+    # 模块开关：旧版 live/hang 独立开关只用于首次迁移。
     mods = out.get("modules")
     if not isinstance(mods, dict):
         mods = {}
+    mods = dict(mods)
     ext = out.get("external_on")
     out["external_on"] = {str(k): bool(v) for k, v in ext.items()} \
         if isinstance(ext, dict) else {}
-    out["modules"] = {"bgi": bool(mods.get("bgi", True)),
-                      "live": bool(mods.get("live", True)),
-                      "hang": bool(mods.get("hang", True))}
+    # 模块状态用一个统一映射。旧版本 live/hang 字段继续作为兼容输入，
+    # 但模块本身的存在只由模块注册表决定。
+    registered = {m["key"] for m in _load_modules()}
+    normalized = {}
+    for key in registered:
+        legacy_default = bool(mods.get(key, True))
+        if key == "live":
+            legacy_default = bool(mods.get("live", raw.get("live_enabled", False)))
+        elif key == "hang":
+            legacy_default = bool(mods.get("hang", raw.get("hang_enabled", True)))
+        if key not in mods and key == "live" and "live_enabled" in raw:
+            legacy_default = bool(raw.get("live_enabled"))
+        elif key not in mods and key == "hang" and "hang_enabled" in raw:
+            legacy_default = bool(raw.get("hang_enabled"))
+        normalized[key] = bool(mods.get(key, legacy_default))
+    out["modules"] = normalized
+    # 舊版勾選狀態只讀入一次，後續版本不再保存頂層鏡像。
+    for legacy_key in ("groups", "bgi_dir", "bgi_exe", "kill_existing_bgi",
+                       "auto_monitor_group", "stop_after_group", "live_enabled",
+                       "obs_exe", "obs_via_steam", "obs_start_stream",
+                       "obs_minimize", "live_url", "chrome_exe",
+                       "live_delay", "hang_enabled"):
+        out.pop(legacy_key, None)
     good, _bad = parse_exclude_dates(out.get("exclude_dates"))
     out["exclude_dates"] = good
     return out
@@ -219,13 +238,13 @@ def module_installed(name):
     """
     try:
         import modules as _m
-        return any(m["key"] == name for m in _m.load_all())
+        return _m.module_info(name) is not None
     except Exception:
         return False
 
 
 def mod_on(c, name):
-    """模块是否启用（bgi / live）。缺键当"开" —— 老配置直接升级不留坑。"""
+    """配置中的启用开关；是否登记安装由 module_installed() 单独判断。"""
     try:
         return bool((c.get("modules") or {}).get(name, True))
     except Exception:
@@ -434,14 +453,8 @@ def live_steps(c):
     if not c:
         return []
     steps = []
-    for name in ("live", "hang"):
-        m = _mod_logic(name)
-        if m is None:
-            continue
-        try:
-            steps += m.steps(c)
-        except Exception:
-            pass
+    for item in enabled_modules(c):
+        steps.extend(module_steps(c, item["key"]))
     # 外部导入的模块（声明式，不执行第三方代码）
     try:
         import svc_modules
@@ -451,67 +464,117 @@ def live_steps(c):
     return steps
 
 
+def module_steps(c, key):
+    """只取指定模块的启动动作，避免模块之间误串动作。"""
+    try:
+        import modules as registry
+        if not registry.module_info(key) or not mod_on(c or {}, key):
+            return []
+        logic = registry.load_logic(key)
+        if logic is None or not hasattr(logic, "steps"):
+            return []
+        steps = [dict(step) for step in (logic.steps(c or {}) or [])]
+        for step in steps:
+            step.setdefault("module_key", str(key))
+        return steps
+    except Exception:
+        return []
+
+
+def enabled_modules(c):
+    """返回已注册且已启用的模块；通用调度不依赖具体模块名称。"""
+    try:
+        import modules as registry
+        return [item for item in registry.load_all()
+                if module_installed(item["key"]) and mod_on(c or {}, item["key"])]
+    except Exception:
+        return []
+
+
+def run_steps(steps):
+    """执行统一格式的模块动作，不包含 BetterGI/OBS 等产品专属分支。"""
+    notes = []
+    for step in steps or []:
+        label = str(step.get("label") or "启动模块动作")
+        try:
+            delay = max(0, int(step.get("delay") or 0))
+            if delay:
+                time.sleep(delay)
+            process_name = str(step.get("kill_process") or "").strip()
+            if process_name:
+                try:
+                    subprocess.run(["taskkill", "/IM", process_name, "/F"],
+                                   capture_output=True, timeout=10, check=False)
+                except Exception:
+                    pass
+                pre_delay = max(0, int(step.get("pre_delay") or 0))
+                if pre_delay:
+                    time.sleep(pre_delay)
+            if step.get("steam_url"):
+                os.startfile(step["steam_url"])
+            elif step.get("exe"):
+                flags = 0x00000008 | 0x00000200
+                subprocess.Popen([step["exe"]] + list(step.get("args") or []),
+                                 cwd=step.get("cwd") or os.path.dirname(step["exe"]) or None,
+                                 close_fds=True, creationflags=flags)
+            elif step.get("url"):
+                os.startfile(step["url"])
+            else:
+                notes.append(f"{label}：没有可执行的程序或网址")
+                continue
+            notes.append(f"{label}（已启动）")
+        except Exception as exc:
+            notes.append(f"{label}失败：{type(exc).__name__}: {exc}")
+    return notes
+
+
+def build_steps_bat_lines(steps):
+    """把模块提供的标准动作转换成 bat 命令。"""
+    lines = []
+    for step in steps or []:
+        label = str(step.get("label") or "模块动作").replace("\r", " ").replace("\n", " ")
+        lines.append(f"rem ---- {label} ----")
+        delay = max(0, int(step.get("delay") or 0))
+        if delay:
+            lines.append(f"timeout /t {delay} /nobreak >nul")
+        process_name = str(step.get("kill_process") or "").strip()
+        if process_name:
+            lines.append(f'taskkill /IM "{process_name}" /F >nul 2>&1')
+            delay = max(0, int(step.get("pre_delay") or 0))
+            if delay:
+                lines.append(f"timeout /t {delay} /nobreak >nul")
+        if step.get("steam_url"):
+            lines.append(f'start "" "{step["steam_url"]}"')
+        elif step.get("exe"):
+            exe = str(step["exe"])
+            cwd = str(step.get("cwd") or os.path.dirname(exe))
+            args = " ".join(f'"{x}"' if any(ch.isspace() for ch in str(x))
+                             else str(x) for x in step.get("args", []))
+            lines.append(f'start "" /D "{cwd}" "{exe}"{(" " + args) if args else ""}')
+        elif step.get("url"):
+            lines.append(f'start "" "{step["url"]}"')
+        lines.append("")
+    return lines
+
+
 def build_live_bat_lines(c):
     """把 `live_steps` 变成 bat 里的几行（`start` 拉起，不等它退出）"""
-    steps = live_steps(c)
-    if not steps:
-        return []
-    lines = ["", "rem ---- 直播（OBS 开播 / 打开直播间）----"]
-    try:
-        delay = int(c.get("live_delay") or 0)
-    except Exception:
-        delay = 0
-    if delay > 0:
-        lines.append(f"rem 等 {delay} 秒再开播，让游戏先进去")
-        lines.append(f"timeout /t {delay} /nobreak >nul")
-    for s in steps:
-        exe, args = s["exe"], s["args"]
-        if s.get("steam_url"):
-            # 走 Steam 启动（好友列表里会显示"正在玩 OBS"）
-            lines.append(f'start "" "{s["steam_url"]}"')
-        elif exe:
-            # /D 指定工作目录：OBS 必须在自己目录里跑才认自己的配置
-            d = os.path.dirname(exe)
-            a = (" " + " ".join(f'"{x}"' if " " in x else x for x in args)) if args else ""
-            try:
-                sd = int(s.get("delay") or 0)
-            except Exception:
-                sd = 0
-            if sd > 0:
-                lines.append(f"timeout /t {sd} /nobreak >nul")
-            lines.append(f'start "" /D "{d}" "{exe}"{a}')
-        elif s["url"]:
-            # 没找到指定浏览器 → 交给系统默认浏览器
-            lines.append(f'start "" "{s["url"]}"')
-    return lines
+    return build_steps_bat_lines(live_steps(c))
 
 
 def start_live(c):
     """立刻执行直播动作（"立即运行一次"用）。返回中文说明列表。"""
-    notes = []
-    for s in live_steps(c):
-        try:
-            if s.get("steam_url"):
-                os.startfile(s["steam_url"])       # noqa: S606 - Steam 协议链接
-                notes.append(f"{s['label']}（已交给 Steam）")
-            elif s["exe"]:
-                flags = 0x00000008 | 0x00000200    # DETACHED_PROCESS | NEW_PROCESS_GROUP
-                subprocess.Popen([s["exe"]] + list(s["args"]),
-                                 cwd=os.path.dirname(s["exe"]) or None,
-                                 close_fds=True, creationflags=flags)
-                notes.append(f"{s['label']}（已启动）")
-            elif s["url"]:
-                os.startfile(s["url"])             # noqa: S606 - 用户自己填的网址
-                notes.append(f"{s['label']}（用默认浏览器打开）")
-        except Exception as e:
-            notes.append(f"{s['label']}失败：{type(e).__name__}: {e}")
-    return notes
+    return run_steps(live_steps(c))
+
+
+def start_module(c, key):
+    """只立即运行指定模块；结果保持中文，供模块自己的测试按钮显示。"""
+    return run_steps(module_steps(c, key))
 
 
 
-# ---------------------------------------------------------------- BGI 模块别名
-# 2026-10-13：BetterGI 的探测/查询代码搬进了 `statgi_qt/modules/bgi/logic.py`。
-# 这里转发一下，老代码/测试继续用 `svc_autostart.detect_bgi()` 这些名字。
+# ---------------------------------------------------------------- BGI 模块桥接
+# BGI 的自动监测依赖其日志格式；实现本身放在模块目录，核心只保留稳定调用入口。
 def _bgi_logic():
     return _load_module_logic("bgi")
 
@@ -541,31 +604,6 @@ def latest_bgi_log(bgi_dir="", exe=""):
 
 def tail_text(path, lines=200, max_bytes=400000):
     return _bgi.tail_text(path, lines, max_bytes) if _bgi else ""
-
-# ---------------------------------------------------------------- 模块别名
-# 2026-10-13：直播（OBS）和直播间挂机的代码已经搬进各自模块文件夹
-# （`statgi_qt/modules/live/logic.py`、`modules/hang/logic.py`）。
-# 这里只是**转发**，让老代码和测试继续用 `svc_autostart.detect_obs()` 这些名字。
-# 删掉那两个文件夹，这里会安静地退化成"探测不到" —— 不会有残留的一半功能。
-def _mod_logic(name):
-    return _load_module_logic(name)
-
-
-_live = _mod_logic("live")
-_hang = _mod_logic("hang")
-
-
-
-def detect_obs():
-    return _live.detect_obs() if _live else ""
-
-
-def steam_appid_for(exe_path):
-    return _live.steam_appid_for(exe_path) if _live else ""
-
-
-def detect_chrome():
-    return _hang.detect_chrome() if _hang else ""
 
 # ---------------------------------------------------------------- 任务计划
 def _q(s):
@@ -766,17 +804,7 @@ def _self_launch_line():
 
 
 def build_bat_text(c):
-    """生成 bat 内容。
-
-    要点（照搬原工具踩过的坑）：
-        · `chcp 65001` + UTF-8-BOM 写盘 → cmd 读中文路径/中文组名不乱码
-        · 可选先 taskkill 旧的 BGI（双实例会抢游戏窗口）
-        · **排除日期在这里判断**：今天在列表里就直接退出（原工具在 XML 里
-          "排除"是没生效的，这里是真正的跳过）
-    """
-    exe = str(c.get("bgi_exe") or "").strip()
-    bgi_dir = str(c.get("bgi_dir") or "").strip()
-    groups = [str(g).strip() for g in (c.get("groups") or []) if str(g).strip()]
+    """生成通用调度脚本；实际启动动作全部来自启用模块的 steps()。"""
     exclude = c.get("exclude_dates") or []
     lines = [
         "@echo off",
@@ -804,26 +832,11 @@ def build_bat_text(c):
         for d in exclude:
             lines.append(f'if "%TODAY%"=="{d}" (echo 今天在排除列表（{d}），跳过 & exit /b 0)')
         lines.append("")
-    if c.get("kill_existing_bgi", True):
-        lines += [
-            "rem 先清掉可能在跑的实例，避免双开抢窗口",
-            "taskkill /IM BetterGI.exe /F >nul 2>&1",
-            "timeout /t 5 /nobreak >nul",
-            "",
-        ]
-    if bgi_dir:
-        lines.append(f'cd /d "{bgi_dir}"')
-    if not exe:
-        lines.append("echo 没有配置要启动的程序 & pause & exit /b 1")
-    elif groups:
-        args = " ".join(f'"{g}"' if " " in g else g for g in groups)
-        # 2026-10-13: 原来没有 start "" -> bat 会等 BGI 跑完才继续，
-        # 后面的开播/挂机就得等整个 BGI 结束。加 start "" 立即继续。
-        lines.append(f'start "" /D "{bgi_dir or os.path.dirname(exe)}" '
-                     f'"{exe}" --startGroups {args}')
+    actions = live_steps(c)
+    if not actions:
+        lines.append("rem 没有启用任何可执行模块动作")
     else:
-        lines.append(f'start "" /D "{bgi_dir or os.path.dirname(exe)}" "{exe}"')
-    lines += build_live_bat_lines(c)
+        lines.extend(build_steps_bat_lines(actions))
     lines += ["", "endlocal"]
     return "\r\n".join(lines) + "\r\n"
 
@@ -844,38 +857,13 @@ def write_bat(c, base=None):
 
 
 def launch_target(c):
-    """直接拉起目标程序（不经过 bat，少一层黑窗）。
-
-    返回 (成功?, 说明)
-    """
-    exe = str(c.get("bgi_exe") or "").strip()
-    if not exe or not os.path.isfile(exe):
-        return False, f"找不到要启动的程序：{exe or '（没填路径）'}"
-    groups = [str(g).strip() for g in (c.get("groups") or []) if str(g).strip()]
-    argv = [exe, "--startGroups"] + groups if groups else [exe]
-
-    killed = ""
-    if c.get("kill_existing_bgi", True):
-        try:
-            if kill_bgi():
-                killed = "已结束旧进程；"
-        except Exception:
-            pass
-
-    try:
-        # 脱离父进程：关掉 StatGI 也不影响它
-        flags = 0x00000008 | 0x00000200      # DETACHED_PROCESS | NEW_PROCESS_GROUP
-        subprocess.Popen(argv, cwd=c.get("bgi_dir") or None,
-                         close_fds=True, creationflags=flags)
-        # 直播动作（OBS 开播 / 打开直播间）跟着一起来
-        live_notes = start_live(c)
-        tail = " ".join(groups)
-        msg = f"{killed}已启动：{os.path.basename(exe)} --startGroups {tail}"
-        if live_notes:
-            msg += "；" + "；".join(live_notes)
-        return True, msg
-    except Exception as e:
-        return False, f"启动失败：{type(e).__name__}: {e}"
+    """兼容旧名称：按启用模块统一执行启动动作。"""
+    actions = live_steps(c)
+    if not actions:
+        return False, "没有启用或配置可执行的模块动作。"
+    notes = run_steps(actions)
+    failed = [n for n in notes if "失败" in n or "没有可执行" in n]
+    return not failed, "；".join(notes) if notes else "没有可执行动作。"
 
 
 def run_bat_visible(c, base=None):

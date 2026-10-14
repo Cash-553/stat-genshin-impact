@@ -23,7 +23,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog,
                                QFileDialog,
-                               QHBoxLayout, QFrame, QLabel, QLineEdit,
+                               QHBoxLayout, QGridLayout, QFrame, QLabel, QLineEdit,
                                QMessageBox, QPlainTextEdit, QProgressBar,
                                QPushButton, QSizePolicy, QSlider,
                                QVBoxLayout, QWidget)
@@ -3066,7 +3066,7 @@ class UpgradeTab(SettingsTab):
         except Exception:
             up = None
         if up:
-            self._do_auto_update(up, info.get("version", ""))
+            self._do_auto_update(up, info.get("version", ""), info.get("notes", ""))
 
     # ---- 处理器（原来混在 PageSettings 文件尾部那一堆里）----
 
@@ -3146,7 +3146,7 @@ class UpgradeTab(SettingsTab):
         """兼容旧调用：现在不弹窗了，直接在卡片里展开"""
         self._show_update_available(info)
 
-    def _do_auto_update(self, up, ver):
+    def _do_auto_update(self, up, ver, notes=""):
         """下载 → 合并 → 校验 → 解压 → 交给「更新.bat」去替换
 
         下载在**后台线程**跑，进度通过信号发回主线程更新界面 ——
@@ -3161,7 +3161,7 @@ class UpgradeTab(SettingsTab):
             done = Signal(bool, str)
 
         dlg = self._make_progress_dialog(ver, (up or {}).get("size", 0),
-                                         info.get("notes", ""))
+                                         notes)
         sig = Sig()
         state = {"dir": None, "cancel": False, "msg": "准备中…", "prog": (0, 0)}
         # ⚠ 「取消」以前是**假的**：点了只是把窗关掉，下载线程照样跑完，
@@ -3969,33 +3969,31 @@ class AutostartTab(SettingsTab):
         super().__init__(parent, cfg, alpha)
         self._win = win
         self._c = svc_autostart.cfg(self.cfg.raw)
-        # BetterGI 的界面完全由模块自己建（见 modules/bgi/ui.py）
-        self._bgi_ui = self._build_module_ui("bgi")
+        # 模块界面统一在公共设置创建完成后加载一次，避免 BGI 重复建卡。
         self._mod_ui_list = []   # 模块界面登记表（置顶用，通用）
+        self._module_ui = {}
         self._busy = False
 
         # ---------- ① 总开关 ----------
         self.switch_on = Switch(self, bool(self._c.get("enabled", False)))
         self.switch_on.toggled.connect(bind_cb(self._on_enabled))
         self.row_on = self.row(
-            "clock", "启用自动运行",
-            "按设定时间自动启动程序；关闭时删除定时任务",
+            "clock", "启用定时任务",
+            "按计划执行已启用模块；停用后移除系统任务",
             self.switch_on,
-                 tip="勾选并保存：在 Windows 任务计划中创建定时任务。\n取消勾选：删除该任务（手动按钮仍可用）。\n创建与删除需要管理员权限，保存时会请求一次 UAC 授权。")
+                 tip="启用并保存后创建 Windows 计划任务。\n停用并保存后移除计划任务。\n创建或移除任务需要管理员权限。")
 
         # ★ 2026-10-13 用户要求：放在「启用自动运行」**正下方**，
         #   每天是否把 StatGI 自己拉起来，由用户自己决定 ✓
         self.switch_self = Switch(self, bool(self._c.get("start_self", True)))
         self.switch_self.toggled.connect(bind_cb(self._on_behavior))
         self.row_self = self.row(
-            "power", "到点也自动启动 StatGI",
-            "执行定时任务时先把自己拉起来（已经开着就只把窗口提到前面）",
+            "power", "自动启动 StatGI",
+            "任务执行时启动 StatGI；已运行时激活现有窗口",
             self.switch_self,
-            tip="**开**：定时任务一执行就先启动 StatGI 自己 —— 即使你没开程序，"
-                "到点也会自动开始记账。\n"
-                "**关**：只执行那些动作（启动 BetterGI / 开播 …），"
-                "StatGI 需要你自己提前开着。\n"
-                "程序已经开着时，第二次启动只会把主窗口提到前面（不会开两个）。")
+            tip="启用：任务执行时启动 StatGI。\n"
+                "停用：仅执行模块动作。\n"
+                "程序已运行时仅激活现有窗口。")
 
         # ---------- ② 时间 ----------
         self.time_entry = QLineEdit(str(self._c.get("time", "03:58")))
@@ -4003,10 +4001,10 @@ class AutostartTab(SettingsTab):
         self.time_entry.setAlignment(Qt.AlignCenter)
         self.time_entry.setStyleSheet(entry_qss())
         self.time_entry.editingFinished.connect(bind_cb(self._on_time))
-        self.row("timer", "自动运行时间",
-                 "每日启动时刻；建议 03:55~03:59（游戏 4:00 重置）",
+        self.row("timer", "执行时间",
+                 "每日任务执行时间",
                  self.time_entry,
-                 tip="格式 `时:分`，例如 `03:58`。\n原神每日 4:00 重置，建议 03:55~03:59。\n修改后需点「保存并应用」才会写入定时任务。")
+                 tip="格式：HH:MM，例如 03:58。\n修改后点击“保存并应用”。")
 
         # ---------- ③ 星期几 ----------
         # 用户 2026-10-12：「原来那排勾选框太丑了」→ 改成**胶囊按钮**（选中＝强调色实底）。
@@ -4035,8 +4033,8 @@ class AutostartTab(SettingsTab):
             wd_lay.addWidget(b, 1)
             self.wd_boxes.append(b)
         self.row_day = self.row(
-            "calendar", "哪几天运行", self._weekdays_desc(), wd_wrap,
-            tip="点亮（强调色）表示当天运行，反之为不运行，默认七天全开。\n修改后需点「保存并应用」。")
+            "calendar", "运行日期", self._weekdays_desc(), wd_wrap,
+            tip="选中日期表示执行。\n修改后点击“保存并应用”。")
 
         # ---------- ④ 排除日期（折叠 + **可加可删的行**，跟配置组一个形式）----------
         # 用户 2026-10-12：跟「连续执行哪几个配置组」一样能添加/删除，
@@ -4051,16 +4049,16 @@ class AutostartTab(SettingsTab):
         self.dates_lay.setContentsMargins(0, 0, 0, 0)
         self.dates_lay.setSpacing(6)
         ex_bl.addLayout(self.dates_lay)
-        self.b_add_date = small_button("添加一个日期", self._add_date_clicked,
+        self.b_add_date = small_button("添加日期", self._add_date_clicked,
                                        self.alpha, icon="plus", width=124)
         # ⚠ 不设成 Fixed 的话 QVBoxLayout 会把它拉成整条宽（896px 的大横条，
         #   跟"小按钮"的观感完全不搭）。Fixed = 只占它自己的自然宽度。
         self.b_add_date.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         ex_bl.addWidget(self.b_add_date, 0, Qt.AlignLeft)
         self.excl_acc = Accordion(
-            self, "x", "额外跳过的日期", self._excl_desc(),
+            self, "x", "排除日期", self._excl_desc(),
             body_widget=ex_body, alpha=self.alpha,
-            tip="这些日期不运行，即使它落在勾选的星期内；适用于春节、国庆等固定假期。\n点「添加一个日期」新增，点行尾的垃圾桶删除。\n支持格式：`2026-10-01`、`2026/10/01`、`20261001`。")
+            tip="排除日期优先于运行日期。\n点击“添加日期”选择日期，点击删除按钮移除。\n支持格式：2026-10-01、2026/10/01、20261001。")
         self.add_card(self.excl_acc)
         for d in (self._c.get("exclude_dates") or []):
             self._add_date_row(d)
@@ -4078,219 +4076,114 @@ class AutostartTab(SettingsTab):
         # ---------- ⑥ 更多设置（路径等）----------
         self.switch_wake = Switch(self, bool(self._c.get("wake_to_run", False)))
         self.switch_wake.toggled.connect(bind_cb(self._on_behavior))
-        self.row_wake = self.row("power", "唤醒电脑再运行",
-                 "睡眠中也唤醒执行；关闭则睡眠期间跳过",
+        self.row_wake = self.row("power", "睡眠唤醒",
+                 "睡眠状态下唤醒执行",
                  self.switch_wake,
-                 tip="开启后定时任务带 WakeToRun，睡眠中也会唤醒执行（电池供电时增加耗电）。\n关闭则睡眠期间不执行。")
+                 tip="启用 WakeToRun，在睡眠状态唤醒执行。\n电池供电时可能增加耗电。")
 
-        # ---------- ⑦ 跟统计联动（本项目的加分项）----------
-        # 折叠菜单（点开才看到组名，跟"连续执行配置组"一个样式 ✓）
-        # 折叠菜单（写法跟"连续执行配置组"完全一致：CheckList 外面套一层容器）
-        _mon_body = QWidget()
-        _mon_body.setStyleSheet("background: transparent;")
-        _ml = QVBoxLayout(_mon_body)
-        _ml.setContentsMargins(0, 0, 0, 0)
-        _ml.setSpacing(6)
-        _stop_body = QWidget()
-        _stop_body.setStyleSheet("background: transparent;")
-        _sl = QVBoxLayout(_stop_body)
-        _sl.setContentsMargins(0, 0, 0, 0)
-        _sl.setSpacing(6)
-        self._refresh_mon_stop_lists()        # 用户 2026-10-12：到点顺便开直播 —— OBS 推流（场景/推流地址他自己在
-        # OBS 里配好了），再用 Chrome 打开直播间挂机。
-        # 这里**不碰推流码**，只负责"启动 OBS 并开播"和"打开网址"。
-        # ⚠ 这里**不再**单独建一个"到点开始直播"开关了 —— 直播插件卡片上的那个
-        #   开关就是它。下面建立 switch_live_mod 之后会把它别名成 switch_live，
-        #   老代码（_collect / _do_uninstall_live 等）继续用这个名字，永远同步。
-
-        # 直播插件（OBS 相关）的卡片容器
-        live_body = QWidget()
-        live_body.setStyleSheet("background: transparent;")
-        lb = QVBoxLayout(live_body)
-        lb.setContentsMargins(0, 0, 0, 0)
-        lb.setSpacing(10)
-        # 直播间挂机（浏览器 + 地址）单独一个模块，2026-10-12 用户要求切出来
-        hang_body = QWidget()
-        hang_body.setStyleSheet("background: transparent;")
-        hang_lb = QVBoxLayout(hang_body)
-        hang_lb.setContentsMargins(0, 0, 0, 0)
-        hang_lb.setSpacing(10)
-
-        # a) OBS 路径
-        self.obs_entry = QLineEdit(str(self._c.get("obs_exe") or ""))
-        getattr(self, 'obs_entry', None).setStyleSheet(entry_qss())
-        getattr(self, 'obs_entry', None).setMinimumWidth(150)
-        getattr(self, 'obs_entry', None).setMaximumWidth(240)   # 长路径不许把卡片撑宽
-        getattr(self, 'obs_entry', None).setPlaceholderText("留空 = 自动探测")
-        getattr(self, 'obs_entry', None).editingFinished.connect(bind_cb(self._on_live))
-        b_obs = small_button("选择…", self._pick_obs, self.alpha,
-                             icon="file-text", width=80)
-        b_obs_scan = small_button("探测", self._detect_obs_clicked, self.alpha,
-                                  icon="search", width=74)
-        self.row_obs = SettingRow(
-            live_body, "file-text", "OBS 程序", self._obs_desc(),
-            right_wrap(getattr(self, 'obs_entry', None), b_obs, b_obs_scan), alpha=self.alpha,
-            tip="要填的是 `obs64.exe`（一般在 `obs-studio\\bin\\64bit\\` 下）。\n"
-                "**留空 = 自动探测**；探测到哪个会写在这行的说明里，"
-                "鼠标悬停能看完整路径。\n"
-                "只要 OBS 里已经配好推流地址并选好了场景，这里就不用再管别的。")
-        lb.addWidget(self.row_obs)
-
-        # 通过 Steam 启动（用户 2026-10-12：直接跑 exe 时 Steam 不显示"正在运行"）
-        self.switch_steam = Switch(self, bool(self._c.get("obs_via_steam", False)))
-        getattr(self, 'switch_steam', None).toggled.connect(bind_cb(self._on_live))
-        self.row_steam = SettingRow(
-            live_body, "plug", "通过 Steam 启动",
-            "Steam 版 OBS 才会在好友列表里显示「正在玩 OBS」",
-            getattr(self, 'switch_steam', None), alpha=self.alpha,
-            tip="**关**（默认）：直接运行 obs64.exe —— 能推流、能自动开播，"
-                "但 Steam 里不会显示你在玩 OBS。\n"
-                "**开**：用 `steam://rungameid/<AppID>` 让 Steam 自己拉起来，"
-                "好友列表就会显示「正在玩 OBS」。\n"
-                "⚠ Steam 启动方式**没法带命令行参数**，所以要自动开播，"
-                "得先在 Steam 里给 OBS 设一次「启动选项」：\n"
-                "    库 → OBS Studio 右键 → 属性 → 启动选项 → 填\n"
-                "    `--startstreaming --minimize-to-tray`")
-        lb.addWidget(self.row_steam)
-
-        # b/c) 开播方式
-        self.switch_obs_stream = Switch(self, bool(self._c.get("obs_start_stream", True)))
-        getattr(self, 'switch_obs_stream', None).toggled.connect(bind_cb(self._on_live))
-        lb.addWidget(SettingRow(
-            live_body, "radio", "自动开始推流",
-            "启动 OBS 时立即开播（--startstreaming）", getattr(self, 'switch_obs_stream', None),
-            alpha=self.alpha,
-            tip="关闭的话只把 OBS 打开、不自动开播，需要自己点「开始推流」。"))
-        self.switch_obs_min = Switch(self, bool(self._c.get("obs_minimize", True)))
-        getattr(self, 'switch_obs_min', None).toggled.connect(bind_cb(self._on_live))
-        lb.addWidget(SettingRow(
-            live_body, "minus", "最小化到托盘",
-            "不占屏幕，避免挡住游戏（--minimize-to-tray）",
-            getattr(self, 'switch_obs_min', None), alpha=self.alpha,
-            tip="推流期间 OBS 窗口缩到托盘，游戏窗口不会被挡住。"))
-        self.live_delay_entry = QLineEdit(str(self._c.get("live_delay") or 0))
-        getattr(self, 'live_delay_entry', None).setStyleSheet(entry_qss())
-        getattr(self, 'live_delay_entry', None).setFixedWidth(70)
-        getattr(self, 'live_delay_entry', None).setAlignment(Qt.AlignCenter)
-        getattr(self, 'live_delay_entry', None).editingFinished.connect(bind_cb(self._on_live))
-        lb.addWidget(SettingRow(
-            live_body, "clock", "延迟开播",
-            "启动游戏后等 N 秒再开播；0 = 立即",
-            right_wrap(getattr(self, 'live_delay_entry', None), QLabel("秒")), alpha=self.alpha,
-            tip="游戏刚起来时桌面/加载画面会一起播出去，"
-                "填 30~60 秒可以等它进到游戏里再开播。"))
-
-        # d) 直播间
-        self.live_url_entry = QLineEdit(str(self._c.get("live_url") or ""))
-        self.live_url_entry.setStyleSheet(entry_qss())
-        self.live_url_entry.setMinimumWidth(220)
-        self.live_url_entry.setMaximumWidth(260)
-        self.live_url_entry.setPlaceholderText("https://live.bilibili.com/123456")
-        self.live_url_entry.editingFinished.connect(bind_cb(self._on_live))
-        hang_lb.addWidget(SettingRow(
-            hang_body, "globe", "直播间地址",
-            "用浏览器打开这个页面挂机（留空则不开）", self.live_url_entry,
-            alpha=self.alpha,
-            tip="填你自己的直播间地址，例如 `https://live.bilibili.com/123456`。\n"
-                "会以新窗口打开，不影响你已有的 Chrome 窗口。"))
-
-        # e) 浏览器
-        self.chrome_entry = QLineEdit(str(self._c.get("chrome_exe") or ""))
-        self.chrome_entry.setStyleSheet(entry_qss())
-        self.chrome_entry.setMinimumWidth(150)
-        self.chrome_entry.setMaximumWidth(240)
-        self.chrome_entry.setPlaceholderText("留空 = 自动探测 Chrome")
-        self.chrome_entry.editingFinished.connect(bind_cb(self._on_live))
-        b_ch = small_button("选择…", self._pick_chrome, self.alpha,
-                            icon="file-text", width=80)
-        b_ch_scan = small_button("探测", self._detect_chrome_clicked, self.alpha,
-                                 icon="search", width=74)
-        hang_lb.addWidget(SettingRow(
-            hang_body, "monitor", "浏览器",
-            "留空则自动探测 Chrome，找不到就用系统默认浏览器",
-            right_wrap(self.chrome_entry, b_ch, b_ch_scan), alpha=self.alpha,
-            tip="想固定用某个浏览器（比如另一个 Chrome 用户数据目录）就在这里指定。"))
-
-        b_test_live = small_button("测试直播动作", self._test_live, self.alpha,
-                                   icon="play", width=120)
-        lb.addWidget(right_wrap(b_test_live))
-        # ★ 用户 2026-10-12：模块选项**不要折叠菜单**，开关打开就直接是普通卡片。
-        #   所以这里只是把卡片装进一个容器，展开/收起由可见性控制（不用 Accordion）。
-        self.live_box = live_body
-        self.hang_box = hang_body
-        self.live_acc = getattr(self, 'live_box', None)     # 老名字别名（可见性/测试还在用）
-        self.hang_acc = getattr(self, 'hang_box', None)
-
-        # ---------- ⑧-2 模块化（2026-10-12 用户要求）----------
-        # ① BGI 相关选项收进一个模块：**开关打开才显示**、关掉也不执行。
-        # ② 直播做成模块，而且**可卸载**（卸载会清掉直播相关配置）。
-        # ③ 模块内顺序由 `bgi_rows` 决定（用户指定：程序目录 → 目标启动程序
-        #    → 连续执行配置组 → 强制关闭旧 BGI → 到点开始监测 → 退出后停止）。
-        # BetterGI / 直播 / 挂机 的界面都由各自模块自己建（见 modules/*/ui.py）
-        self._live_ui = self._build_module_ui("live")
-        self._hang_ui = self._build_module_ui("hang")
-        self.row_uninstall = None      # 直播的卸载卡片已取消
+        # 模块设置由 modules/<key>/ui.py 提供；公共页只放通用的调度项。
+        try:
+            import modules as _registry
+            for _mod in _registry.load_all():
+                _res = self._build_module_ui(_mod["key"])
+                if _res:
+                    self._module_ui[_mod["key"]] = _res
+        except Exception as _exc:
+            print("[模块界面] 加载模块列表失败：", _exc, flush=True)
         self._reorder_tail()
         self._apply_module_visibility()
         self._reregister_modules()
 
-        # ---------- ⑨ 状态 + 操作 ----------
+        # 状态概览和常用操作；低频工具单独折叠，避免横向拥挤。
         st = Card(self, alpha=self.alpha)
         self.st_card = st
         stv = QVBoxLayout(st)
-        stv.setContentsMargins(14, 12, 14, 12)
-        stv.setSpacing(6)
-        self.st_title = QLabel("定时任务状态")
+        stv.setContentsMargins(16, 16, 16, 16)
+        stv.setSpacing(12)
+        header = QHBoxLayout()
+        self.st_title = QLabel("任务状态")
         self.st_title.setStyleSheet(label_qss(T.TEXT, 14, True))
-        stv.addWidget(self.st_title)
+        header.addWidget(self.st_title)
+        header.addStretch(1)
+        self.st_badge = QLabel("")
+        header.addWidget(self.st_badge)
+        stv.addLayout(header)
+        self.st_next = QLabel("")
+        self.st_next.setWordWrap(True)
+        self.st_next.setStyleSheet(label_qss(T.TEXT, 16, True))
+        stv.addWidget(self.st_next)
         self.st_label = QLabel("")
         self.st_label.setWordWrap(True)
         self.st_label.setStyleSheet(label_qss(T.DIM, 12))
         stv.addWidget(self.st_label)
 
-        # ⚠ 2026-10-13：原来这 7 个按钮挤在同一排 → 这张卡的最小宽度 758px，
-        #   是全页最宽的一张，DPI 稍大就把页面撑出横向滚动条。
-        #   拆成两排：主操作一排、模块/工具一排。
         btn_row = QHBoxLayout()
-        btn_row.setSpacing(8)
+        btn_row.setSpacing(10)
         self.b_apply = QPushButton("保存并应用")
-        self.b_apply.setFixedHeight(34)
+        self.b_apply.setFixedHeight(36)
         self.b_apply.setCursor(Qt.PointingHandCursor)
         self.b_apply.setStyleSheet(btn_qss("accent", self.alpha))
         self.b_apply.clicked.connect(bind_cb(self._apply))
-        btn_row.addWidget(self.b_apply)
-        for text, cb in (("立即运行一次", self._run_once),
-                         ("查看命令", self._show_cmd)):
-            b = QPushButton(text)
-            b.setFixedHeight(34)
-            b.setCursor(Qt.PointingHandCursor)
-            b.setStyleSheet(btn_qss("normal", self.alpha))
-            b.clicked.connect(bind_cb(cb))
-            btn_row.addWidget(b)
-        btn_row.addStretch(1)
+        btn_row.addWidget(self.b_apply, 1)
+        run_button = QPushButton("立即执行")
+        run_button.setFixedHeight(36)
+        run_button.setCursor(Qt.PointingHandCursor)
+        run_button.setStyleSheet(btn_qss("normal", self.alpha))
+        run_button.clicked.connect(bind_cb(self._run_once))
+        btn_row.addWidget(run_button, 1)
         stv.addLayout(btn_row)
-
-        row2 = QHBoxLayout()
-        row2.setSpacing(8)
-        for text, cb in (("打开目录", self._open_dir),
-                         ("添加模块", self._add_module_dialog),
-                         ("模块仓库", self._module_repo_dialog),
-                         ("卸载模块", self._uninstall_module_dialog),
-                         ("查看 BGI 日志", self._show_bgi_log)):
-            b = QPushButton(text)
-            b.setFixedHeight(34)
-            b.setCursor(Qt.PointingHandCursor)
-            b.setStyleSheet(btn_qss("normal", self.alpha))
-            b.clicked.connect(bind_cb(cb))
-            row2.addWidget(b)
-        row2.addStretch(1)
-        stv.addLayout(row2)
-
         self.log_label = QLabel("")
         self.log_label.setWordWrap(True)
         self.log_label.setStyleSheet(label_qss(T.DIM, 11))
+        self.log_label.hide()
         stv.addWidget(self.log_label)
         self.add_card(st)
+
+        tools_body = QWidget()
+        tools_body.setStyleSheet("background: transparent;")
+        tools_layout = QVBoxLayout(tools_body)
+        tools_layout.setContentsMargins(0, 0, 0, 0)
+        tools_layout.setSpacing(14)
+
+        def add_tool_group(title, actions):
+            label = QLabel(title)
+            label.setStyleSheet(label_qss(T.DIM, 12, True))
+            tools_layout.addWidget(label)
+            grid = QGridLayout()
+            grid.setHorizontalSpacing(10)
+            grid.setVerticalSpacing(8)
+            grid.setColumnStretch(0, 1)
+            grid.setColumnStretch(1, 1)
+            for index, (text, callback) in enumerate(actions):
+                button = QPushButton(text)
+                button.setFixedHeight(34)
+                button.setCursor(Qt.PointingHandCursor)
+                button.setStyleSheet(btn_qss("normal", self.alpha))
+                button.clicked.connect(bind_cb(callback))
+                grid.addWidget(button, index // 2, index % 2)
+            tools_layout.addLayout(grid)
+
+        add_tool_group("模块管理", [
+            ("打开模块目录", self._open_dir),
+            ("模块仓库", self._module_repo_dialog),
+            ("添加模块", self._add_module_dialog),
+            ("卸载模块", self._uninstall_module_dialog),
+        ])
+        tool_actions = [("查看命令", self._show_cmd)]
+        try:
+            import modules as _registry
+            for _module in _registry.load_all():
+                _ui = _registry.load_ui(_module["key"])
+                if _ui and hasattr(_ui, "module_tools"):
+                    tool_actions.extend(_ui.module_tools(self))
+        except Exception as _exc:
+            print("[模块工具] 加载失败：", _exc, flush=True)
+        add_tool_group("运行工具", tool_actions)
+        self.tools_card = Accordion(
+            self, "settings", "模块与工具", "模块目录、仓库、导入、卸载及命令查看",
+            body_widget=tools_body, alpha=self.alpha)
+        self.add_card(self.tools_card)
+        self._reorder_tail()
 
         self._refresh_state()
         self._sync_desc()
@@ -4314,9 +4207,9 @@ class AutostartTab(SettingsTab):
         on = [svc_autostart.WEEKDAY_NAMES[i]
               for i, b in enumerate(self.wd_boxes) if b.isChecked()]
         if len(on) == 7:
-            return "每天运行"
+            return "每日"
         if not on:
-            return "未选择（任务不会触发）"
+            return "未选择日期"
         if len(on) <= 2:
             return "、".join(on)              # 一两个就把名字写出来（很短）
         return f"每周 {len(on)} 天"
@@ -4324,7 +4217,7 @@ class AutostartTab(SettingsTab):
     def _excl_desc(self):
         n = len(self._c.get("exclude_dates") or [])
         if not n:
-            return "未设置（可添加固定假期等日期）"
+            return "未设置"
         ds = self._c["exclude_dates"]
         head = "、".join(ds[:4]) + ("…" if len(ds) > 4 else "")
         return f"{n} 个日期：{head}"
@@ -4414,63 +4307,9 @@ class AutostartTab(SettingsTab):
         for i, (_w, _e, num) in enumerate(rows, 1):
             num.setText(str(i))
 
-    # ------------------------------------------------------------ 配置组
-
-    # ---- 转发（界面与回调都在 modules/bgi/ui.py；主程序只用这几个值）----
-    def _group_names(self):
-        # 界面上勾过的 → 没有就读配置文件（测试/启动时就是靠这条 ✓）
-        sel = getattr(self, "_bgi_groups_sel", None)
-        if sel:
-            return list(sel)
-        return list((self._c.get("groups") or []))
-
-    def _mon_group(self):
-        return (getattr(self, "_bgi_mon_group", "")
-                or (self._c.get("auto_monitor_group") or ""))
-
-    def _stop_group(self):
-        return (getattr(self, "_bgi_stop_group", "")
-                or (self._c.get("stop_after_group") or ""))
-
-    def _refresh_group_names(self, *_a):
-        if getattr(self, "groups_acc", None) is None:
-            return
-        try:
-            import modules as _m
-            ui = _m.load_ui("bgi")
-            if ui is not None:
-                ui._refresh_group_names(self)
-        except Exception:
-            pass
-
-    def _refresh_mon_stop_lists(self, *_a):
-        if getattr(self, "mon_acc", None) is None:
-            return
-        try:
-            import modules as _m
-            ui = _m.load_ui("bgi")
-            if ui is not None:
-                ui.refresh_mon_stop(self)
-        except Exception:
-            pass
-
-    def _mod_desc(self, key, fallback=""):
-        """问模块要"卡片下面那句简介" —— 通用：任何模块只要 ui.py 里有 desc(tab) 就行。
-
-        ⚠ 之前错在：拿 build() 交回的**字典**去问 desc()（字典没有这个方法 ✗）→
-          简介永远是空的（用户反馈"直播间挂机怎么没有简介"就是这个）。
-        """
-        try:
-            import modules as _m
-            ui = _m.load_ui(key)
-            if ui is not None and hasattr(ui, "desc"):
-                return ui.desc(self)
-        except Exception:
-            pass
-        return fallback
-
+    # ------------------------------------------------------------ 模块界面注册
     def _module_installed(self, key):
-        """这个模块在不在（看文件夹）—— 模块界面里也能用 ✓"""
+        """通用 UI 辅助：注册表中是否有这个模块。"""
         try:
             import svc_autostart as _A
             return bool(_A.module_installed(key))
@@ -4503,6 +4342,12 @@ class AutostartTab(SettingsTab):
             ui = _mods.load_ui(key)
             if ui is None:
                 return None
+            # 所有模块开关使用同一入口；模块无需在主页面注册专属回调。
+            if hasattr(ui, "toggle"):
+                try:
+                    ui.bind_toggle(self)
+                except AttributeError:
+                    pass
             res = ui.build(self)
             self._register_module_ui(key, res)
             return res
@@ -4519,16 +4364,12 @@ class AutostartTab(SettingsTab):
         BGI 的界面建得早，登记时它的"选项区"还没准备好 → 置顶登记里少了 BGI ✗；
         这里在最后按约定（row_xxx_mod + xxx_box）再登记一次 ✓，重复的跳过 ✓。
         """
-        conv = {"bgi": ("row_bgi_mod", "bgi_box"),
-                "live": ("row_live_mod", "live_box"),
-                "hang": ("row_hang_mod", "hang_box")}
         lst = getattr(self, "_mod_ui_list", None)
         if lst is None:
             return
         have = {id(c) for c, _b in lst}
-        for k, (cname, bname) in conv.items():
-            card = getattr(self, cname, None)
-            box = getattr(self, bname, None)
+        for k, res in getattr(self, "_module_ui", {}).items():
+            card, box = res.get("card"), res.get("box")
             if card is None or box is None or id(card) in have:
                 continue
             lst.append((card, box))
@@ -4552,39 +4393,8 @@ class AutostartTab(SettingsTab):
         except Exception:
             pass
 
-    # ============ 勾选列表：开始/停止监测（通用组件 CheckList） ============
-    def _show_bgi_log(self, *_a):
-        """看 BGI 最新日志的尾巴（出问题第一件事就是看它）"""
-        path = svc_autostart.latest_bgi_log(
-            (self._c.get("bgi_dir") or "").strip(),
-            (self._c.get("bgi_exe") or "").strip())
-        if not path:
-            self._log("没找到 BetterGI 的日志（检查「程序目录」是否填对）。")
-            return
-        text = svc_autostart.tail_text(path, lines=200)
-        dlg = CardDialog(self._win, self.alpha, title="BetterGI 日志", width=460)
-        dlg.set_subtitle(str(path).split("\\")[-1])
-        te = QPlainTextEdit(text)
-        te.setReadOnly(True)
-        te.setFixedHeight(300)
-        te.setStyleSheet(entry_qss())
-        dlg.add_widget(te)
-        b = small_button("用记事本打开", self._open_bgi_log_file, self.alpha,
-                         icon="file-text", width=130)
-        b.clicked.connect(bind_cb(self._open_bgi_log_file, str(path)))
-        dlg.add_widget(b)
-        dlg.add_confirm("关闭")
-        dlg.exec()
-
-    def _open_bgi_log_file(self, path, *_a):
-        try:
-            import os as _os
-            _os.startfile(str(path))     # noqa: S606 - 用户自己的日志文件
-        except Exception as e:
-            self._log(f"打开日志失败：{e}")
-
     # ------------------------------------------------------------ 跳过日期
-    DATE_HINT = "点击选择日期"
+    DATE_HINT = "选择日期"
 
     def _add_date_row(self, value=""):
         if len(self._date_rows) >= self.MAX_DATES:
@@ -4592,7 +4402,7 @@ class AutostartTab(SettingsTab):
             return None
         return self._dyn_row(self.dates_lay, self._date_rows,
                              value or "",
-                             "点击选择日期",
+                             "选择日期",
                              self._on_dates,
                              lambda w: self._remove_date_row(w),
                              max_rows=self.MAX_DATES,
@@ -4648,241 +4458,49 @@ class AutostartTab(SettingsTab):
             pass
 
     # ------------------------------------------------------------ 直播
-    def _obs_desc(self):
-        """「OBS 程序」那行的说明 —— **必须短**。
-
-        ⚠ 写长过一次（带完整路径 + Steam AppID，约 330px），结果整行超过
-          窗口宽度 → 页面出横向滚动条、固定高度的卡片互相重叠。
-          完整路径/AppID 现在只在**悬停提示**里显示（见 `_sync_live_desc`）。
-        """
-        cur = (getattr(self, 'obs_entry', None).text() or "").strip()
-        if cur:
-            return "已指定（悬停看完整路径）"
-        p = svc_autostart.detect_obs()
-        if not p:
-            return "obs64.exe；留空则自动探测（当前没探测到）"
-        tag = "（Steam 版）" if svc_autostart.steam_appid_for(p) else ""
-        return f"留空则自动探测（已找到{tag}）"
-
-    def _sync_live_desc(self):
-        try:
-            self.live_acc.desc_label.setText(self._live_desc())
-        except Exception:
-            pass
-        try:
-            self.row_obs.set_text(desc=self._obs_desc())
-            cur = (getattr(self, 'obs_entry', None).text() or "").strip()
-            p = cur or svc_autostart.detect_obs()
-            if p:
-                appid = svc_autostart.steam_appid_for(p)
-                tip = f"将启动：{p}"
-                if appid:
-                    tip += f"\n（Steam 版，AppID {appid}）"
-                self.row_obs.setToolTip(tip)
-            else:
-                self.row_obs.setToolTip("没探测到 OBS")
-        except Exception:
-            pass
-
-    def _live_desc(self):
-        """折叠区标题下那句：一眼看出直播这块有没有配好"""
-        if not self._c.get("live_enabled"):
-            return "未启用"
-        bits = []
-        obs = (self._c.get("obs_exe") or "").strip() or svc_autostart.detect_obs()
-        if obs:
-            if self._c.get("obs_via_steam") and svc_autostart.steam_appid_for(obs):
-                bits.append("OBS 开播（走 Steam）")
-            else:
-                bits.append("OBS 开播（直接启动）")
-        else:
-            bits.append("⚠ 没找到 OBS")
-        if self._c.get("live_url"):
-            bits.append("直播间挂机")
-        else:
-            bits.append("未填直播间地址")
-        d = int(self._c.get("live_delay") or 0)
-        if d:
-            bits.append(f"延迟 {d} 秒")
-        return "已启用：" + "　·　".join(bits)
-
-    def _on_live(self, *_a):
-        self._collect()
-        self._sync_live_desc()
-        # 模块卡片的说明也跟着更新（"已启用 / 未启用"）
-        try:
-            getattr(self, 'row_live_mod', None).set_text(desc=self._live_mod_desc())
-        except Exception:
-            pass
-        self._refresh_state()
-
-    def _pick_obs(self):
-        p, _ = QFileDialog.getOpenFileName(
-            self._win, "选择 OBS 主程序（obs64.exe）",
-            getattr(self, 'obs_entry', None).text().strip() or "C:\\",
-            "OBS 主程序 (obs64.exe);;可执行文件 (*.exe)")
-        if p:
-            getattr(self, 'obs_entry', None).setText(p)
-            getattr(self, 'obs_entry', None).setCursorPosition(0)        # 显示路径开头，不是末尾
-            self._on_live()
-
-    def _detect_obs_clicked(self):
-        p = svc_autostart.detect_obs()
-        if p:
-            getattr(self, 'obs_entry', None).setText(p)
-            getattr(self, 'obs_entry', None).setCursorPosition(0)
-            self._log(f"已定位 OBS：{p}")
-        else:
-            self._log("未在常见位置找到 OBS，请手动指定 obs64.exe。")
-        self._on_live()
-
-    def _pick_chrome(self):
-        p, _ = QFileDialog.getOpenFileName(
-            self._win, "选择浏览器主程序",
-            self.chrome_entry.text().strip() or "C:\\",
-            "浏览器 (chrome.exe);;可执行文件 (*.exe)")
-        if p:
-            self.chrome_entry.setText(p)
-            self.chrome_entry.setCursorPosition(0)     # 显示路径开头，不是末尾
-            self._on_live()
-
-    def _detect_chrome_clicked(self):
-        p = svc_autostart.detect_chrome()
-        if p:
-            self.chrome_entry.setText(p)
-            self.chrome_entry.setCursorPosition(0)
-            self._log(f"已定位浏览器：{p}")
-        else:
-            self._log("未找到 Chrome，将使用系统默认浏览器。")
-        self._on_live()
-
-    def _test_live(self, *_a):
-        """立刻做一遍直播动作（不用等到点）"""
+    def _on_module_config_changed(self, key):
+        """模块设置发生变化：公共页只保存通用配置、刷新状态和调用模块摘要。"""
         self._collect()
         self._save()
-        if not self._c.get("live_enabled"):
-            self._log("先在「到点开始直播」打开开关，再测试。")
-            return
-        notes = svc_autostart.start_live(self._c)
-        self._log("测试直播：" + ("；".join(notes) if notes
-                                else "没有配置任何直播动作。"))
-        self._sync_live_desc()
+        result = getattr(self, "_module_ui", {}).get(key)
+        if result:
+            try:
+                import modules as _registry
+                ui = _registry.load_ui(key)
+                if ui is not None and hasattr(ui, "desc"):
+                    result["card"].set_text(desc=ui.desc(self))
+            except Exception:
+                pass
+        self._refresh_state()
 
     # ------------------------------------------------------------ 模块
     def _reorder_tail(self):
-        """把页面尾部按模块化顺序**显式**排一遍。
-
-        为什么不靠 index 推算：控件是分好几步 add 进来的，中间还有
-        removeWidget/insertWidget，index 算着算着就错位了（踩过：折叠区
-        被排到"唤醒电脑再运行"后面去了）。显式列出顺序最不容易错。
-
-        目标顺序：启用 → 时间 → 星期 → 跳过日期 → BGI模块行 → 直播模块行
-                  → BGI折叠区 → 直播折叠区 → 到点开始直播 → 唤醒 → 状态
-        """
-        # 每个模块：卡片 → 它的选项（普通卡片，不折叠）→ 卸载卡片（最下面）
-        order = [getattr(self, 'row_bgi_mod', None),
-                 getattr(self, 'bgi_box', None),
-                 getattr(self, 'row_live_mod', None),
-                 getattr(self, 'live_box', None),
-                 getattr(self, 'row_uninstall', None),
-                 getattr(self, 'row_hang_mod', None),
-                 getattr(self, 'hang_box', None),
-                 getattr(self, 'row_uninstall_hang', None),
-                 getattr(self, 'row_wake', None),
-                 getattr(self, 'st_card', None)]
+        """通用调度设置在前，每个模块的开关与选项相邻，状态和工具在末尾。"""
+        order = [getattr(self, "row_wake", None)]
+        for res in getattr(self, "_module_ui", {}).values():
+            order.extend(w for w in (res.get("card"), res.get("box"))
+                         if w is not None)
+        order.extend((getattr(self, "st_card", None),
+                      getattr(self, "tools_card", None)))
+        order = [w for w in order if w is not None]
         for w in order:
-            if w is not None:
-                self.v.removeWidget(w)
+            self.v.removeWidget(w)
         base = self.v.indexOf(self.excl_acc) + 1
-        for i, w in enumerate([w for w in order if w is not None]):
+        for i, w in enumerate(order):
             self.v.insertWidget(base + i, w)
 
-    def _bgi_desc(self):
-        """BGI 折叠区标题下那句：一眼看出配了什么"""
-        exe = (self._c.get("bgi_exe") or "").strip()
-        g = [x for x in (self._c.get("groups") or []) if x]
-        bits = [os.path.basename(exe) if exe else "未设目标程序"]
-        bits.append(f"{len(g)} 组" if g else "不执行配置组")
-        if self._c.get("auto_monitor"):
-            bits.append("到点自动监测")
-        return "　·　".join(bits)
-
-    def _live_mod_desc(self, *_a):
-        """卡片下面那行简介 —— 内容由**模块文件**决定（主程序不写死）"""
-        return self._mod_desc("live")
     def _apply_module_visibility(self):
-        """按模块状态决定显示哪些块。
-
-        规则（用户 2026-10-12 定的）：
-            BetterGI 模块：开关开 → 卡片下面紧跟它的选项折叠区；关 → 收起
-            直播插件：装着 + 开关开 → 卡片下面紧跟选项；装着但开关关 → 只收选项；
-                      没装 → 卡片、选项、卸载卡片全都不显示
-        """
-        # 模块可能被删掉 -> 一律 getattr，缺了就当没这个模块
-        bgi = svc_autostart.mod_on(self._c, "bgi")
-        # 模块是否"在" —— 看文件夹（删掉文件夹 → 卡片一律不显示）
-        # ⚠ 2026-10-13：这里必须**先无条件兜底赋值**！原来是"不在才赋值"，
-        #   结果模块**在**的时候下面直接读这两个属性 → 崩在 __init__ ✗
-        #   （用户反馈「塞回模块后启动报 _hang_installed」就是这个）
-        self._live_installed = bool(getattr(self, '_live_installed', False))             and svc_autostart.module_installed("live")
-        self._hang_installed = bool(getattr(self, '_hang_installed', False))             and svc_autostart.module_installed("hang")
-        _sw_live = getattr(self, 'switch_live', None) if self._live_installed else None
-        _sw_hang = getattr(self, 'switch_hang', None) if self._hang_installed else None
-        self._live_installed = bool(getattr(self, '_live_installed', False)
-                                    and _sw_live is not None)
-        self._hang_installed = bool(getattr(self, '_hang_installed', False)
-                                    and _sw_hang is not None)
-        live_on = (self._live_installed and bool(_sw_live.isChecked())) if _sw_live else False
-        hang_on = (self._hang_installed and bool(_sw_hang.isChecked())) if _sw_hang else False
-        for w, on in ((getattr(self, "bgi_box", None), bgi),
-                      (getattr(self, "row_mon", None), bgi),
-                      (getattr(self, "row_stop", None), bgi),
-                      (getattr(self, "row_live_mod", None), self._live_installed),
-                      (getattr(self, "live_box", None), live_on),
-                      (getattr(self, "row_uninstall", None), self._live_installed),
-                      (getattr(self, "row_hang_mod", None), self._hang_installed),
-                      (getattr(self, "hang_box", None), hang_on),
-                      (getattr(self, "row_uninstall_hang", None),
-                       self._hang_installed)):
-            try:
-                if w is not None:
-                    w.setVisible(on)
-            except Exception:
-                pass
+        """让各模块根据自己的规则设置卡片、选项区的显示状态。"""
         try:
-            getattr(self, 'row_bgi_mod', None).set_text(
-                desc=("目标程序、连续执行配置组、到点自动监测（关掉则隐藏且不执行）"
-                      if bgi else "已关闭 —— 这些选项不显示、也不执行"))
-        except Exception:
-            pass
-        try:
-            getattr(self, 'switch_live_mod', None).setChecked(bool(self._c.get("live_enabled", False)))
-            getattr(self, 'row_live_mod', None).set_text(desc=self._live_mod_desc())
-            getattr(self, 'switch_hang', None).setChecked(bool(self._c.get("hang_enabled", True)))
-            getattr(self, 'row_hang_mod', None).set_text(desc=self._hang_mod_desc())
-        except Exception:
-            pass
-
+            import modules as _registry
+            for _mod in _registry.load_all():
+                _ui = _registry.load_ui(_mod["key"])
+                if _ui is not None and hasattr(_ui, "apply"):
+                    _ui.apply(self, bool((self._c.get("modules") or {}).get(
+                        _mod["key"], True)))
+        except Exception as _exc:
+            print("[模块界面] 更新显隐失败：", _exc, flush=True)
         self._sticky_refresh()
-
-    def _hang_mod_desc(self, *_a):
-        """卡片下面那行简介 —— 内容由**模块文件**决定（主程序不写死）"""
-        return self._mod_desc("hang")
-    def _on_hang_mod(self, *_a):
-        """直播间挂机模块开关"""
-        self._c["hang_enabled"] = bool(getattr(self, 'switch_hang', None).isChecked())
-        self._collect()
-        self._apply_module_visibility()
-        self._save()
-        self._refresh_state()
-        self._log("直播间挂机：" + ("已启用" if self._c["hang_enabled"]
-                                  else "已停用"))
-
-    def _uninstall_live_clicked(self, *_a):
-        self._do_uninstall_module("live")
-
-    def _uninstall_hang_clicked(self, *_a):
-        self._do_uninstall_module("hang")
 
     def _uninstall_module_dialog(self, *_a):
         """页尾「卸载模块」：列出已安装的模块，点一下卸载"""
@@ -4890,7 +4508,7 @@ class AutostartTab(SettingsTab):
         dlg = CardDialog(self._win, self.alpha, title="卸载模块", width=360)
         dlg.set_subtitle("已安装的模块")
         any_mod = False
-        for m in svc_autostart.MODULES:
+        for m in svc_autostart._load_modules():
             if not svc_autostart.mod_on(self._c, m["key"]):
                 continue
             any_mod = True
@@ -4916,7 +4534,7 @@ class AutostartTab(SettingsTab):
                 if (self._c.get("external_on") or {}).get(m["key"])]
         if exts:
             any_mod = True
-            head = QLabel("<b>自己导入的模块</b>")
+            head = QLabel("<b>已导入的模块</b>")
             head.setStyleSheet(label_qss(T.TEXT, 12))
             dlg.add_widget(head)
             for m in exts:
@@ -4944,14 +4562,26 @@ class AutostartTab(SettingsTab):
     def _uninstall_from_dialog(self, key, *_a):
         self._do_uninstall_module(key)
 
-    def _on_live_mod(self, *_a):
-        """直播插件开关：等价于原来的「到点开始直播」"""
-        self._c["live_enabled"] = bool(getattr(self, 'switch_live_mod', None).isChecked())
+    def _on_module_toggle(self, key, on):
+        self._c.setdefault("modules", {})[key] = bool(on)
+        _ui = None
+        try:
+            import modules as _registry
+            _ui = _registry.load_ui(key)
+        except Exception:
+            pass
+        if _ui is not None and hasattr(_ui, "toggle"):
+            try:
+                _ui.toggle(self, bool(on))
+                return
+            except Exception as _exc:
+                print("[模块开关] 模块回调失败：", key, _exc, flush=True)
         self._collect()
         self._apply_module_visibility()
         self._save()
         self._refresh_state()
-        self._log("直播插件：" + ("已启用" if self._c["live_enabled"] else "已停用"))
+        self._log(f"{svc_autostart.module_info(key)['name']}："
+                  f"{'已启用' if on else '已停用'}")
 
     def _module_repo_dialog(self, *_a):
         """「模块仓库」：浏览 / 下载 / 安装别人做好的模块（Gitee+GitHub 双源）"""
@@ -4959,7 +4589,7 @@ class AutostartTab(SettingsTab):
             import qt_module_repo
             dlg = qt_module_repo.ModuleRepoDialog(self._win or self, self.alpha)
             dlg.exec()
-            self._log("模块仓库：已打开")
+            self._log("已打开模块仓库。")
         except Exception as e:
             self._log(f"模块仓库打不开：{type(e).__name__}: {e}")
 
@@ -4971,14 +4601,14 @@ class AutostartTab(SettingsTab):
         from qt_dlg_card import CardDialog
         import svc_modules
         dlg = CardDialog(self._win, self.alpha, title="添加模块", width=380)
-        dlg.set_subtitle("可用模块")
-        for m in svc_autostart.MODULES:
+        dlg.set_subtitle("可用模块列表")
+        for m in svc_autostart._load_modules():
             # ⚠ 内置模块**不是"未安装"** —— 它一直就在，只是开关可能关着。
             #   之前这里写"未安装"还给了安装按钮，用户看到「BetterGI 模块 未安装」
             #   一头雾水（2026-10-13 反馈）。
             if m["builtin"]:
                 state = "已启用" if svc_autostart.mod_on(self._c, m["key"]) \
-                    else "内置（当前已关闭，可在上面卡片里打开）"
+                    else "内置 · 已停用"
                 row = QLabel(f"<b>{m['name']}　内置</b><br>{m['desc']}<br>{state}")
                 row.setWordWrap(True)
                 row.setStyleSheet(label_qss(T.TEXT, 12))
@@ -4986,19 +4616,20 @@ class AutostartTab(SettingsTab):
                 continue
             on = svc_autostart.mod_on(self._c, m["key"])
             row = QLabel(f"<b>{m['name']}　"
-                         f"{'已安装' if on else '未安装'}</b><br>{m['desc']}")
+                         f"{'已启用' if on else '已停用'}</b><br>{m['desc']}")
             row.setWordWrap(True)
             row.setStyleSheet(label_qss(T.TEXT, 12))
             dlg.add_widget(row)
-            if not on:
-                b = small_button(f"安装{m['name']}", self._install_module,
-                                 self.alpha, icon="plus", width=120)
-                b.clicked.connect(bind_cb(self._install_module, m["key"], True))
-                dlg.add_widget(b)
+            b = small_button(f"{'停用' if on else '启用'}{m['name']}",
+                             self._install_module, self.alpha,
+                             icon="toggle-right" if on else "toggle-left",
+                             width=120)
+            b.clicked.connect(bind_cb(self._install_module, m["key"], not on))
+            dlg.add_widget(b)
         # 外部导入的模块
         exts = svc_modules.external_modules()
         if exts:
-            head = QLabel("<b>自己导入的模块</b>")
+            head = QLabel("<b>已导入的模块</b>")
             head.setStyleSheet(label_qss(T.TEXT, 12))
             dlg.add_widget(head)
             for m in exts:
@@ -5018,8 +4649,8 @@ class AutostartTab(SettingsTab):
         b_imp = small_button("导入模块…", self._import_module_clicked,
                              self.alpha, icon="plus", width=120)
         dlg.add_widget(b_imp)
-        note = QLabel("模块文件是 `.sgmod.json`（只声明「启动哪个程序/打开哪个网址」，"
-                      "不含代码）——别人发给你，用「导入模块…」选中就能用。")
+        note = QLabel("模块文件格式为 `.sgmod.json`，仅包含程序启动或网址打开动作，不包含代码。\n"
+                      "点击“导入模块”选择文件。")
         note.setWordWrap(True)
         note.setStyleSheet(label_qss(T.DIM, 11))
         dlg.add_widget(note)
@@ -5041,7 +4672,7 @@ class AutostartTab(SettingsTab):
             return
         self._c.setdefault("external_on", {})[info["key"]] = True
         self._save()
-        self._log(msg + "，已启用；点「保存并应用」后到点就会执行。")
+        self._log(msg + "。保存并应用后生效。")
 
     def _delete_module_file(self, key, *_a):
         """彻底删除一个外部模块文件"""
@@ -5049,108 +4680,72 @@ class AutostartTab(SettingsTab):
         ok = svc_modules.remove_module_file(key)
         self._c.setdefault("external_on", {}).pop(key, None)
         self._save()
-        self._log("模块文件已删除。" if ok else "删除失败（文件可能已不在）。")
+        self._log("模块文件已删除。" if ok else "删除失败，文件可能已不存在。")
 
     def _install_module(self, key, on=True, *_a):
-        """装/卸一个模块。key：内置模块名（live/hang）或外部模块 ext:xxx"""
-        import svc_modules
+        """启用或停用一个模块；具体配置由模块自己的 UI 管理。"""
         if str(key).startswith("ext:"):
             self._c.setdefault("external_on", {})[key] = bool(on)
             self._save()
             self._log(f"外部模块：{'已启用' if on else '已停用'}")
             return
-        self._c.setdefault("modules", {})[key] = True
-        if key == "live":
-            self._live_installed = True
-            self._c["live_enabled"] = True      # 装上默认就启用直播
-        elif key == "hang":
-            self._hang_installed = True
-            self._c["hang_enabled"] = True      # 装上默认就启用挂机
+        self._c.setdefault("modules", {})[key] = bool(on)
+        try:
+            import modules as _registry
+            ui = _registry.load_ui(key)
+            if ui is not None and hasattr(ui, "toggle"):
+                ui.toggle(self, bool(on))
+                return
+        except Exception as exc:
+            print("[模块开关] 模块安装回调失败：", key, exc, flush=True)
         self._save()
         self._apply_module_visibility()
-        self._log(f"{svc_autostart.module_info(key)['name']}：已安装")
-
-    def _on_bgi_mod(self, *_a):
-        """BGI 模块开关：收值 → 显隐 → 落盘"""
-        self._c["modules"]["bgi"] = bool(getattr(self, 'switch_bgi_mod', None).isChecked())
-        self._collect()
-        self._apply_module_visibility()
-        self._save()
         self._refresh_state()
-        self._log(f"BGI 模块：{'已打开' if self._c['modules']['bgi'] else '已关闭'}")
-
-    def _toggle_live_mod(self, *_a):
-        if svc_autostart.mod_on(self._c, "live"):
-            _do = self._do_uninstall_live
-        else:
-            _do = self._do_install_live
-        _do()
-
-    def _do_install_live(self):
-        self._live_installed = True
-        self._c["modules"]["live"] = True
-        self._c["live_enabled"] = bool(self.switch_live.isChecked())
-        self._save()
-        self._apply_module_visibility()
-        self._log("直播模块：已安装（到点开始直播的开关在模块里面）")
+        info = svc_autostart.module_info(key) or {"name": key}
+        self._log(f"{info['name']}：{'已启用' if on else '已停用'}")
 
     def _do_uninstall_module(self, key):
-        """卸载某个模块：收起 + 清掉该模块的配置。
-
-        key = "live"（直播插件：OBS）/ "hang"（直播间挂机：浏览器 + 地址）
-        内置模块（bgi）不给卸载，只给开关。
-        """
+        """停用模块并清除它自己的配置；内置模块只能停用、不能删除文件。"""
         info = svc_autostart.module_info(key)
+        if not info:
+            self._log("模块不存在或已移除。")
+            return
         if info.get("builtin"):
-            self._log(f"{info['name']}是内置模块，不能卸载（可以关掉开关）。")
+            self._c.setdefault("modules", {})[key] = False
+            self._collect()
+            self._save()
+            self._apply_module_visibility()
+            self._refresh_state()
+            self._log(f"{info['name']}为内置模块，已停用，无法卸载。")
             return
         self._c.setdefault("modules", {})[key] = False
-        if key == "live":
-            self._live_installed = False
-            self._c["live_enabled"] = False
-            self._c["obs_exe"] = ""
-            self._c["obs_via_steam"] = False
-            self._c["live_delay"] = 0
-            try:
-                getattr(self, 'obs_entry', None).setText("")
-                getattr(self, 'switch_steam', None).setChecked(False)
-                getattr(self, 'live_delay_entry', None).setText("0")
-            except Exception:
-                pass
-        elif key == "hang":
-            self._hang_installed = False
-            self._c["hang_enabled"] = False
-            self._c["live_url"] = ""
-            self._c["chrome_exe"] = ""
-            try:
-                self.live_url_entry.setText("")
-                self.chrome_entry.setText("")
-            except Exception:
-                pass
-        # 界面也跟着清（不然"卸载了但界面上还留着"）
+        result = getattr(self, "_module_ui", {}).get(key) or {}
+        switch = result.get("switch")
+        if switch is not None:
+            switch.blockSignals(True)
+            switch.setChecked(False)
+            switch.blockSignals(False)
         try:
-            self.switch_live.setChecked(False)
-            getattr(self, 'obs_entry', None).setText("")
-            getattr(self, 'switch_steam', None).setChecked(False)
-            self.live_url_entry.setText("")
-            self.chrome_entry.setText("")
-            getattr(self, 'live_delay_entry', None).setText("0")
-        except Exception:
-            pass
+            import modules as _registry
+            ui = _registry.load_ui(key)
+            if ui is not None and hasattr(ui, "reset"):
+                ui.reset(self, self._c)
+        except Exception as exc:
+            self._log(f"模块清理配置失败：{type(exc).__name__}: {exc}")
         self._save()
         self._apply_module_visibility()
-        self._sync_live_desc()
         self._log(f"{info['name']}：已卸载（相关配置已清空，"
-                  f"可用页尾「添加模块」装回来）")
+                  f"可通过“添加模块”重新导入。）")
 
     # ------------------------------------------------------------ 小工具
     def _log(self, text):
         self.log_label.setText(str(text))
+        self.log_label.setVisible(bool(text))
 
     def _side_effect_note(self):
         if not svc_autostart.is_admin():
-            return "未提权（保存时请求 UAC）"
-        return "已提权"
+            return "保存时请求管理员权限"
+        return "管理员权限已获取"
 
     def _refresh_state(self):
         c = self._c
@@ -5159,17 +4754,20 @@ class AutostartTab(SettingsTab):
         head = "已启用" if c.get("enabled") else "未启用"
         days = "".join("一二三四五六日"[i]
                        for i in svc_autostart.active_weekdays(c))
-        lines = [f"状态：{head}　·　时间 {c.get('time')}　·　"
-                 f"运行日 {days or '未选择'}",
-                 f"下次运行：{nr.strftime('%Y-%m-%d %H:%M') if nr else '—'}"
-                 + (f"　（今日跳过）"
-                    if svc_autostart.skipped_today(c) else ""),
-                 f"定时任务：{'已创建' if info['exists'] else '未创建'}"
-                 + (f"　上次 {info['last_run']}" if info.get("last_run") else "")
-                 + f"　·　{self._side_effect_note()}"]
-        if c.get("exclude_dates"):
-            lines.append("跳过日期：" + "、".join(c["exclude_dates"][:8])
-                         + ("…" if len(c["exclude_dates"]) > 8 else ""))
+        self.st_badge.setText(head)
+        color = T.ACCENT if c.get("enabled") else T.DIM
+        self.st_badge.setStyleSheet(
+            f"QLabel {{ color:{color}; background:{rgba(color, 24)};"
+            " border-radius:9px; padding:4px 10px; font-size:12px; }")
+        self.st_next.setText(
+            "下次执行：" + (nr.strftime("%m月%d日 %H:%M") if nr else "未安排"))
+        lines = [f"执行时间：{c.get('time')}　·　运行日期：{days or '未选择'}",
+                 f"系统任务：{'已创建' if info['exists'] else '未创建'}"]
+        if info.get("last_run"):
+            lines.append(f"上次执行：{info['last_run']}")
+        if svc_autostart.skipped_today(c):
+            lines.append("今日为排除日期")
+        lines.append(self._side_effect_note())
         self.st_label.setText("\n".join(lines))
         self.b_apply.setEnabled(not self._busy)
 
@@ -5183,12 +4781,12 @@ class AutostartTab(SettingsTab):
         try:
             c = self._c
             if not c.get("enabled"):
-                txt = "按设定时间自动启动程序；关闭时删除定时任务"
+                txt = "按计划执行已启用模块；停用后移除计划任务"
             else:
                 nr = svc_autostart.next_run(c)
-                txt = (f"每日 {c.get('time')} 自动运行"
+                txt = (f"每日 {c.get('time')} 执行"
                        + (f"，下次 {nr.strftime('%m-%d %H:%M')}" if nr else "")
-                       + "；关闭时删除定时任务")
+                       + "；停用后移除计划任务")
             self.row_on.set_text(desc=txt)
         except Exception:
             pass
@@ -5199,42 +4797,24 @@ class AutostartTab(SettingsTab):
         self._c["enabled"] = bool(self.switch_on.isChecked())
         self._c["time"] = (self.time_entry.text() or "").strip()
         self._c["weekdays"] = [bool(cb.isChecked()) for cb in self.wd_boxes]
-        # ---- 模块（bgi 看开关；live 看它是"已安装"还是"已卸载"）----
-        mods = dict(self._c.get("modules") or {})
-        mods["bgi"] = bool(getattr(self, 'switch_bgi_mod', None).isChecked())
-        mods["live"] = bool(getattr(self, "_live_installed", True))
-        mods["hang"] = bool(getattr(self, "_hang_installed", True))
-        self._c["modules"] = mods
-
-        bgi = mods["bgi"]
-        live = mods["live"]
-        hang = mods["hang"]
-        # BGI 模块关掉 → 目标程序/配置组/杀旧实例/自动监测 全部按"没有"处理，
-        # 免得出现"界面藏起来了，但后台还照跑"的情况。
-        self._c["groups"] = self._group_names() if bgi else []
-        self._c["bgi_dir"] = (getattr(self, "dir_entry", None) and self.dir_entry.text() or "").strip() if bgi else ""
-        self._c["bgi_exe"] = (getattr(self, "exe_entry", None) and self.exe_entry.text() or "").strip() if bgi else ""
         self._c["wake_to_run"] = bool(self.switch_wake.isChecked())
-        self._c["kill_existing_bgi"] = bool(getattr(self, "switch_kill", None) and self.switch_kill.isChecked()) if bgi else False
-        self._c["auto_monitor"] = False   # 旧开关已取消，改由 auto_monitor_group 控制
-        # 2026-10-13：改成"按配置组"控制（旧的两个开关已取消）
-        self._c["auto_monitor_group"] = self._mon_group() if bgi else ""
-        self._c["stop_after_group"] = self._stop_group() if bgi else ""
-        self._c["auto_monitor"] = False
-        self._c["auto_stop"] = False
-        # ---- 直播 ----
-        self._c["live_enabled"] = bool(self.switch_live.isChecked()) if live else False
-        self._c["obs_exe"] = (getattr(self, 'obs_entry', None).text() or "").strip() if live else ""
-        self._c["obs_via_steam"] = bool(getattr(self, 'switch_steam', None).isChecked()) if live else False
-        self._c["obs_start_stream"] = bool(getattr(self, 'switch_obs_stream', None).isChecked())
-        self._c["obs_minimize"] = bool(getattr(self, 'switch_obs_min', None).isChecked())
-        self._c["hang_enabled"] = bool(getattr(self, 'switch_hang', None).isChecked()) if hang else False
-        self._c["live_url"] = (self.live_url_entry.text() or "").strip() if hang else ""
-        self._c["chrome_exe"] = (self.chrome_entry.text() or "").strip() if hang else ""
+        # 模块专属设置由各自的 ui.collect() 管理，不在公共页面维护字段细节。
         try:
-            self._c["live_delay"] = max(0, int((getattr(self, 'live_delay_entry', None).text() or "0").strip()))
-        except Exception:
-            self._c["live_delay"] = 0
+            import modules as _registry
+            module_states = {}
+            for _mod in _registry.load_all():
+                _ui = _registry.load_ui(_mod["key"])
+                if _ui is not None and hasattr(_ui, "collect"):
+                    collected = _ui.collect(self, self._c)
+                    if isinstance(collected, dict):
+                        self._c.update(collected)
+                _res = getattr(self, "_module_ui", {}).get(_mod["key"])
+                _switch = (_res or {}).get("switch")
+                if _switch is not None:
+                    module_states[_mod["key"]] = bool(_switch.isChecked())
+            self._c["modules"] = module_states
+        except Exception as _exc:
+            print("[模块配置] 收集模块设置失败：", _exc, flush=True)
         good, bad = self._date_values()
         self._c["exclude_dates"] = good
         return bad
@@ -5246,25 +4826,25 @@ class AutostartTab(SettingsTab):
         """保存 → 写 bat → 建/删任务 → 刷新状态（会弹一次 UAC 建任务）"""
         bad = self._collect()
         if svc_autostart.parse_time(self._c["time"]) is None:
-            self._log("时间格式不正确（应为 03:58），已还原。")
+            self._log("时间格式无效（应为 HH:MM），已恢复原值。")
             self._c["time"] = svc_autostart.DEFAULT["time"]
             self.time_entry.setText(self._c["time"])
         if not svc_autostart.active_weekdays(self._c):
-            self._log("未选择任何运行日，任务不会触发。")
+            self._log("未选择运行日期，任务不会执行。")
             return
         self._save()
         if bad:
             self._log(f"以下日期格式无效，已忽略：{'、'.join(bad)}")
-        # 目标程序没填的话，启用也没意义 —— 提前拦住
-        if self._c["enabled"] and not self._c["bgi_exe"]:
-            self._log("未填写启动程序路径，请先设置。")
+        # 定时服务不验证任何具体模块字段，由模块自行决定是否提供动作。
+        if self._c["enabled"] and not svc_autostart.live_steps(self._c):
+            self._log("没有可执行模块，请检查模块设置。")
             return
 
         self._busy = True
         self._refresh_state()
         try:
             bat = svc_autostart.write_bat(self._c)
-            self._log(f"启动脚本已生成：{bat.name}")
+            self._log(f"执行脚本已生成：{bat.name}")
             QApplication.processEvents()
             name = self._c.get("task_name") or svc_autostart.DEFAULT_TASK
             if self._c["enabled"]:
@@ -5273,7 +4853,7 @@ class AutostartTab(SettingsTab):
                 ok, msg = svc_autostart.delete_task(name)
             self._log(msg + ("　✓" if ok else "　✗"))
         except Exception as e:
-            self._log(f"出错：{type(e).__name__}: {e}")
+            self._log(f"操作失败：{type(e).__name__}: {e}")
         finally:
             self._busy = False
             self._refresh_state()
@@ -5291,7 +4871,7 @@ class AutostartTab(SettingsTab):
     def _on_time(self):
         t = (self.time_entry.text() or "").strip()
         if svc_autostart.parse_time(t) is None:
-            self._log("时间格式不正确（应为 03:58），已还原。")
+            self._log("时间格式无效（应为 HH:MM），已恢复原值。")
             self.time_entry.setText(str(self._c.get("time", "03:58")))
         else:
             self._c["time"] = t
@@ -5315,12 +4895,8 @@ class AutostartTab(SettingsTab):
             self._log(f"以下日期格式无效，已忽略：{'、'.join(bad)}")
         else:
             n = len(good)
-            self._log(f"跳过日期：{n} 个（保存后生效）" if n else "跳过日期：未设置")
+            self._log(f"排除日期：{n} 个（保存后生效）" if n else "排除日期：无")
         self._sync_excl_desc()
-        self._refresh_state()
-
-    def _on_paths(self):
-        self._collect()
         self._refresh_state()
 
     def _on_behavior(self, *_a):
@@ -5330,42 +4906,10 @@ class AutostartTab(SettingsTab):
         self._collect()
         self._save()
 
-    # ------------------------------------------------------------ 按钮
-    def _pick_dir(self):
-        d = QFileDialog.getExistingDirectory(self, "选择程序目录",
-                                             self._c.get("bgi_dir") or "D:\\")
-        if d:
-            getattr(self, "dir_entry", None) and self.dir_entry.setText(d)
-            self._on_paths()
-
-    def _pick_exe(self):
-        f, _ = QFileDialog.getOpenFileName(self, "选择要启动的程序",
-                                           self._c.get("bgi_dir") or "D:\\",
-                                           "程序 (*.exe)")
-        if f:
-            getattr(self, "exe_entry", None) and self.exe_entry.setText(f)
-            self._on_paths()
-
-    def _detect(self):
-        d, exe = svc_autostart.detect_bgi()
-        if exe:
-            getattr(self, "dir_entry", None) and self.dir_entry.setText(d)
-            getattr(self, "exe_entry", None) and self.exe_entry.setText(exe)
-            self._on_paths()
-            self._log(f"已定位：{exe}")
-        else:
-            self._log("未在常见位置找到 BetterGI，请手动指定。")
-
     def _run_once(self):
         self._collect()
         ok, msg = svc_autostart.launch_target(self._c)
         self._log(msg)
-        if ok and self._c.get("auto_monitor") and self._win is not None:
-            try:
-                self._win.state.start()
-                self._log(msg + "　·　已同时开始监测")
-            except Exception as e:
-                self._log(f"{msg}　·　但自动开始监测失败：{e}")
 
     def _show_cmd(self):
         self._collect()
@@ -5387,8 +4931,8 @@ class AutostartTab(SettingsTab):
 
         ⚠ 2026-10-13：这个改动我做过一次，结果被"删重复类"时连带删掉了（当时改的
           恰好是被删掉的那一份）→ 用户反馈"还是打开主目录"。这里重写，并加测试钉住。
-        优先 `data/modules/`（用户放/导入模块的地方，可写、一定存在），
-        再退回源码里的 `statgi_qt/modules/`（内置模块文件夹）。
+        优先 `module_files/`（三个模块实际所在目录），
+        再检查程序旁模块目录和用户导入目录。
         """
         cands = []
         # ① 程序旁边那个 modules 文件夹（用户看得见、能删的），没有就建一个
@@ -5403,7 +4947,7 @@ class AutostartTab(SettingsTab):
         # ② 源码里的模块文件夹（内置模块所在）
         try:
             import modules as _m
-            cands.append(str(Path(_m.__file__).resolve().parent))
+            cands.insert(0, str(_m.MODULE_FILES))
         except Exception:
             pass
         # ③ 用户导入的模块文件所在
@@ -5445,10 +4989,10 @@ class AutostartTab(SettingsTab):
         """打开**模块文件夹**（不是程序主目录）"""
         p = self._modules_dir_for_open()
         if not p:
-            self._log("没找到模块文件夹。")
+            self._log("未找到模块目录。")
             return
         ok, msg = svc_autostart.open_in_explorer(p)
         if not ok:
             self._log(msg)
         else:
-            self._log(f"已打开模块文件夹：{p}")
+            self._log(f"已打开模块目录：{p}")

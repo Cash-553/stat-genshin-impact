@@ -99,7 +99,7 @@ class SpinIcon(QWidget):
                 self._pop = min(1.0, self._pop + 0.12)
                 self.update()
             return
-        self._angle = (self._angle + self._step) % 360.0
+        self._angle = (self._angle - self._step) % 360.0
         self.update()
 
     @staticmethod

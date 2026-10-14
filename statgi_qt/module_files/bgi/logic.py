@@ -137,7 +137,60 @@ def detect_bgi():
     return "", ""
 
 
+def steps(config):
+    """BGI 启动模块提供给公共调度器的标准动作。"""
+    c = config or {}
+    from modules import load_config
+    c = dict(c)
+    c.update(load_config("bgi", c))
+    if not c.get("bgi_exe"):
+        directory, exe_path = detect_bgi()
+        if exe_path:
+            c["bgi_dir"], c["bgi_exe"] = directory, exe_path
+    exe = str(c.get("bgi_exe") or "").strip()
+    if not exe:
+        return []
+    groups = [str(g).strip() for g in c.get("groups", []) if str(g).strip()]
+    args = ["--startGroups", *groups] if groups else []
+    return [{
+        "label": "启动 BetterGI",
+        "exe": exe,
+        "args": args,
+        "url": "",
+        "steam_url": "",
+        "cwd": str(c.get("bgi_dir") or Path(exe).parent),
+        "kill_process": "BetterGI.exe" if c.get("kill_existing_bgi", True) else "",
+        "pre_delay": 5 if c.get("kill_existing_bgi", True) else 0,
+    }]
+
+
+def collect_ui(tab, config):
+    """收集 BGI 自己的界面字段，公共页面无需识别这些字段。"""
+    from modules import load_config
+    c = load_config("bgi", config)
+    c["bgi_dir"] = (tab.dir_entry.text() or "").strip()
+    c["bgi_exe"] = (tab.exe_entry.text() or "").strip()
+    c["kill_existing_bgi"] = bool(tab.switch_kill.isChecked())
+    c["groups"] = [name for name, box in getattr(tab, "_group_boxes", [])
+                    if box.isChecked()]
+    c["auto_monitor_group"] = tab.mon_list.value() if getattr(tab, "mon_list", None) else ""
+    c["stop_after_group"] = tab.stop_list.value() if getattr(tab, "stop_list", None) else ""
+    return c
+
+
+def monitor_settings(config):
+    """模块向监测核心提供自动开始/停止与目标进程设置。"""
+    from modules import load_config
+    return load_config("bgi", config)
+
+
 # ---- 从 svc_autostart 搬过来的常量（原来留在主文件里，模块引用不到就报 NameError）----
 BGI_HINTS = [r"D:\BetterGI", r"C:\BetterGI", r"D:\Program Files\BetterGI",
              r"C:\Program Files\BetterGI"]
+
+
+def defaults():
+    return {"bgi_dir": "", "bgi_exe": "", "groups": [],
+            "kill_existing_bgi": True, "auto_monitor_group": "",
+            "stop_after_group": ""}
 

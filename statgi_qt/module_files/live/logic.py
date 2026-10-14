@@ -18,6 +18,11 @@ OBS_CANDIDATES = (
 )
 
 
+def defaults():
+    return {"obs_exe": "", "obs_via_steam": False,
+            "obs_start_stream": True, "obs_minimize": True, "live_delay": 0}
+
+
 def _obs_from_registry():
     """从注册表卸载信息里找 OBS（Steam 版也在这里能找到）"""
     try:
@@ -118,32 +123,39 @@ def available(c):
     """这个模块这次要不要执行（装了 + 开关开着）"""
     try:
         mods = (c or {}).get("modules") or {}
-        return bool(mods.get("live", True)) and bool((c or {}).get("live_enabled"))
+        return bool(mods.get("live", True))
     except Exception:
         return False
 
 
 def steps(c):
     """到点要执行的动作（返回统一形状的 dict 列表）"""
-    if not available(c):
+    if not bool(((c or {}).get("modules") or {}).get("live", True)):
         return []
-    obs = str((c or {}).get("obs_exe") or "").strip() or detect_obs()
+    from modules import load_config
+    config = load_config("live", c) or c or {}
+    obs = str(config.get("obs_exe") or "").strip() or detect_obs()
     if not obs:
         return []
     args = []
-    if (c or {}).get("obs_start_stream", True):
+    if config.get("obs_start_stream", True):
         args.append("--startstreaming")
-    if (c or {}).get("obs_minimize", True):
+    if config.get("obs_minimize", True):
         args.append("--minimize-to-tray")
-    via_steam = bool((c or {}).get("obs_via_steam"))
+    via_steam = bool(config.get("obs_via_steam"))
     appid = steam_appid_for(obs) if via_steam else ""
+    try:
+        delay = max(0, int(config.get("live_delay") or 0))
+    except (TypeError, ValueError):
+        delay = 0
     if via_steam and appid:
         # 走 Steam 启动：好友列表会显示；但 steam:// 传不了参数，
         # 自动开播要在 Steam 的「启动选项」里自己加
         return [{"label": "OBS 开播（Steam）", "exe": "", "args": [], "url": "",
-                 "steam_url": f"steam://rungameid/{appid}", "delay": 0}]
+                 "steam_url": f"steam://rungameid/{appid}",
+                 "delay": delay}]
     return [{"label": "OBS 开播", "exe": obs, "args": args, "url": "",
-             "steam_url": "", "delay": 0}]
+             "steam_url": "", "delay": delay}]
 
 
 # ---- 从 svc_autostart 搬过来的常量（原来留在主文件里，模块引用不到就报 NameError）----
