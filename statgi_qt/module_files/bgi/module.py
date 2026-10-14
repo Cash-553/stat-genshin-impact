@@ -4,4 +4,5 @@ KEY = "bgi"
 NAME = "BetterGI 模块"
 DESC = "目标程序、配置组及监测触发规则"
 BUILTIN = True
+VERSION = "1.0"
 ORDER = 10

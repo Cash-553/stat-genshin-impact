@@ -4,4 +4,5 @@ KEY = "hang"
 NAME = "直播间页面"
 DESC = "定时打开直播间页面"
 BUILTIN = False
+VERSION = "1.0"
 ORDER = 30

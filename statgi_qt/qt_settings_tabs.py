@@ -4193,6 +4193,8 @@ class AutostartTab(SettingsTab):
         add_tool_group("模块管理", [
             ("打开模块目录", self._open_dir),
             ("模块仓库", self._module_repo_dialog),
+            ("分享配置", self._share_config_dialog),
+            ("导入外部配置", self._import_config_dialog),
             ("添加模块", self._add_module_dialog),
             ("卸载模块", self._uninstall_module_dialog),
         ])
@@ -4620,6 +4622,98 @@ class AutostartTab(SettingsTab):
         except Exception as e:
             self._log(f"模块仓库打不开：{type(e).__name__}: {e}")
 
+    def _ask_module_update(self, key, local_v, pack_v):
+        """分享文件里的模块更新时问一句（文案由用户指定）"""
+        try:
+            from PySide6.QtWidgets import QMessageBox
+            box = QMessageBox(self._win or self)
+            box.setWindowTitle("模块更新")
+            box.setText("检测到分享文件内含有新版本模块\n"
+                        f"（当前版本{local_v}，文件内版本{pack_v}）")
+            b_up = box.addButton("更新", QMessageBox.AcceptRole)
+            box.addButton("保留", QMessageBox.RejectRole)
+            box.exec()
+            return box.clickedButton() is b_up
+        except Exception:
+            return False
+
+    def _import_config_dialog(self, *_a):
+        """「导入外部配置」：选一个配置文件（.sgmod.json 或分享出来的模块包）。
+
+        它跟「添加模块」是两件事：
+            · 添加模块  → 只把**模块**装进来
+            · 导入外部配置 → 把**配置**导进来（包里附带的模块，本地没有才装 ✓）
+        """
+        try:
+            from PySide6.QtWidgets import QFileDialog, QMessageBox
+            import svc_module_pack as _pk
+            f, _ = QFileDialog.getOpenFileName(
+                self._win or self, "选择配置文件", "",
+                "StatGI 配置 (*.sgmod.json *.sgmodpack.zip *.zip);;所有文件 (*)")
+            if not f:
+                return
+            if _pk.is_pack(f):
+                ok, msg = _pk.import_pack(f, ask=self._ask_module_update)
+            else:
+                import svc_modules
+                info, msg = svc_modules.import_module_file(f)
+                ok = bool(info)
+            if ok:
+                QMessageBox.information(self._win or self, "导入完成", str(msg))
+                self._log("导入外部配置：" + str(msg).splitlines()[0])
+            else:
+                QMessageBox.warning(self._win or self, "导入失败", str(msg))
+        except Exception as e:
+            self._log(f"导入外部配置失败：{type(e).__name__}: {e}")
+
+    def _share_config_dialog(self, *_a):
+        """「分享配置」：把当前设置做成模块文件，提交给作者审核。
+
+        ⚠ 只能生成文件 / 打开投稿页 —— 程序没有自动上架的能力，
+          必须作者亲手放进模块仓库并推送，其他用户才能看到。
+        """
+        try:
+            self._collect()
+            import qt_share_module
+            qt_share_module.open_share(self._win or self, cfg=self._cfg_for_share(),
+                                       alpha=self.alpha)
+            self._log("分享配置：已生成")
+        except Exception as e:
+            self._log(f"分享配置打不开：{type(e).__name__}: {e}")
+
+    def _cfg_for_share(self):
+        """分享用的配置：**以磁盘上的设置为底，界面上的覆盖上去**。
+
+        ⚠ 2026-10-15：界面上的输入框有可能是空的（模块没把已保存的值读进控件），
+          只拿界面值会变成"没有可分享的内容" ✗ —— 用户明明早就配好了。
+          这里先把 settings.json 里的 autostart 拿来当底，再把界面上的非空值盖上去 ✓
+        """
+        out = {}
+        try:
+            import config_manager as _cm
+            saved = (_cm.load_settings() or {}).get("autostart") or {}
+            out.update(saved)
+        except Exception:
+            pass
+
+        def _nonempty(v):
+            return v not in ("", None, [], {})
+
+        def _merge(dst, src):
+            res = dict(dst or {})
+            for k, v in (src or {}).items():
+                if isinstance(v, dict):
+                    sub = dict(res.get(k) or {})
+                    for kk, vv in v.items():
+                        if _nonempty(vv):
+                            sub[kk] = vv
+                    res[k] = sub
+                elif _nonempty(v):
+                    res[k] = v
+            return res
+
+        return _merge(out, dict(self._c))
+
     def _add_module_dialog(self, *_a):
         """「添加模块」：列出所有可用模块，没装的可以直接装。
 
@@ -4693,7 +4787,14 @@ class AutostartTab(SettingsTab):
         if not p:
             return
         try:
-            info, msg = svc_modules.import_module_file(p)
+            # ★ 2026-10-15：如果这是个"模块包"(zip)，走模块包导入：
+            #   装配置 + 本地没有的模块才装；已有的跳过（不覆盖）
+            import svc_module_pack as _pk
+            if _pk.is_pack(p):
+                _ok, msg = _pk.import_pack(p, ask=self._ask_module_update)
+                info = {"name": "", "key": ""}
+            else:
+                info, msg = svc_modules.import_module_file(p)
         except Exception as e:
             self._log(f"导入失败：{e}")
             return
@@ -4964,63 +5065,49 @@ class AutostartTab(SettingsTab):
         dlg.exec()
 
     def _modules_dir_for_open(self):
-        """「打开目录」要打开的路径。
+        """「打开模块目录」要打开的路径。
 
-        ⚠ 2026-10-13：这个改动我做过一次，结果被"删重复类"时连带删掉了（当时改的
-          恰好是被删掉的那一份）→ 用户反馈"还是打开主目录"。这里重写，并加测试钉住。
-        优先 `module_files/`（三个模块实际所在目录），
-        再检查程序旁模块目录和用户导入目录。
+        ⚠ 2026-10-15 修：以前把 `module_files` 插到最前面 ✗ —— 结果点开只看到
+          内置的那两个（live / hang），看不到用户能删的 bgi / external ✗
+          （代码跟自己的注释互相打架，用户反馈"你搞反了"）。
+        现在的规矩：**优先打开"里面真的有模块、而且用户能删"的那个文件夹** ✓
+            ① 程序旁边的 `modules\`（打包版就是它；里面有模块才算数）
+            ② 源码运行时 = 包里的 `modules\`（就是会被拷到程序旁边的那些）
+            ③ 包里的 `module_files\`（内置兜底）
+            ④ 都没有 → 在程序旁边建一个空的 `modules\`
         """
-        cands = []
-        # ① 程序旁边那个 modules 文件夹（用户看得见、能删的），没有就建一个
-        try:
-            import paths as _paths
-            d = Path(_paths.app_dir()) / "modules"
-            if not d.is_dir():
-                d.mkdir(parents=True, exist_ok=True)
-            cands.append(str(d))
-        except Exception:
-            pass
-        # ② 源码里的模块文件夹（内置模块所在）
-        try:
-            import modules as _m
-            cands.insert(0, str(_m.MODULE_FILES))
-        except Exception:
-            pass
-        # ③ 用户导入的模块文件所在
-        try:
-            import svc_modules
-            cands.append(str(svc_modules.modules_dir()))
-        except Exception:
-            pass
-
         def _has_modules(p):
             try:
-                d = Path(p)
-                if not d.is_dir():
-                    return False
-                for sub in d.iterdir():
-                    if sub.is_dir() and (sub / "module.py").is_file():
-                        return True
-                for f in d.iterdir():
-                    if f.is_file() and f.name.endswith(".sgmod.json"):
-                        return True
+                return any((x / "module.py").is_file()
+                           for x in Path(p).iterdir() if x.is_dir())
             except Exception:
-                pass
-            return False
+                return False
 
-        # 1) 先找一个"里面真的有模块"的文件夹（用户要的就是这个）
-        for p in cands:
-            if _has_modules(p):
-                return p
-        # 2) 退一步：任何存在的候选目录
-        for p in cands:
-            try:
-                if p and Path(p).is_dir():
-                    return p
-            except Exception:
-                continue
-        return ""
+        cands = []
+        try:
+            import paths as _paths
+            cands.append(Path(_paths.app_dir()) / "modules")
+        except Exception:
+            pass
+        try:
+            import modules as _m
+            cands.append(Path(_m.ROOT_MODULES))    # 程序/项目根那个（干净、可删）
+            cands.append(Path(_m.MODULE_FILES))    # 内置的那个
+        except Exception:
+            pass
+
+        for d in cands:
+            if _has_modules(d):
+                return str(d)
+        # 一个都没有：在程序旁边建一个空的（用户往里放模块）
+        try:
+            d = Path(cands[0]) if cands else None
+            if d is not None:
+                d.mkdir(parents=True, exist_ok=True)
+                return str(d)
+        except Exception:
+            pass
+        return str(cands[0]) if cands else ""
 
     def _open_dir(self):
         """打开**模块文件夹**（不是程序主目录）"""

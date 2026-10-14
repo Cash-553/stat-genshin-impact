@@ -4,4 +4,5 @@ KEY = "live"
 NAME = "OBS 推流"
 DESC = "定时启动 OBS 并配置推流"
 BUILTIN = False
+VERSION = "1.0"
 ORDER = 20

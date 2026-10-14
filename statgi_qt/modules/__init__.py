@@ -13,6 +13,9 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 MODULE_FILES = HERE.parent / "module_files"
+# ★ 2026-10-15：模块现在住在"程序/项目根目录下的 modules\"（干净、用户可见可删），
+#   它不是 Python 包，所以这里显式加进来（打包版就是 <exe>\modules\）。
+ROOT_MODULES = HERE.parent.parent / "modules"
 # 保留 modules.bgi 等导入接口，业务文件集中存放。
 __path__.append(str(MODULE_FILES))
 
@@ -38,6 +41,7 @@ def roots():
     ext = external_root()
     if ext.is_dir():
         out.append(ext)
+    out.append(ROOT_MODULES)
     out.append(MODULE_FILES)
     out.append(HERE)
     return out

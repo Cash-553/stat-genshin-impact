@@ -1,8 +1,8 @@
 _mod_datas = []
 import pathlib as _pl
-# ⚠ 2026-10-15：对调了一下 —— BetterGI 改成"用户可见、可删"（所以不进程序肚子），
-#   直播 / 挂机改成内置（它们进肚子，用户看不见也删不掉）。
-_NOT_BUILTIN = ("bgi",)          # 用户可见、可删的那个不塞进程序肚子
+# ⚠ 定稿（2026-10-15）：BetterGI 内置（进程序肚子，核心功能）；
+#   直播 / 挂机 用户可见、可删（所以不塞进肚子）。
+_NOT_BUILTIN = ("live", "hang")   # 用户可见、可删的两个不塞进程序肚子
 for _folder in ("modules", "module_files"):
     _mroot = _pl.Path(SPECPATH) / "statgi_qt" / _folder
     for _f in _mroot.rglob("*.py"):

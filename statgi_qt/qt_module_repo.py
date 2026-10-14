@@ -73,17 +73,22 @@ def is_newer(remote, local):
 
 # ---------------- 远端 ----------------
 def fetch_index():
-    """拉清单：返回 (modules, 来源或错误说明)"""
+    """拉清单。
+
+    返回 ((模块列表, 配置列表), 来源或错误说明)
+        · modules —— 纯模块（带代码的）
+        · configs —— 配置（别人分享的"到点干什么"）
+    """
     errs = []
     for base, tag in _bases():
         try:
             raw = _get(base + INDEX)
             # 容错：有人用记事本/PS 写文件会带 BOM
             d = json.loads(raw.decode("utf-8-sig"))
-            return d.get("modules") or [], tag
+            return ((d.get("modules") or [], d.get("configs") or []), tag)
         except Exception as e:
             errs.append(f"{tag}: {type(e).__name__}")
-    return [], "拉不到清单（" + "，".join(errs) + "）"
+    return ([], []), "拉不到清单（" + "，".join(errs) + "）"
 
 
 def _sha_ok(blob, want):
@@ -159,6 +164,7 @@ class ModuleRepoDialog(QDialog):
         super().__init__(parent)
         self.alpha = alpha
         self.mods = []
+        self.cfgs = []
         self.src = ""
         self.installed = {}
         self.cat = ALL_CATS
@@ -248,7 +254,7 @@ class ModuleRepoDialog(QDialog):
 
     # ---------- 数据 ----------
     def reload(self):
-        self.mods, self.src = fetch_index()
+        (self.mods, self.cfgs), self.src = fetch_index()
         self.installed = installed_versions()
         if not self.mods:
             self.hint.setText("没读到模块清单（可能没网或被限流）。\n" + self.src)
@@ -300,8 +306,26 @@ class ModuleRepoDialog(QDialog):
             self.b_update_all.setEnabled(bool(up))
         except Exception:
             pass
-        for m in vis:
-            self.list_lay.addWidget(self._row(m, self.installed))
+        # ---- 模块区 ----
+        if vis:
+            h1 = QLabel("模块")
+            h1.setStyleSheet(label_qss(T.TEXT, 13, True))
+            self.list_lay.addWidget(h1)
+            for m in vis:
+                self.list_lay.addWidget(self._row(m, self.installed))
+        # ---- 配置区（别人分享的配置）----
+        cfgs = [c for c in getattr(self, "cfgs", [])
+                if self.cat in (ALL_CATS, str(c.get("category") or ""))
+                and (not (self.search.text() or "").strip()
+                     or (self.search.text() or "").strip().lower() in
+                     " ".join(str(c.get(k) or "") for k in
+                              ("name", "key", "desc", "author")).lower())]
+        if cfgs:
+            h2 = QLabel("配置")
+            h2.setStyleSheet(label_qss(T.TEXT, 13, True))
+            self.list_lay.addWidget(h2)
+            for c in cfgs:
+                self.list_lay.addWidget(self._row(c, {}))
         if not vis:
             lab = QLabel("没有符合条件的模块")
             lab.setStyleSheet(label_qss(T.DIM, 12))
@@ -363,6 +387,50 @@ class ModuleRepoDialog(QDialog):
         blob, how = download(m)
         if blob is None:
             self.hint.setText("下载失败：" + how)
+            return
+        # ★ 2026-10-15：按类型处理
+        #   纯模块(zip)  → 解压到 modules/<key>/
+        #   配置(json)   → 存进 data/modules/
+        #   配置包(zip)  → 走"配置包导入"（附带模块，本地没有才装）
+        kind = str(m.get("kind") or ("module" if str(m.get("file", "")).endswith(".zip")
+                                     else "config"))
+        try:
+            import tempfile
+            from pathlib import Path as _P
+            if kind == "config" and str(m.get("file", "")).endswith(".zip"):
+                tmp = _P(tempfile.gettempdir()) / (str(m.get("key")) + ".sgmodpack.zip")
+                tmp.write_bytes(blob)
+                import svc_module_pack as _pk
+                ok, info = _pk.import_pack(tmp, ask=lambda *a: False)
+                self.hint.setText(str(info))
+                self.reload()
+                return
+            if kind == "module" and str(m.get("file", "")).endswith(".zip"):
+                import io
+                import zipfile
+                tgt = None
+                try:
+                    import modules as _M
+                    tgt = _P(getattr(_M, "ROOT_MODULES"))
+                except Exception:
+                    tgt = None
+                if tgt is None:
+                    self.hint.setText("找不到模块目录")
+                    return
+                tgt.mkdir(parents=True, exist_ok=True)
+                with zipfile.ZipFile(io.BytesIO(blob)) as z:
+                    for n in z.namelist():
+                        if n.endswith("/"):
+                            continue
+                        out = tgt / n
+                        out.parent.mkdir(parents=True, exist_ok=True)
+                        out.write_bytes(z.read(n))
+                self.hint.setText(f"已安装模块：{m.get('name') or m.get('key')}"
+                                  "（回到「定时启动」页即可使用；重启后生效）")
+                self.reload()
+                return
+        except Exception as e:
+            self.hint.setText(f"安装失败：{type(e).__name__}: {e}")
             return
         was = str(m.get("key")) in self.installed
         ok, info = save_module(m, blob)

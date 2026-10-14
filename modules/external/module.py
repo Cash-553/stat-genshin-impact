@@ -8,4 +8,5 @@ KEY = "external"
 NAME = "外部导入模块"
 DESC = "导入别人做的 .sgmod.json 模块（声明式，不含代码）"
 BUILTIN = True
+VERSION = "1.0"
 ORDER = 40
