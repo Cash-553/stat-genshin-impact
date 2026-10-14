@@ -1,23 +1,23 @@
 {
-  "version": "0.9.6",
-  "notes": "· 新增「定时启动」：可以快捷创建每日自动任务\n（「定时启动」为实验功能，有任何问题欢迎反馈）\n· 修复关机、注销、被强制结束进程时丢失收益记录的问题\n· 当前版本更新器出现问题，请手动前往发布页进行更新，抱歉给您带来不便（点「打开发布页」或到 releases 页下载新版）",
+  "version": "0.9.7",
+  "notes": "· 修复「定时启动」若干Bug\n· 修复自动更新失效的问题（0.9.5 / 0.9.6 用户请手动更新到本版，之后即可自动更新）",
   "url_github": "https://github.com/Cash-553/stat-genshin-impact/releases",
   "url_gitee": "https://gitee.com/Cash553/stat-genshin-impact/releases",
   "update": {
-    "size": 124506118,
-    "sha256": "5c6afa9fb80e8c28179b07832a25b454793f8b4b40c4d838d9a415f15265827c",
+    "size": 127953274,
+    "sha256": "dc27476cedbce57a17010cd9db972c33a29db00d363f1a170c0dc708a692191f",
     "sources": [
       {
         "label": "Gitee（国内快）",
         "parts": [
-          "https://gitee.com/Cash553/stat-genshin-impact/releases/download/v0.9.6/StatGI_v0.9.6.part1",
-          "https://gitee.com/Cash553/stat-genshin-impact/releases/download/v0.9.6/StatGI_v0.9.6.part2"
+          "https://gitee.com/Cash553/stat-genshin-impact/releases/download/v0.9.7/StatGI_v0.9.7.part1",
+          "https://gitee.com/Cash553/stat-genshin-impact/releases/download/v0.9.7/StatGI_v0.9.7.part2"
         ]
       },
       {
         "label": "GitHub",
         "parts": [
-          "https://github.com/Cash-553/stat-genshin-impact/releases/download/v0.9.6/StatGI_v0.9.6.zip"
+          "https://github.com/Cash-553/stat-genshin-impact/releases/download/v0.9.7/StatGI_v0.9.7.zip"
         ]
       }
     ]

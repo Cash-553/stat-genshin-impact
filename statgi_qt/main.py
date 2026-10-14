@@ -103,7 +103,7 @@ def _raise_by_window():
         return False
 
 
-SINGLE_SOCKET = "StatGI_SingleInstance_v095"
+SINGLE_SOCKET = "StatGI_SingleInstance_v097"
 
 
 def _activate_existing(timeout_ms=900):
