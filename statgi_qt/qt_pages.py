@@ -1392,6 +1392,9 @@ TAB_FACTORIES = {
         sc, cfg, alpha, win),
     "开发": lambda sc, cfg, alpha, win: qt_settings_tabs.DevTab(
         sc, cfg, alpha, win),
+    # 2026-10-15 新增：一键备份 / 一键恢复
+    "数据": lambda sc, cfg, alpha, win: qt_settings_tabs.DataTab(
+        sc, cfg, alpha),
 }
 
 
@@ -1408,7 +1411,7 @@ class PageSettings(BasePage):
 
     title = "设置"
 
-    TABS = ["外观", "识别", "行为", "统计", "直播", "升级", "开发"]
+    TABS = ["外观", "识别", "行为", "统计", "直播", "升级", "数据", "开发"]
 
     def __init__(self, win):
         super().__init__(win)

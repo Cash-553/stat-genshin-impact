@@ -3984,6 +3984,8 @@ class AutostartTab(SettingsTab):
                  tip="启用并保存后创建 Windows 计划任务。\n停用并保存后移除计划任务。\n创建或移除任务需要管理员权限。")
 
         # ★ 2026-10-13 用户要求：放在「启用自动运行」**正下方**，
+
+
         #   每天是否把 StatGI 自己拉起来，由用户自己决定 ✓
         self.switch_self = Switch(self, bool(self._c.get("start_self", True)))
         self.switch_self.toggled.connect(bind_cb(self._on_behavior))
@@ -3994,6 +3996,31 @@ class AutostartTab(SettingsTab):
             tip="启用：任务执行时启动 StatGI。\n"
                 "停用：仅执行模块动作。\n"
                 "程序已运行时仅激活现有窗口。")
+
+        # ★ 2026-10-15：定时关机（用户要求：先做这个，其它以后再说）
+        _shut_box = QWidget()
+        _shut_box.setStyleSheet("background: transparent;")
+        _shut_lay = QHBoxLayout(_shut_box)
+        _shut_lay.setContentsMargins(0, 0, 0, 0)
+        _shut_lay.setSpacing(8)
+        self.shutdown_sw = Switch(self, bool(self._c.get("shutdown_on", False)))
+        self.shutdown_sw.toggled.connect(bind_cb(self._on_behavior))
+        self.shutdown_entry = QLineEdit(str(self._c.get("shutdown_at") or "06:30"))
+        self.shutdown_entry.setFixedWidth(90)
+        self.shutdown_entry.setAlignment(Qt.AlignCenter)
+        self.shutdown_entry.setPlaceholderText("06:30")
+        self.shutdown_entry.editingFinished.connect(bind_cb(self._on_behavior))
+        _shut_lay.addWidget(self.shutdown_entry)
+        _shut_lay.addWidget(self.shutdown_sw)
+        self.row_shutdown = self.row(
+            "power", "定时关机",
+            "每日到达设定时间后自动关机；默认关闭",
+            _shut_box,
+            tip="到达设定时间后执行关机，关机前有 60 秒可以取消"
+                "（命令行执行 `shutdown /a`）。\n"
+                "与「启用定时任务」无关：只要程序开着、开关是开的，到点就会关。\n"
+                "同一天只关一次；想改时间直接改左边的时刻再保存。")
+
 
         # ---------- ② 时间 ----------
         self.time_entry = QLineEdit(str(self._c.get("time", "03:58")))
@@ -4798,6 +4825,16 @@ class AutostartTab(SettingsTab):
         self._c["time"] = (self.time_entry.text() or "").strip()
         self._c["weekdays"] = [bool(cb.isChecked()) for cb in self.wd_boxes]
         self._c["wake_to_run"] = bool(self.switch_wake.isChecked())
+        # ★ 2026-10-15：这两个开关也要收进来（之前漏了 → 保存后等于没设 ✓）
+        _sw = getattr(self, "switch_self", None)
+        if _sw is not None:
+            self._c["start_self"] = bool(_sw.isChecked())
+        _sd = getattr(self, "shutdown_sw", None)
+        if _sd is not None:
+            self._c["shutdown_on"] = bool(_sd.isChecked())
+        _st = getattr(self, "shutdown_entry", None)
+        if _st is not None:
+            self._c["shutdown_at"] = str(_st.text() or "").strip()
         # 模块专属设置由各自的 ui.collect() 管理，不在公共页面维护字段细节。
         try:
             import modules as _registry
@@ -4996,3 +5033,87 @@ class AutostartTab(SettingsTab):
             self._log(msg)
         else:
             self._log(f"已打开模块目录：{p}")
+
+
+class DataTab(SettingsTab):
+    """数据：一键备份 / 一键恢复。
+
+    用户的要求（原话）："设置+记录+名单存成一个文件，换电脑能用"。
+    所以这里只做两件事：备份成一个 zip；从一个 zip 恢复。
+    恢复前会把"现在的数据"自动另存一份（在 svc_backup 里做）——
+    手滑点错了也能找回来。
+    """
+
+    def __init__(self, parent, cfg, alpha):
+        super().__init__(parent, cfg, alpha)
+
+        self.b_backup = small_button("立即备份…", self._do_backup, alpha,
+                                     icon="folder-open", width=120)
+        self.row("folder-open", "一键备份",
+                 "把设置、收益记录、材料名单、收藏夹、悬浮窗样式打成一个文件",
+                 self.b_backup,
+                 tip="备份成一个 zip 文件（文件名自动带日期），可以放到U盘/网盘。\n"
+                     "里面**不含**日志、缓存和图片 —— 那些又大又没用。\n"
+                     "换电脑、重装系统时，用下面的「从备份恢复」导回来即可。")
+
+        self.b_restore = small_button("从备份恢复…", self._do_restore, alpha,
+                                      icon="refresh-cw", width=120)
+        self.row("refresh-cw", "从备份恢复",
+                 "选一个备份文件导回来；导入前会先把现在的数据另存一份",
+                 self.b_restore,
+                 tip="先检查这个文件是不是本程序做的备份（不是就会被拒绝）。\n"
+                     "确认后：**先把现在的数据另存**到 `备份\\恢复前_时间戳\\`，"
+                     "再导入备份里的内容。\n"
+                     "恢复完建议重启一次程序。")
+
+    # ---------- 备份 ----------
+    def _do_backup(self, *_a):
+        from PySide6.QtWidgets import QFileDialog, QMessageBox
+        import paths
+        import svc_backup
+        import app_info
+        try:
+            start = str(Path(paths.app_dir()) / svc_backup.default_name())
+        except Exception:
+            start = svc_backup.default_name()
+        f, _ = QFileDialog.getSaveFileName(self, "保存备份文件", start,
+                                           "StatGI 备份 (*.zip)")
+        if not f:
+            return
+        if not f.lower().endswith(".zip"):
+            f += ".zip"
+        ok, msg = svc_backup.make(f, version=getattr(app_info, "VERSION", ""))
+        if ok:
+            QMessageBox.information(self, "备份完成", msg)
+        else:
+            QMessageBox.warning(self, "备份失败", msg)
+
+    # ---------- 恢复 ----------
+    def _do_restore(self, *_a):
+        from PySide6.QtWidgets import QFileDialog, QMessageBox
+        import svc_backup
+        f, _ = QFileDialog.getOpenFileName(self, "选择备份文件", "",
+                                           "StatGI 备份 (*.zip)")
+        if not f:
+            return
+        ok, why = svc_backup.check(f)
+        if not ok:
+            QMessageBox.warning(self, "这个文件不能用", why)
+            return
+        pv = svc_backup.preview(f)
+        names = "\n".join(f"· {n}" for n, _s in pv["files"][:10])
+        more = "" if len(pv["files"]) <= 10 else f"\n…共 {len(pv['files'])} 个文件"
+        ans = QMessageBox.question(
+            self, "确认恢复",
+            f"{why}\n\n将要导入：\n{names}{more}\n\n"
+            "导入前，程序会先把**现在的数据**另存到 `备份\\恢复前_时间戳\\`。\n"
+            "确定现在恢复吗？（恢复后建议重启程序）",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if ans != QMessageBox.Yes:
+            return
+        ok2, msg2 = svc_backup.restore(f)
+        if ok2:
+            QMessageBox.information(self, "恢复完成",
+                                    msg2 + "\n\n建议现在重启一次程序。")
+        else:
+            QMessageBox.warning(self, "恢复失败", msg2)

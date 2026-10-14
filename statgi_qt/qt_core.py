@@ -205,10 +205,44 @@ class AppState(QObject):
     # ⚠ 为什么不做成"到点才启动 StatGI 自己"：那要靠任务计划再拉一次本程序，
     #   属于用户自己的选择（设置页里写了怎么加）。这里管的是"程序已经在跑"时
     #   的自动开工/收工。
+    def _check_timed_shutdown(self, c):
+        """到点自动关机（关机前 60 秒，可用 shutdown /a 取消）"""
+        try:
+            import svc_autostart as A
+            due, why = A.should_shutdown_now(c)
+            if not due:
+                return
+            if getattr(self, "_shutdown_notified", False):
+                return
+            self._shutdown_notified = True
+            try:
+                _col = WARN          # 有就用橙色，没有就不带颜色
+            except NameError:
+                _col = None
+            if _col is not None:
+                self.status_changed.emit(
+                    "定时关机：" + str(why) + "，60 秒后关机"
+                    "（取消：命令行执行 shutdown /a）", _col)
+            else:
+                self.status_changed.emit(
+                    "定时关机：" + str(why) + "，60 秒后关机"
+                    "（取消：命令行执行 shutdown /a）")
+            import subprocess
+            subprocess.Popen(
+                'shutdown /s /t 60 /c "StatGI 定时关机：60 秒后关机（取消：'
+                '在命令行执行 shutdown /a）"', shell=True)
+            print("[定时关机] 已下发关机命令：", why, flush=True)
+        except Exception as e:
+            print("[定时关机] 失败：", type(e).__name__, e, flush=True)
+
+
     def _auto_check(self):
         try:
             import svc_autostart as A
             c = A.cfg(self.settings)
+            # ★ 定时关机（2026-10-15）：跟"启用定时任务"无关，
+            #   只要程序开着、开关和时刻到了就关；每天只关一次 ✓
+            self._check_timed_shutdown(c)
             import modules as _registry
             _bgi = _registry.load_logic("bgi")
             module_settings = _bgi.monitor_settings(c) if _bgi else {}

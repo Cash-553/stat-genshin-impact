@@ -119,6 +119,9 @@ DEFAULT = {
     "wake_to_run": False,       # 睡眠也唤醒跑
     "auto_monitor": True,       # ★ 本项目的加分项：到点自动开始监测
     "auto_stop": True,          # 旧：目标程序退出后自动停止监测（已被下面两个取代）
+    "shutdown_on": False,         # 定时关机：到点自动关机
+    "shutdown_at": "06:30",       # 关机时间（HH:MM）
+    "shutdown_done": "",          # 已经关过机的日期（同一天只关一次）
     "start_self": True,          # ★ 到点也自动启动 StatGI 自己（不开=没人记账）
     # 外部导入的模块：{模块key: 是否启用}（key 形如 ext:名字）
     "external_on": {},
@@ -801,6 +804,35 @@ def _self_launch_line():
         pass
     return ""
 
+
+
+def should_shutdown_now(c, now=None):
+    """到点该关机了吗？
+
+    返回 (该关?, 说明) —— 纯函数，方便测。
+
+    规则（简单可预期）：
+        · 开关没开 → 不关
+        · 时间没填/填错 → 不关
+        · 今天已经关过一次 → 不再关（防止每分钟都触发）
+        · 当前时间 >= 设定时间 → 关
+    """
+    import datetime
+    if not (c or {}).get("shutdown_on"):
+        return False, "未开启"
+    hhmm = str((c or {}).get("shutdown_at") or "").strip()
+    try:
+        hh, mm = hhmm.split(":")
+        target = datetime.time(int(hh), int(mm))
+    except Exception:
+        return False, "时间格式不对（应如 06:30）"
+    now = now or datetime.datetime.now()
+    today = now.strftime("%Y-%m-%d")
+    if str((c or {}).get("shutdown_done") or "") == today:
+        return False, "今天已经关过"
+    if now.time() >= target:
+        return True, f"已到 {hhmm}"
+    return False, f"未到 {hhmm}"
 
 
 def build_bat_text(c):
